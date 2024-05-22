@@ -82,10 +82,7 @@ impl Node {
         self.0
             .iter()
             .zip(preactivation)
-            .map(|(edge, &preact)| {
-                // TODO: b spline stuff
-                edge.0.point(preact)
-            })
+            .map(|(edge, &preact)| edge.0.point(preact))
             .sum()
     }
 }
@@ -95,9 +92,23 @@ struct IncomingEdge(BSpline<f32, f32>);
 
 impl IncomingEdge {
     fn new(k: usize, coef_size: usize) -> Self {
-        let mut knots = vec![0.0; coef_size + k + 1]; // TODO: initialize the knot vector properly, over the range of the input
-        for i in 0..knots.len() {
-            knots[i] = i as f32 / (knots.len() - 1) as f32;
+        assert!(
+            coef_size >= (k + 1),
+            "too few control points for the degree of the b-spline"
+        );
+        let mut knots = vec![0.0; coef_size + k + 1];
+        let inner_knot_count = knots.len() - 2 * (k + 1);
+        // the first k+1 knots should be zero
+        // for i in 0..k + 1 {
+        //     knots[i] = 0.0;
+        // }
+        // the last k+1 knots should be one
+        for j in knots.len() - k - 1..knots.len() {
+            knots[j] = 1.0;
+        }
+        // the inner knots should be evenly spaced between 0 and 1
+        for i in 1..inner_knot_count + 1 {
+            knots[k + i] = i as f32 / (inner_knot_count + 1) as f32;
         }
         let control_points = vec![0.0; coef_size]; // TODO: initialize the control points properly, with a random distribution
         IncomingEdge(BSpline::new(k, control_points, knots))
@@ -129,13 +140,38 @@ mod test {
     }
 
     #[test]
-    fn test_edge_knot_initialization() {
+    fn test_edge_knot_initialization_with_one_inner_knot() {
         let k = 3;
         let coef_size = 5;
         let my_edge = IncomingEdge::new(k, coef_size);
         let knots: Vec<f32> = my_edge.0.knots().cloned().collect();
-        let expected = vec![0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0];
-        assert_eq!(expected.len(), knots.len(), "knot vector incorrect length");
-        assert_eq!(expected, knots, "knot vector incorrect values");
+        let expected = vec![0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0];
+        assert_eq!(knots.len(), expected.len(), "knot vector incorrect length");
+        assert_eq!(knots, expected, "knot vector incorrect values");
+        assert_eq!(my_edge.0.knot_domain(), (0.0, 1.0), "bad knot domain");
+    }
+
+    #[test]
+    fn test_edge_knot_initialization_with_no_inner_knots() {
+        let k = 3;
+        let coef_size = 4;
+        let my_edge = IncomingEdge::new(k, coef_size);
+        let knots: Vec<f32> = my_edge.0.knots().cloned().collect();
+        let expected = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        assert_eq!(knots.len(), expected.len(), "knot vector incorrect length");
+        assert_eq!(knots, expected, "knot vector incorrect values");
+        assert_eq!(my_edge.0.knot_domain(), (0.0, 1.0), "bad knot domain");
+    }
+
+    #[test]
+    fn test_edge_knot_initialization_with_3_inner_knots() {
+        let k = 2;
+        let coef_size = 6;
+        let my_edge = IncomingEdge::new(k, coef_size);
+        let knots: Vec<f32> = my_edge.0.knots().cloned().collect();
+        let expected = vec![0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0];
+        assert_eq!(knots.len(), expected.len(), "knot vector incorrect length");
+        assert_eq!(knots, expected, "knot vector incorrect values");
+        assert_eq!(my_edge.0.knot_domain(), (0.0, 1.0), "bad knot domain");
     }
 }
