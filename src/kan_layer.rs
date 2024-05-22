@@ -82,9 +82,9 @@ impl Node {
         self.0
             .iter()
             .zip(preactivation)
-            .map(|(edge, preact)| {
+            .map(|(edge, &preact)| {
                 // TODO: b spline stuff
-                0.0
+                edge.0.point(preact)
             })
             .sum()
     }
@@ -95,7 +95,7 @@ struct IncomingEdge(BSpline<f32, f32>);
 
 impl IncomingEdge {
     fn new(k: usize, coef_size: usize) -> Self {
-        let knots = vec![0.0; coef_size + k + 1]; // TODO: initialize the knot vector properly, with a random distribution
+        let knots = vec![0.0; coef_size + k + 1]; // TODO: initialize the knot vector properly, over the range of the input
         let control_points = vec![0.0; coef_size]; // TODO: initialize the control points properly, with a random distribution
         IncomingEdge(BSpline::new(k, control_points, knots))
     }
