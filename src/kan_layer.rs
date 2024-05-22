@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::vec;
+use std::{error::Error, vec};
 
 /// A layer in a Kolmogorov-Arnold neural network
 ///
@@ -44,6 +44,24 @@ impl KanLayer {
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
+
+    pub fn forward(&self, preactivation: Vec<f32>) -> Result<Vec<f32>, String> {
+        //  check the length here since it's the same check for the entire layer, even though the node is technically the part that cares
+        if preactivation.len() != self.nodes[0].0.len() {
+            return Err(format!(
+                "preactivation vector has length {}, but expected length {}",
+                preactivation.len(),
+                self.nodes[0].0.len()
+            ));
+        }
+        let activations: Vec<f32> = self
+            .nodes
+            .iter()
+            .map(|node| node.activate(&preactivation))
+            .collect();
+
+        Ok(activations)
+    }
 }
 
 /// a list of sets of control points, one for each incoming edge
@@ -55,6 +73,19 @@ impl Node {
         let incoming_edges: Vec<IncomingEdge> =
             vec![IncomingEdge::new(k, coef_size); input_dimension];
         Node(incoming_edges)
+    }
+
+    /// calculate the activation of the node given the preactivation
+    //the preactivation length is checked in the layer, so we don't need to check it here
+    fn activate(&self, preactivation: &Vec<f32>) -> f32 {
+        self.0
+            .iter()
+            .zip(preactivation)
+            .map(|(edge, preact)| {
+                // TODO: b spline stuff
+                0.0
+            })
+            .sum()
     }
 }
 
