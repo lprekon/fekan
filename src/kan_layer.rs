@@ -95,7 +95,10 @@ struct IncomingEdge(BSpline<f32, f32>);
 
 impl IncomingEdge {
     fn new(k: usize, coef_size: usize) -> Self {
-        let knots = vec![0.0; coef_size + k + 1]; // TODO: initialize the knot vector properly, over the range of the input
+        let mut knots = vec![0.0; coef_size + k + 1]; // TODO: initialize the knot vector properly, over the range of the input
+        for i in 0..knots.len() {
+            knots[i] = i as f32 / (knots.len() - 1) as f32;
+        }
         let control_points = vec![0.0; coef_size]; // TODO: initialize the control points properly, with a random distribution
         IncomingEdge(BSpline::new(k, control_points, knots))
     }
@@ -123,5 +126,16 @@ mod test {
         let my_edge = IncomingEdge::new(k, coef_size);
         assert_eq!(my_edge.0.knots().len(), coef_size + k + 1);
         assert_eq!(my_edge.0.control_points().len(), coef_size);
+    }
+
+    #[test]
+    fn test_edge_knot_initialization() {
+        let k = 3;
+        let coef_size = 5;
+        let my_edge = IncomingEdge::new(k, coef_size);
+        let knots: Vec<f32> = my_edge.0.knots().cloned().collect();
+        let expected = vec![0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0];
+        assert_eq!(expected.len(), knots.len(), "knot vector incorrect length");
+        assert_eq!(expected, knots, "knot vector incorrect values");
     }
 }
