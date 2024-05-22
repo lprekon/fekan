@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
-use std::{error::Error, vec};
+use bspline::BSpline;
+use std::vec;
 
 /// A layer in a Kolmogorov-Arnold neural network
 ///
@@ -90,29 +91,15 @@ impl Node {
 }
 
 #[derive(Clone)]
-struct IncomingEdge {
-    knots: KnotVector,
-    control_points: ControlPoints,
-}
+struct IncomingEdge(BSpline<f32, f32>);
 
 impl IncomingEdge {
     fn new(k: usize, coef_size: usize) -> Self {
-        let knots: KnotVector = KnotVector(vec![0.0; coef_size + k + 1]); // TODO: initialize the knot vector properly, with a random distribution
-        let control_points: ControlPoints = ControlPoints(vec![0.0; coef_size]); // TODO: initialize the control points properly, with a random distribution
-        IncomingEdge {
-            knots,
-            control_points,
-        }
+        let knots = vec![0.0; coef_size + k + 1]; // TODO: initialize the knot vector properly, with a random distribution
+        let control_points = vec![0.0; coef_size]; // TODO: initialize the control points properly, with a random distribution
+        IncomingEdge(BSpline::new(k, control_points, knots))
     }
 }
-
-/// the control points used in calculating the b-splines.
-#[derive(Clone)]
-struct ControlPoints(Vec<f32>);
-
-/// a knot vector which defines a b-spline
-#[derive(Clone)]
-struct KnotVector(Vec<f32>);
 
 #[cfg(test)]
 mod test {
@@ -134,7 +121,7 @@ mod test {
         let k = 3;
         let coef_size = 4;
         let my_edge = IncomingEdge::new(k, coef_size);
-        assert_eq!(my_edge.knots.0.len(), coef_size + k + 1);
-        assert_eq!(my_edge.control_points.0.len(), coef_size);
+        assert_eq!(my_edge.0.knots().len(), coef_size + k + 1);
+        assert_eq!(my_edge.0.control_points().len(), coef_size);
     }
 }
