@@ -102,7 +102,10 @@ impl Node {
 }
 
 #[derive(Clone, Debug)]
-struct IncomingEdge(BSpline<f32, f32>);
+struct IncomingEdge {
+    spline: BSpline<f32, f32>,
+    gradients: Vec<f32>,
+}
 
 impl IncomingEdge {
     fn new(k: usize, coef_size: usize) -> Self {
@@ -132,7 +135,10 @@ impl IncomingEdge {
         for i in 0..coef_size {
             control_points[i] = norm_dist.sample(&mut rng) as f32;
         }
-        IncomingEdge(BSpline::new(k, control_points, knots))
+        IncomingEdge {
+            spline: BSpline::new(k, control_points, knots),
+            gradients: vec![0.0; coef_size],
+        }
     }
 }
 
@@ -156,8 +162,8 @@ mod test {
         let k = 3;
         let coef_size = 4;
         let my_edge = IncomingEdge::new(k, coef_size);
-        assert_eq!(my_edge.0.knots().len(), coef_size + k + 1);
-        assert_eq!(my_edge.0.control_points().len(), coef_size);
+        assert_eq!(my_edge.spline.knots().len(), coef_size + k + 1);
+        assert_eq!(my_edge.spline.control_points().len(), coef_size);
     }
 
     #[test]
@@ -165,11 +171,11 @@ mod test {
         let k = 3;
         let coef_size = 5;
         let my_edge = IncomingEdge::new(k, coef_size);
-        let knots: Vec<f32> = my_edge.0.knots().cloned().collect();
+        let knots: Vec<f32> = my_edge.spline.knots().cloned().collect();
         let expected = vec![0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0];
         assert_eq!(knots.len(), expected.len(), "knot vector incorrect length");
         assert_eq!(knots, expected, "knot vector incorrect values");
-        assert_eq!(my_edge.0.knot_domain(), (0.0, 1.0), "bad knot domain");
+        assert_eq!(my_edge.spline.knot_domain(), (0.0, 1.0), "bad knot domain");
     }
 
     #[test]
@@ -177,11 +183,11 @@ mod test {
         let k = 3;
         let coef_size = 4;
         let my_edge = IncomingEdge::new(k, coef_size);
-        let knots: Vec<f32> = my_edge.0.knots().cloned().collect();
+        let knots: Vec<f32> = my_edge.spline.knots().cloned().collect();
         let expected = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
         assert_eq!(knots.len(), expected.len(), "knot vector incorrect length");
         assert_eq!(knots, expected, "knot vector incorrect values");
-        assert_eq!(my_edge.0.knot_domain(), (0.0, 1.0), "bad knot domain");
+        assert_eq!(my_edge.spline.knot_domain(), (0.0, 1.0), "bad knot domain");
     }
 
     #[test]
@@ -189,10 +195,10 @@ mod test {
         let k = 2;
         let coef_size = 6;
         let my_edge = IncomingEdge::new(k, coef_size);
-        let knots: Vec<f32> = my_edge.0.knots().cloned().collect();
+        let knots: Vec<f32> = my_edge.spline.knots().cloned().collect();
         let expected = vec![0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0];
         assert_eq!(knots.len(), expected.len(), "knot vector incorrect length");
         assert_eq!(knots, expected, "knot vector incorrect values");
-        assert_eq!(my_edge.0.knot_domain(), (0.0, 1.0), "bad knot domain");
+        assert_eq!(my_edge.spline.knot_domain(), (0.0, 1.0), "bad knot domain");
     }
 }
