@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
 use bspline::BSpline;
+use rand::distributions::Distribution; // apparently the statrs distributions use the rand Distribution trait
+use rand::prelude::*;
+use statrs::distribution::Normal;
 use std::vec;
 
 /// A layer in a Kolmogorov-Arnold neural network
@@ -15,6 +18,7 @@ use std::vec;
 /// the size of the node vector is equal to the output dimension of the layer
 /// the size of the incoming edge vector for each node is equal to the input dimension of the layer
 
+#[derive(Debug)]
 pub struct KanLayer {
     /// the nodes in this layer. This nested vector contains the b-spline coefficients (control points) for the layer. This is the main parameter that the network learns.
     pub(crate) nodes: Vec<Node>,
@@ -38,7 +42,11 @@ impl KanLayer {
         k: usize,
         coef_size: usize,
     ) -> Self {
-        let nodes: Vec<Node> = vec![Node::new(input_dimension, k, coef_size); output_dimension];
+        // let nodes: Vec<Node> = vec![Node::new(input_dimension, k, coef_size); output_dimension]; this is cloning the exact same node, which is not what we want
+        let mut nodes = Vec::with_capacity(output_dimension);
+        for _ in 0..output_dimension {
+            nodes.push(Node::new(input_dimension, k, coef_size));
+        }
         KanLayer { nodes }
     }
 
@@ -46,6 +54,9 @@ impl KanLayer {
         self.nodes.len()
     }
 
+    /// calculate the activations of the nodes in this layer given the preactivations
+    ///
+    /// `preactivation.len()` must be equal to `input_dimension` provided when the layer was created
     pub fn forward(&self, preactivation: Vec<f32>) -> Result<Vec<f32>, String> {
         //  check the length here since it's the same check for the entire layer, even though the node is technically the part that cares
         if preactivation.len() != self.nodes[0].0.len() {
@@ -66,13 +77,16 @@ impl KanLayer {
 }
 
 /// a list of sets of control points, one for each incoming edge
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Node(Vec<IncomingEdge>);
 impl Node {
     /// create a new node with the given number of incoming edges
     fn new(input_dimension: usize, k: usize, coef_size: usize) -> Self {
-        let incoming_edges: Vec<IncomingEdge> =
-            vec![IncomingEdge::new(k, coef_size); input_dimension];
+        // let incoming_edges: Vec<IncomingEdge> = vec![IncomingEdge::new(k, coef_size); input_dimension]; this is cloning the exact same edge, which is not what we want
+        let mut incoming_edges = Vec::with_capacity(input_dimension);
+        for _ in 0..input_dimension {
+            incoming_edges.push(IncomingEdge::new(k, coef_size));
+        }
         Node(incoming_edges)
     }
 
@@ -87,7 +101,7 @@ impl Node {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct IncomingEdge(BSpline<f32, f32>);
 
 impl IncomingEdge {
@@ -96,6 +110,7 @@ impl IncomingEdge {
             coef_size >= (k + 1),
             "too few control points for the degree of the b-spline"
         );
+
         let mut knots = vec![0.0; coef_size + k + 1];
         let inner_knot_count = knots.len() - 2 * (k + 1);
         // the first k+1 knots should be zero
@@ -110,7 +125,13 @@ impl IncomingEdge {
         for i in 1..inner_knot_count + 1 {
             knots[k + i] = i as f32 / (inner_knot_count + 1) as f32;
         }
-        let control_points = vec![0.0; coef_size]; // TODO: initialize the control points properly, with a random distribution
+
+        let mut control_points = vec![0.0; coef_size];
+        let norm_dist = Normal::new(0.0, 1.0).unwrap();
+        let mut rng = thread_rng();
+        for i in 0..coef_size {
+            control_points[i] = norm_dist.sample(&mut rng) as f32;
+        }
         IncomingEdge(BSpline::new(k, control_points, knots))
     }
 }
