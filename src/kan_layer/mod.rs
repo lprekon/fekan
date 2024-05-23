@@ -74,6 +74,28 @@ impl KanLayer {
 
         Ok(activations)
     }
+
+    /// given `error`, containing an error value for each node, calculate the gradients for the control points on each incoming edge,
+    /// and return the error for the previous layer.
+    ///
+    /// Returns an error if the length of `error` is not equal to the number of nodes in this layer.
+    pub fn backward(&self, error: Vec<f32>) -> Result<Vec<f32>, String> {
+        if error.len() != self.nodes.len() {
+            return Err(format!(
+                "error vector has length {}, but expected length {}",
+                error.len(),
+                self.nodes.len()
+            ));
+        }
+
+        // first, calculate the gradients for the control points on each incoming edge
+        for i in 0..self.nodes.len() {
+            self.nodes[i].backward(&error[i]);
+        }
+        // next, calculate the error for the previous layer
+
+        todo!("implement the backward pass")
+    }
 }
 
 /// a list of sets of control points, one for each incoming edge
@@ -96,14 +118,23 @@ impl Node {
         self.0
             .iter()
             .zip(preactivation)
-            .map(|(edge, &preact)| edge.0.point(preact))
+            .map(|(edge, &preact)| edge.spline.point(preact))
             .sum()
+    }
+
+    /// apply the backward propogation step to each incoming edge to this node
+    fn backward(&self, error: &f32) {
+        let partial_error = error / self.0.len() as f32; // divide the error evenly among the incoming edges
+        for i in 0..self.0.len() {
+            self.0[i].backward(partial_error);
+        }
     }
 }
 
 #[derive(Clone, Debug)]
 struct IncomingEdge {
     spline: BSpline<f32, f32>,
+    activations: Vec<f32>,
     gradients: Vec<f32>,
 }
 
@@ -137,9 +168,19 @@ impl IncomingEdge {
         }
         IncomingEdge {
             spline: BSpline::new(k, control_points, knots),
+            activations: vec![0.0; coef_size],
             gradients: vec![0.0; coef_size],
         }
     }
+
+    fn forward(&self, preactivation: f32) -> f32 {
+        self.spline.point(preactivation)
+    }
+
+    /// calculate the gradient for each control point on this edge given the error, and accumulate them internally
+    ///
+    /// control points are not updated here, but the gradients are accumulated so that they can be used to update the control points later
+    fn backward(&self, error: f32) {}
 }
 
 #[cfg(test)]
