@@ -57,10 +57,10 @@ impl KanLayer {
         self.nodes.len()
     }
 
-    /// calculate the activations of the nodes in this layer given the preactivations
+    /// calculate the activations of the nodes in this layer given the preactivations. This operation mutates internal state, which will be read in [`KanLayer::backward()`].
     ///
     /// `preactivation.len()` must be equal to `input_dimension` provided when the layer was created
-    pub fn forward(&self, preactivation: Vec<f32>) -> Result<Vec<f32>, String> {
+    pub fn forward(&mut self, preactivation: Vec<f32>) -> Result<Vec<f32>, String> {
         //  check the length here since it's the same check for the entire layer, even though the node is technically the part that cares
         if preactivation.len() != self.nodes[0].0.len() {
             return Err(format!(
@@ -71,7 +71,7 @@ impl KanLayer {
         }
         let activations: Vec<f32> = self
             .nodes
-            .iter()
+            .iter_mut()
             .map(|node| node.activate(&preactivation))
             .collect();
 
@@ -81,8 +81,13 @@ impl KanLayer {
     /// given `error`, containing an error value for each node, calculate the gradients for the control points on each incoming edge,
     /// and return the error for the previous layer.
     ///
+    /// This function relies on mutated inner state and should be called after [`KanLayer::forward`].
+    ///
+    /// This function mutates inner state, which will be used in [`KanLayer::update`]`
+    ///
+    /// # Errors
     /// Returns an error if the length of `error` is not equal to the number of nodes in this layer.
-    pub fn backward(&self, error: Vec<f32>) -> Result<Vec<f32>, String> {
+    pub fn backward(&mut self, error: Vec<f32>) -> Result<Vec<f32>, String> {
         if error.len() != self.nodes.len() {
             return Err(format!(
                 "error vector has length {}, but expected length {}",
@@ -98,6 +103,13 @@ impl KanLayer {
         // next, calculate the error for the previous layer
 
         todo!("implement the backward pass")
+    }
+
+    /// update the control points for each incoming edge in this layer given the learning rate
+    ///
+    /// this function relies on mutated inner state and should be called after [`KanLayer::backward()`]
+    pub fn update(&mut self, learning_rate: f32) {
+        todo!("implement the update pass")
     }
 }
 
@@ -132,7 +144,7 @@ impl Node {
                 control_points[i] = norm_dist.sample(&mut rng) as f32;
             }
 
-            let incoming_edge = Spline::new(k, control_points, knots);
+            let incoming_edge = Spline::new(k, control_points, knots).unwrap();
             incoming_edges.push(incoming_edge);
         }
         Node(incoming_edges)
@@ -140,16 +152,16 @@ impl Node {
 
     /// calculate the activation of the node given the preactivation
     //the preactivation length is checked in the layer, so we don't need to check it here
-    fn activate(&self, preactivation: &Vec<f32>) -> f32 {
+    fn activate(&mut self, preactivation: &Vec<f32>) -> f32 {
         self.0
-            .iter()
+            .iter_mut()
             .zip(preactivation)
-            .map(|(edge, &preact)| edge.spline.point(preact))
+            .map(|(edge, &preact)| edge.forward(preact))
             .sum()
     }
 
     /// apply the backward propogation step to each incoming edge to this node
-    fn backward(&self, error: &f32) {
+    fn backward(&mut self, error: &f32) {
         let partial_error = error / self.0.len() as f32; // divide the error evenly among the incoming edges
         for i in 0..self.0.len() {
             self.0[i].backward(partial_error);
