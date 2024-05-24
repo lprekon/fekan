@@ -13,19 +13,35 @@ pub(super) struct Spline {
 
 impl Spline {
     /// construct a new spline from the given degree, control points, and knots
-    pub(super) fn new(degree: usize, control_points: Vec<f32>, knots: Vec<f32>) -> Self {
+    ///
+    /// # Errors
+    /// returns an error if the length of the knot vector is not at least `|control_points| + degree + 1`
+    pub(super) fn new(
+        degree: usize,
+        control_points: Vec<f32>,
+        knots: Vec<f32>,
+    ) -> Result<Self, String> {
         let size = control_points.len();
-        Spline {
+        if knots.len() != size + degree + 1 {
+            return Err(format!(
+                "knot vector has length {}, but expected length at least {}",
+                knots.len(),
+                size + degree + 1
+            ));
+        }
+        Ok(Spline {
             degree,
             control_points,
             knots,
             activations: vec![0.0; size],
             gradients: vec![0.0; size],
-        }
+        })
     }
 
     /// construct a new spline from the given degree, control points, and inner knots, padding the inner knots by
-    /// prepending and appending `degree` knots of the first and last inner knot respectively
+    /// prepending and appending at least `degree` knots of the first and last inner knot respectively
+    ///
+    /// if the total number of knots after padding is less than `|control_points| + degree + 1`, additional knots are added
     pub(super) fn new_from_inner_knots(
         degree: usize,
         control_points: Vec<f32>,
@@ -34,11 +50,15 @@ impl Spline {
         let starting_knot = inner_knots[0];
         let ending_knot = inner_knots[inner_knots.len() - 1];
         let mut knots = inner_knots;
-        for _ in 0..degree {
+        let knots_to_add_per_end = max(
+            degree,
+            (degree + control_points.len() + 1) / 2 - knots.len(),
+        );
+        for _ in 0..knots_to_add_per_end {
             knots.insert(0, starting_knot);
             knots.push(ending_knot);
         }
-        Spline::new(degree, control_points, knots)
+        Spline::new(degree, control_points, knots).unwrap()
     }
 
     /// compute the point on the spline at the given parameter `t`
