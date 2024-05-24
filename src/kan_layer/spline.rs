@@ -22,7 +22,7 @@ impl Spline {
         knots: Vec<f32>,
     ) -> Result<Self, String> {
         let size = control_points.len();
-        if knots.len() != size + degree + 1 {
+        if knots.len() < size + degree + 1 {
             return Err(format!(
                 "knot vector has length {}, but expected length at least {}",
                 knots.len(),
@@ -49,11 +49,14 @@ impl Spline {
     ) -> Self {
         let starting_knot = inner_knots[0];
         let ending_knot = inner_knots[inner_knots.len() - 1];
+        // ensure that there are at least `degree` knots at the beginning and end of the knot vector, but also add more than `degree` knots if necessary to ensure that the knot vector is at least `|control_points| + degree + 1
+        let knots_to_add_per_end = if inner_knots.len() >= control_points.len() + 1 - degree {
+            degree
+        } else {
+            ((control_points.len() + degree + 1) - inner_knots.len()) / 2
+        };
+
         let mut knots = inner_knots;
-        let knots_to_add_per_end = max(
-            degree,
-            (degree + control_points.len() + 1) / 2 - knots.len(),
-        );
         for _ in 0..knots_to_add_per_end {
             knots.insert(0, starting_knot);
             knots.push(ending_knot);
@@ -106,7 +109,9 @@ impl Spline {
 
     /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
     // this function is a static method because it needs to recurse down values of 'k', so there's no point in getting the degree from 'self'
+
     fn b(i: usize, k: usize, knots: &Vec<f32>, t: f32) -> f32 {
+        todo!("figure out if there's a bug here having to do with the proper indexing of the knot vector");
         if k == 0 {
             if knots[i] <= t && t < knots[i + 1] {
                 return 1.0;
@@ -148,9 +153,16 @@ mod test {
     }
 
     #[test]
-    fn test_new_from_inner_knots_with_not_enough_knots() {
+    fn test_new_from_inner_knots_with_not_enough_knots_a() {
         let inner_knots = vec![0.0, 0.25, 0.5, 0.75, 1.0];
         let my_spline = Spline::new_from_inner_knots(2, vec![1.0; 10], inner_knots);
+        assert_eq!(my_spline.knots.len(), 13);
+    }
+
+    #[test]
+    fn test_new_from_inner_knots_with_not_enough_knots_b() {
+        let inner_knots = vec![0.0, 0.25, 0.5, 0.75, 1.0];
+        let my_spline = Spline::new_from_inner_knots(3, vec![1.0; 9], inner_knots);
         assert_eq!(my_spline.knots.len(), 13);
     }
 }
