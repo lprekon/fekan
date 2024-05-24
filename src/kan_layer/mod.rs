@@ -1,8 +1,11 @@
 #![allow(dead_code)]
 
+mod spline;
+
 use bspline::BSpline;
 use rand::distributions::Distribution; // apparently the statrs distributions use the rand Distribution trait
 use rand::prelude::*;
+use spline::Spline;
 use statrs::distribution::Normal;
 use std::vec;
 
@@ -99,15 +102,38 @@ impl KanLayer {
 }
 
 /// a list of sets of control points, one for each incoming edge
-#[derive(Clone, Debug)]
-pub(crate) struct Node(Vec<IncomingEdge>);
+#[derive(Debug)]
+pub(crate) struct Node(Vec<Spline>);
 impl Node {
     /// create a new node with the given number of incoming edges
     fn new(input_dimension: usize, k: usize, coef_size: usize) -> Self {
         // let incoming_edges: Vec<IncomingEdge> = vec![IncomingEdge::new(k, coef_size); input_dimension]; this is cloning the exact same edge, which is not what we want
         let mut incoming_edges = Vec::with_capacity(input_dimension);
         for _ in 0..input_dimension {
-            incoming_edges.push(IncomingEdge::new(k, coef_size));
+            let mut knots = vec![0.0; coef_size + k + 1];
+            let inner_knot_count = knots.len() - 2 * (k + 1);
+            // the first k+1 knots should be zero
+            // for i in 0..k + 1 {
+            //     knots[i] = 0.0;
+            // }
+            // the last k+1 knots should be one
+            for j in knots.len() - k - 1..knots.len() {
+                knots[j] = 1.0;
+            }
+            // the inner knots should be evenly spaced between 0 and 1
+            for i in 1..inner_knot_count + 1 {
+                knots[k + i] = i as f32 / (inner_knot_count + 1) as f32;
+            }
+
+            let mut control_points = vec![0.0; coef_size];
+            let norm_dist = Normal::new(0.0, 1.0).unwrap();
+            let mut rng = thread_rng();
+            for i in 0..coef_size {
+                control_points[i] = norm_dist.sample(&mut rng) as f32;
+            }
+
+            let incoming_edge = Spline::new(k, control_points, knots);
+            incoming_edges.push(incoming_edge);
         }
         Node(incoming_edges)
     }
@@ -131,7 +157,7 @@ impl Node {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct IncomingEdge {
     spline: BSpline<f32, f32>,
     activations: Vec<f32>,

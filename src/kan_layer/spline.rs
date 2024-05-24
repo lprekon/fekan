@@ -1,4 +1,5 @@
-struct Spline {
+#[derive(Debug)]
+pub(super) struct Spline {
     degree: usize,
     control_points: Vec<f32>,
     knots: Vec<f32>,
@@ -10,7 +11,7 @@ struct Spline {
 
 impl Spline {
     /// construct a new spline from the given degree, control points, and knots
-    fn new(degree: usize, control_points: Vec<f32>, knots: Vec<f32>) -> Self {
+    pub(super) fn new(degree: usize, control_points: Vec<f32>, knots: Vec<f32>) -> Self {
         let size = control_points.len();
         Spline {
             degree,
@@ -23,7 +24,7 @@ impl Spline {
 
     /// construct a new spline from the given degree, control points, and inner knots, padding the inner knots by
     /// prepending and appending `degree` knots of the first and last inner knot respectively
-    fn new_from_inner_knots(
+    pub(super) fn new_from_inner_knots(
         degree: usize,
         control_points: Vec<f32>,
         inner_knots: Vec<f32>,
@@ -41,7 +42,7 @@ impl Spline {
     /// compute the point on the spline at the given parameter `t`
     ///
     /// accumulate the activations of the spline at each interval in the internal `activations` field
-    fn forward(&mut self, t: f32) -> f32 {
+    pub(super) fn forward(&mut self, t: f32) -> f32 {
         for i in 0..self.control_points.len() {
             self.activations[i] = Spline::b(i, self.degree, &self.knots, t)
         }
@@ -52,23 +53,23 @@ impl Spline {
     /// compute and accumulate the gradients for each control point on the spline given the error value
     ///
     /// uses the memoized activations from the most recent forward pass
-    fn backward(&mut self, error: f32) {
+    pub(super) fn backward(&mut self, error: f32) {
         todo!("implement the backward pass for the spline")
     }
 
-    fn update(&mut self, learning_rate: f32) {
+    pub(super) fn update(&mut self, learning_rate: f32) {
         for i in 0..self.control_points.len() {
             self.control_points[i] -= learning_rate * self.gradients[i];
         }
     }
 
-    fn zero_gradients(&mut self) {
+    pub(super) fn zero_gradients(&mut self) {
         for i in 0..self.gradients.len() {
             self.gradients[i] = 0.0;
         }
     }
 
-    fn update_and_zero(&mut self, learning_rate: f32) {
+    pub(super) fn update_and_zero(&mut self, learning_rate: f32) {
         self.update(learning_rate);
         self.zero_gradients();
     }
