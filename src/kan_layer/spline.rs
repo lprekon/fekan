@@ -120,3 +120,37 @@ impl Spline {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    // #[test]
+    // fn test_b() {
+    //     let knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+    //     assert_eq!(Spline::b(0, 2, &knots, 0.0), 1.0);
+    //     assert_eq!(Spline::b(0, 2, &knots, 0.5), 0.5);
+    //     assert_eq!(Spline::b(0, 2, &knots, 1.0), 0.0);
+    // }
+
+    #[test]
+    fn test_new_from_inner_knots_with_plenty_of_knots() {
+        let inner_knots = vec![0.0, 0.25, 0.5, 0.75, 1.0];
+        let my_spline = Spline::new_from_inner_knots(2, vec![1.0, 1.0, 1.0], inner_knots);
+        assert_eq!(my_spline.knots.len(), 9);
+    }
+
+    #[test]
+    fn test_new_from_inner_knots_with_exactly_right_amount_of_knots() {
+        let inner_knots = vec![0.0, 0.25, 0.5, 0.75, 1.0];
+        let my_spline = Spline::new_from_inner_knots(2, vec![1.0; 6], inner_knots);
+        assert_eq!(my_spline.knots.len(), 9);
+    }
+
+    #[test]
+    fn test_new_from_inner_knots_with_not_enough_knots() {
+        let inner_knots = vec![0.0, 0.25, 0.5, 0.75, 1.0];
+        let my_spline = Spline::new_from_inner_knots(2, vec![1.0; 10], inner_knots);
+        assert_eq!(my_spline.knots.len(), 13);
+    }
+}
