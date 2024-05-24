@@ -169,58 +169,6 @@ impl Node {
     }
 }
 
-#[derive(Debug)]
-struct IncomingEdge {
-    spline: BSpline<f32, f32>,
-    activations: Vec<f32>,
-    gradients: Vec<f32>,
-}
-
-impl IncomingEdge {
-    fn new(k: usize, coef_size: usize) -> Self {
-        assert!(
-            coef_size >= (k + 1),
-            "too few control points for the degree of the b-spline"
-        );
-
-        let mut knots = vec![0.0; coef_size + k + 1];
-        let inner_knot_count = knots.len() - 2 * (k + 1);
-        // the first k+1 knots should be zero
-        // for i in 0..k + 1 {
-        //     knots[i] = 0.0;
-        // }
-        // the last k+1 knots should be one
-        for j in knots.len() - k - 1..knots.len() {
-            knots[j] = 1.0;
-        }
-        // the inner knots should be evenly spaced between 0 and 1
-        for i in 1..inner_knot_count + 1 {
-            knots[k + i] = i as f32 / (inner_knot_count + 1) as f32;
-        }
-
-        let mut control_points = vec![0.0; coef_size];
-        let norm_dist = Normal::new(0.0, 1.0).unwrap();
-        let mut rng = thread_rng();
-        for i in 0..coef_size {
-            control_points[i] = norm_dist.sample(&mut rng) as f32;
-        }
-        IncomingEdge {
-            spline: BSpline::new(k, control_points, knots),
-            activations: vec![0.0; coef_size],
-            gradients: vec![0.0; coef_size],
-        }
-    }
-
-    fn forward(&self, preactivation: f32) -> f32 {
-        self.spline.point(preactivation)
-    }
-
-    /// calculate the gradient for each control point on this edge given the error, and accumulate them internally
-    ///
-    /// control points are not updated here, but the gradients are accumulated so that they can be used to update the control points later
-    fn backward(&self, error: f32) {}
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -234,50 +182,5 @@ mod test {
         let coef_size = 4;
         let my_node = Node::new(input_dimension, k, coef_size);
         assert_eq!(my_node.0.len(), input_dimension);
-    }
-
-    #[test]
-    fn test_new_incoming_edge() {
-        let k = 3;
-        let coef_size = 4;
-        let my_edge = IncomingEdge::new(k, coef_size);
-        assert_eq!(my_edge.spline.knots().len(), coef_size + k + 1);
-        assert_eq!(my_edge.spline.control_points().len(), coef_size);
-    }
-
-    #[test]
-    fn test_edge_knot_initialization_with_one_inner_knot() {
-        let k = 3;
-        let coef_size = 5;
-        let my_edge = IncomingEdge::new(k, coef_size);
-        let knots: Vec<f32> = my_edge.spline.knots().cloned().collect();
-        let expected = vec![0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0];
-        assert_eq!(knots.len(), expected.len(), "knot vector incorrect length");
-        assert_eq!(knots, expected, "knot vector incorrect values");
-        assert_eq!(my_edge.spline.knot_domain(), (0.0, 1.0), "bad knot domain");
-    }
-
-    #[test]
-    fn test_edge_knot_initialization_with_no_inner_knots() {
-        let k = 3;
-        let coef_size = 4;
-        let my_edge = IncomingEdge::new(k, coef_size);
-        let knots: Vec<f32> = my_edge.spline.knots().cloned().collect();
-        let expected = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
-        assert_eq!(knots.len(), expected.len(), "knot vector incorrect length");
-        assert_eq!(knots, expected, "knot vector incorrect values");
-        assert_eq!(my_edge.spline.knot_domain(), (0.0, 1.0), "bad knot domain");
-    }
-
-    #[test]
-    fn test_edge_knot_initialization_with_3_inner_knots() {
-        let k = 2;
-        let coef_size = 6;
-        let my_edge = IncomingEdge::new(k, coef_size);
-        let knots: Vec<f32> = my_edge.spline.knots().cloned().collect();
-        let expected = vec![0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0];
-        assert_eq!(knots.len(), expected.len(), "knot vector incorrect length");
-        assert_eq!(knots, expected, "knot vector incorrect values");
-        assert_eq!(my_edge.spline.knot_domain(), (0.0, 1.0), "bad knot domain");
     }
 }
