@@ -1,3 +1,5 @@
+use std::slice::Iter;
+
 #[derive(Debug)]
 pub(super) struct Spline {
     degree: usize,
@@ -72,6 +74,14 @@ impl Spline {
     pub(super) fn update_and_zero(&mut self, learning_rate: f32) {
         self.update(learning_rate);
         self.zero_gradients();
+    }
+
+    pub(super) fn knots(&self) -> Iter<'_, f32> {
+        self.knots.iter()
+    }
+
+    pub(super) fn control_points(&self) -> Iter<'_, f32> {
+        self.control_points.iter()
     }
 
     /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
