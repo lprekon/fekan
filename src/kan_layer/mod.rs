@@ -2,7 +2,6 @@
 
 mod spline;
 
-use bspline::BSpline;
 use rand::distributions::Distribution; // apparently the statrs distributions use the rand Distribution trait
 use rand::prelude::*;
 use spline::Spline;
@@ -110,7 +109,16 @@ impl KanLayer {
     ///
     /// this function relies on mutated inner state and should be called after [`KanLayer::backward()`]
     pub fn update(&mut self, learning_rate: f32) {
-        todo!("implement the update pass")
+        for i in 0..self.nodes.len() {
+            self.nodes[i].update(learning_rate);
+        }
+    }
+
+    /// zero out the gradients for each incoming edge in this layer
+    pub fn zero_gradients(&mut self) {
+        for i in 0..self.nodes.len() {
+            self.nodes[i].zero_gradients();
+        }
     }
 }
 
@@ -166,6 +174,21 @@ impl Node {
         let partial_error = error / self.0.len() as f32; // divide the error evenly among the incoming edges
         for i in 0..self.0.len() {
             self.0[i].backward(partial_error);
+        }
+    }
+
+    /// update the control points for each incoming edge to this node
+    /// this function relies on mutated inner state and should be called after [`Node::backward()`]
+    fn update(&mut self, learning_rate: f32) {
+        for i in 0..self.0.len() {
+            self.0[i].update(learning_rate);
+        }
+    }
+
+    /// zero out the gradients for each incoming edge to this node
+    fn zero_gradients(&mut self) {
+        for i in 0..self.0.len() {
+            self.0[i].zero_gradients();
         }
     }
 }
