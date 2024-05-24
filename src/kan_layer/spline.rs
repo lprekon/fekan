@@ -75,11 +75,33 @@ impl Spline {
         self.activations.iter().sum()
     }
 
-    /// compute and accumulate the gradients for each control point on the spline given the error value
+    /// compute the gradients for each control point  on the spline and accumulate them internally.
+    ///
+    /// returns the gradient of the input used in the forward pass,to be accumulated by the caller and passed back to the pervious layer as its error
     ///
     /// uses the memoized activations from the most recent forward pass
-    pub(super) fn backward(&mut self, error: f32) {
-        todo!("implement the backward pass for the spline")
+    pub(super) fn backward(&mut self, error: f32) -> f32 {
+        let adjusted_error = error / self.control_points.len() as f32; // distribute the error evenly across all control points
+
+        let mut input_gradient = 0.0;
+        let k = self.degree;
+        for i in 0..self.control_points.len() {
+            // calculate control point gradients
+            // dC_i = B_ik(t) * adjusted_error
+            let t = self.activations[i];
+            self.gradients[i] += adjusted_error * t;
+
+            // calculate input gradient
+            // dt = sum_i(dB_ik(t) * C_i)
+            // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
+            let left = (k as f32 - 1.0) / (self.knots[i + k - 1] - self.knots[i]);
+            let right = (k as f32 - 1.0) / (self.knots[i + k] - self.knots[i + 1]);
+            let spline_derivative = left * Spline::b(i, k - 1, &self.knots, t)
+                - right * Spline::b(i + 1, k - 1, &self.knots, t);
+            input_gradient += spline_derivative * self.control_points[i];
+        }
+
+        return input_gradient;
     }
 
     pub(super) fn update(&mut self, learning_rate: f32) {
@@ -109,9 +131,8 @@ impl Spline {
 
     /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
     // this function is a static method because it needs to recurse down values of 'k', so there's no point in getting the degree from 'self'
-
+    // TODO: memoize this function, since it's called again for the same `i` and `t` in the backward pass
     fn b(i: usize, k: usize, knots: &Vec<f32>, t: f32) -> f32 {
-        todo!("figure out if there's a bug here having to do with the proper indexing of the knot vector");
         if k == 0 {
             if knots[i] <= t && t < knots[i + 1] {
                 return 1.0;
