@@ -69,6 +69,7 @@ impl KanLayer {
                 self.nodes[0].0.len()
             ));
         }
+        todo!("figure out knot redistribution");
         let activations: Vec<f32> = self
             .nodes
             .iter_mut()
