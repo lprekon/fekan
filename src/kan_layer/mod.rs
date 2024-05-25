@@ -74,7 +74,6 @@ impl KanLayer {
                 self.nodes[0].0.len()
             ));
         }
-        todo!("figure out knot redistribution");
         let activations: Vec<f32> = self
             .nodes
             .iter_mut()
@@ -82,6 +81,18 @@ impl KanLayer {
             .collect();
 
         Ok(activations)
+    }
+
+    pub fn update_knots_from_samples(&mut self, samples: &Vec<Vec<f32>>) {
+        if !samples
+            .iter()
+            .all(|sample| sample.len() == self.nodes[0].0.len())
+        {
+            panic!("samples must have the same length as the input dimension of the layer! Expected {}, got {}", self.nodes[0].0.len(), samples.len());
+        }
+        for i in 0..self.nodes.len() {
+            self.nodes[i].update_knots_from_samples(samples);
+        }
     }
 
     /// given `error`, containing an error value for each node, calculate the gradients for the control points on each incoming edge,
@@ -173,6 +184,10 @@ impl Node {
             .zip(preactivation)
             .map(|(edge, &preact)| edge.forward(preact))
             .sum()
+    }
+
+    fn update_knots_from_samples(&mut self, samples: &Vec<Vec<f32>>) {
+        todo!("Update knots from samples")
     }
 
     /// apply the backward propogation step to each incoming edge to this node
