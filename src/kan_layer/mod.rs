@@ -25,19 +25,21 @@ pub struct KanLayer {
     /// the nodes in this layer. This nested vector contains the b-spline coefficients (control points) for the layer. This is the main parameter that the network learns.
     pub(crate) nodes: Vec<Node>,
 }
-/// create a new layer with the given number of nodes in the previous layer and the given number of nodes in this layer
-/// # Examples
-/// ```
-/// use fekan::kan_layer::KanLayer;
-///
-/// let input_dimension = 3;
-/// let output_dimension = 4;
-/// let k = 5;
-/// let coef_size = 6;
-/// let my_layer = KanLayer::new(input_dimension, output_dimension, k, coef_size);
-/// assert_eq!(my_layer.len(), output_dimension);
-/// ```
+
 impl KanLayer {
+    /// create a new layer with the given number of nodes in the previous layer and the given number of nodes in this layer
+    /// # Examples
+    /// ```
+    /// use fekan::kan_layer::KanLayer;
+    ///
+    /// let input_dimension = 3;
+    /// let output_dimension = 4;
+    /// let k = 5;
+    /// let coef_size = 6;
+    /// let my_layer = KanLayer::new(input_dimension, output_dimension, k, coef_size);
+    /// assert_eq!(my_layer.len(), output_dimension);
+    /// assert_eq!(my_layer.total_edges(), output_dimension * input_dimension);
+    /// ```
     pub fn new(
         input_dimension: usize,
         output_dimension: usize,
@@ -54,6 +56,10 @@ impl KanLayer {
 
     pub fn len(&self) -> usize {
         self.nodes.len()
+    }
+
+    pub fn total_edges(&self) -> usize {
+        self.nodes.len() * self.nodes[0].0.len()
     }
 
     /// calculate the activations of the nodes in this layer given the preactivations. This operation mutates internal state, which will be read in [`KanLayer::backward()`].
