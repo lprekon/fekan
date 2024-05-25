@@ -18,16 +18,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c4b4d0bd25bd0b74681c0ad21497610ce1b7c91b1022cd21c80c6fbdd9476b0"
 
 [[package]]
-name = "bspline"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af7483eaaefe53f63b5b140f639c5ed6749f8e545768803dc5b89f43acb8ee84"
-dependencies = [
- "num-traits",
- "trait-set",
-]
-
-[[package]]
 name = "bytemuck"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -43,7 +33,6 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 name = "fekan"
 version = "0.1.0"
 dependencies = [
- "bspline",
  "rand",
  "statrs",
 ]
@@ -274,17 +263,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "trait-set"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "875c4c873cc824e362fa9a9419ffa59807244824275a44ad06fec9684fff08f2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
