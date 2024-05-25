@@ -147,20 +147,12 @@ impl Node {
     fn new(input_dimension: usize, k: usize, coef_size: usize) -> Self {
         // let incoming_edges: Vec<IncomingEdge> = vec![IncomingEdge::new(k, coef_size); input_dimension]; this is cloning the exact same edge, which is not what we want
         let mut incoming_edges = Vec::with_capacity(input_dimension);
+        let knot_size = coef_size + k + 1;
         for _ in 0..input_dimension {
-            let mut knots = vec![0.0; coef_size + k + 1];
-            let inner_knot_count = knots.len() - 2 * (k + 1);
-            // the first k+1 knots should be zero
-            // for i in 0..k + 1 {
-            //     knots[i] = 0.0;
-            // }
-            // the last k+1 knots should be one
-            for j in knots.len() - k - 1..knots.len() {
-                knots[j] = 1.0;
-            }
-            // the inner knots should be evenly spaced between 0 and 1
-            for i in 1..inner_knot_count + 1 {
-                knots[k + i] = i as f32 / (inner_knot_count + 1) as f32;
+            let mut knots = vec![0.0; knot_size];
+            knots[0] = -1.0;
+            for i in 1..knots.len() {
+                knots[i] = -1.0 + (i as f32 / (knot_size - 1) as f32 * 2.0);
             }
 
             let mut control_points = vec![0.0; coef_size];
@@ -224,8 +216,14 @@ mod test {
     fn test_new_node() {
         let input_dimension = 2;
         let k = 3;
-        let coef_size = 4;
+        let coef_size = 5;
         let my_node = Node::new(input_dimension, k, coef_size);
         assert_eq!(my_node.0.len(), input_dimension);
+        assert_eq!(my_node.0[0].knots().len(), coef_size + k + 1);
+        let expected_knots: Vec<f32> = vec![-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0];
+        assert_eq!(
+            my_node.0[0].knots().cloned().collect::<Vec<f32>>(),
+            expected_knots
+        );
     }
 }
