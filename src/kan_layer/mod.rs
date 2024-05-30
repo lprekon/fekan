@@ -83,16 +83,24 @@ impl KanLayer {
         Ok(activations)
     }
 
-    pub fn update_knots_from_samples(&mut self, samples: &Vec<Vec<f32>>) {
+    /// update the knot vectors for each incoming edge in this layer given the samples
+    ///
+    /// samples is a vector of vectors, where each inner vector is a sample of the input to the layer, and the outer vector contains all the samples
+    ///
+    /// # Errors
+    /// returns and error if the length of the inner vectors in `samples` is not equal to the input dimension of the layer
+    pub fn update_knots_from_samples(&mut self, samples: &Vec<Vec<f32>>) -> Result<(), String> {
         if !samples
             .iter()
             .all(|sample| sample.len() == self.nodes[0].0.len())
         {
-            panic!("samples must have the same length as the input dimension of the layer! Expected {}, got {}", self.nodes[0].0.len(), samples.len());
+            return Err(format!("samples must have the same length as the input dimension of the layer! Expected {}, got {}", self.nodes[0].0.len(), samples.len()));
         }
         for i in 0..self.nodes.len() {
             self.nodes[i].update_knots_from_samples(samples);
         }
+
+        Ok(())
     }
 
     /// given `error`, containing an error value for each node, calculate the gradients for the control points on each incoming edge,
