@@ -186,4 +186,26 @@ mod test {
         let my_spline = Spline::new_from_inner_knots(3, vec![1.0; 9], inner_knots);
         assert_eq!(my_spline.knots.len(), 13);
     }
+
+    #[test]
+    fn test_b() {
+        let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+        let expected_results = vec![0.0513, 0.5782, 0.3648, 0.0057];
+        let k = 3;
+        let t = 0.95;
+        for i in 0..4 {
+            let result = Spline::b(i, k, &knots, t);
+            let rounded_result = (result * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
+            assert_eq!(rounded_result, expected_results[i], "i = {}", i);
+        }
+    }
+
+    #[test]
+    fn test_forward() {
+        let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+        let control_points = vec![1.0, 1.0, 1.0, 1.0];
+        let mut spline = Spline::new(3, control_points, knots).unwrap();
+        let result = spline.forward(1.0);
+        assert_eq!(result, 1.0);
+    }
 }
