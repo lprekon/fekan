@@ -67,12 +67,18 @@ impl Spline {
     /// compute the point on the spline at the given parameter `t`
     ///
     /// accumulate the activations of the spline at each interval in the internal `activations` field
-    pub(super) fn forward(&mut self, t: f32) -> f32 {
+    pub fn forward(&mut self, t: f32) -> f32 {
         for i in 0..self.control_points.len() {
             self.activations[i] = Spline::b(i, self.degree, &self.knots, t)
         }
 
-        self.activations.iter().sum()
+        self.activations
+            .iter()
+            .zip(self.control_points.iter())
+            .fold(0.0, |acc, (a, c)| {
+                print!("multiplying activation {a} with control point {c}\n");
+                acc + a * c
+            })
     }
 
     /// compute the gradients for each control point  on the spline and accumulate them internally.
@@ -131,7 +137,7 @@ impl Spline {
 
     /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
     // this function is a static method because it needs to recurse down values of 'k', so there's no point in getting the degree from 'self'
-    // TODO: memoize this function, since it's called again for the same `i` and `t` in the backward pass
+    // TODO: memoize this function, since it's called again for the same `i` and `t` in the backward pass. This is apparently difficult to do with floats
     fn b(i: usize, k: usize, knots: &Vec<f32>, t: f32) -> f32 {
         if k == 0 {
             if knots[i] <= t && t < knots[i + 1] {
@@ -203,9 +209,12 @@ mod test {
     #[test]
     fn test_forward() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-        let control_points = vec![1.0, 1.0, 1.0, 1.0];
+        let control_points = vec![0.75, 1.0, 1.6, -1.0];
         let mut spline = Spline::new(3, control_points, knots).unwrap();
-        let result = spline.forward(1.0);
-        assert_eq!(result, 1.0);
+        let t = 0.975;
+        //0.02535 + 0.5316 + 0.67664 - 0.0117 = 1.22189
+        let result = spline.forward(t);
+        let rounded_result = (result * 10000.0).round() / 10000.0;
+        assert_eq!(rounded_result, 1.2219);
     }
 }
