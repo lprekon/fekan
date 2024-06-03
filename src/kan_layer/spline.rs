@@ -1,5 +1,8 @@
 use std::slice::Iter;
 
+/// margin to add to the beginning and end of the knot vector when updating it from samples
+const KNOT_MARGIN: f32 = 0.01;
+
 #[derive(Debug)]
 pub(super) struct Spline {
     degree: usize,
@@ -158,8 +161,20 @@ impl Spline {
         }
     }
 
-    fn update_control_points_from_samples(&mut self, _samples: Vec<f32>) {
-        todo!("implement update_control_points_from_samples")
+    fn update_knots_from_samples(&mut self, mut samples: Vec<f32>) {
+        // at some point I'll requure samples to be sorted so we can just reference a slice, but for now we'll take ownership and sort
+        samples.sort_by(|a, b| a.partial_cmp(b).unwrap()); // this is annoying, but f32 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp
+        let knot_size = self.knots.len();
+        let mut adaptive_knots: Vec<f32> = Vec::with_capacity(knot_size);
+        let num_intervals = self.knots.len() - 1;
+        let step_size = samples.len() / (num_intervals);
+        for i in 0..num_intervals {
+            adaptive_knots.push(samples[i * step_size]);
+        }
+        adaptive_knots.push(samples[samples.len() - 1]);
+        adaptive_knots[0] -= KNOT_MARGIN;
+        adaptive_knots[knot_size - 1] += KNOT_MARGIN;
+        self.knots = adaptive_knots;
     }
 }
 
@@ -261,5 +276,31 @@ mod test {
         let error = -0.6;
         let result = spline.backward(error);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_knots() {
+        let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+        let control_points = vec![0.75, 1.0, 1.6, -1.0];
+        let mut spline = Spline::new(3, control_points, knots).unwrap();
+        let mut samples = Vec::with_capacity(150);
+        // assuming unordered samples for now
+        for i in 0..50 {
+            samples.push(3.0)
+        }
+        for i in 0..100 {
+            samples.push(-3.0 + i as f32 * 0.06);
+        }
+        println!("{:?}", samples);
+        spline.update_control_points_from_samples(samples);
+        let mut expected_knots = vec![-3.0, -1.74, -0.48, 0.78, 2.04, 3.0, 3.0, 3.0];
+        expected_knots[0] -= KNOT_MARGIN;
+        expected_knots[7] += KNOT_MARGIN;
+        let rounded_knots: Vec<f32> = spline
+            .knots
+            .iter()
+            .map(|k| (k * 10000.0).round() / 10000.0)
+            .collect();
+        assert_eq!(rounded_knots, expected_knots);
     }
 }
