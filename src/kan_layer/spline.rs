@@ -292,7 +292,7 @@ mod test {
             samples.push(-3.0 + i as f32 * 0.06);
         }
         println!("{:?}", samples);
-        spline.update_control_points_from_samples(samples);
+        spline.update_knots_from_samples(samples);
         let mut expected_knots = vec![-3.0, -1.74, -0.48, 0.78, 2.04, 3.0, 3.0, 3.0];
         expected_knots[0] -= KNOT_MARGIN;
         expected_knots[7] += KNOT_MARGIN;
