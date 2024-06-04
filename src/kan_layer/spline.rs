@@ -72,25 +72,31 @@ impl Spline {
 
         let adjusted_error = error / self.control_points.len() as f32; // distribute the error evenly across all control points
 
-        let mut input_gradient = 0.0;
+        // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
+        let mut drt_output_wrt_input = 0.0;
         let k = self.degree;
         for i in 0..self.control_points.len() {
             // calculate control point gradients
             // dC_i = B_ik(t) * adjusted_error
             let basis_activation = self.activations[i];
+            // gradients aka drt_output_wrt_control_point * error
             self.gradients[i] += adjusted_error * basis_activation;
 
-            // calculate input gradient
-            // dt = sum_i(dB_ik(t) * C_i)
+            // calculate the derivative of the spline output with respect to the input (as opposed to wrt the control points)
             // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
             let left = (k as f32 - 1.0) / (self.knots[i + k - 1] - self.knots[i]);
             let right = (k as f32 - 1.0) / (self.knots[i + k] - self.knots[i + 1]);
-            let basis_derivative = left * Spline::b(i, k - 1, &self.knots, last_t)
-                - right * Spline::b(i + 1, k - 1, &self.knots, last_t);
-            input_gradient += self.control_points[i] * basis_derivative;
+            let left_recurse = Spline::b(i, k - 1, &self.knots, last_t);
+            let right_recurse = Spline::b(i + 1, k - 1, &self.knots, last_t);
+            // println!(
+            //     "i: {} left: {}, right: {}, left_recurse: {}, right_recurse: {}",
+            //     i, left, right, left_recurse, right_recurse
+            // );
+            let basis_derivative = left * left_recurse - right * right_recurse;
+            drt_output_wrt_input += self.control_points[i] * basis_derivative;
         }
-
-        return Ok(input_gradient * error);
+        // input_gradient = drt_output_wrt_input * error
+        return Ok(drt_output_wrt_input * error);
     }
 
     pub(super) fn update(&mut self, learning_rate: f32) {
@@ -212,6 +218,31 @@ mod test {
             rounded_input_gradient,
             expected_spline_drt_wrt_input * error
         );
+    }
+
+    #[test]
+    fn test_forward_then_backward_2() {
+        let k = 3;
+        let coef_size = 4;
+        let knot_size = coef_size + k + 1;
+        let mut knots = vec![0.0; knot_size];
+        knots[0] = -1.0;
+        for i in 1..knots.len() {
+            knots[i] = -1.0 + (i as f32 / (knot_size - 1) as f32 * 2.0);
+        }
+        let mut spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
+        println!("setup: {:#?}", spline1);
+
+        let activation = spline1.forward(0.0);
+        println!("forward: {:#?}", spline1);
+        let rounded_activation = (activation * 10000.0).round() / 10000.0;
+        assert_eq!(rounded_activation, 1.0);
+
+        let input_gradient = spline1.backward(0.5).unwrap();
+        println!("backward: {:#?}", spline1);
+        let expected_input_gradient = 0.0;
+        let rounded_input_gradient = (input_gradient * 10000.0).round() / 10000.0;
+        assert_eq!(rounded_input_gradient, expected_input_gradient);
     }
 
     #[test]
