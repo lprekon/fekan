@@ -151,7 +151,10 @@ impl KanLayer {
 #[derive(Debug)]
 pub(crate) struct Node(Vec<Spline>);
 impl Node {
-    /// create a new node with the given number of incoming edges
+    /// create a new node with `input_dimension` incoming edges, each with a spline of degree `k` and `coef_size` control points
+    ///
+    /// All knots for all incoming edges are initialized to a linearly spaced set of values from -1 to 1.
+    /// All control points for all incoming edges are initialized to random values from a standard normal distribution with mean 0 and standard deviation 1
     fn new(input_dimension: usize, k: usize, coef_size: usize) -> Self {
         // let incoming_edges: Vec<IncomingEdge> = vec![IncomingEdge::new(k, coef_size); input_dimension]; this is cloning the exact same edge, which is not what we want
         let mut incoming_edges = Vec::with_capacity(input_dimension);
@@ -177,6 +180,8 @@ impl Node {
     }
 
     /// calculate the activation of the node given the preactivation
+    ///
+    /// the values of `preactivation` are the output values of the nodes in the previous layer
     //the preactivation length is checked in the layer, so we don't need to check it here
     fn activate(&mut self, preactivation: &Vec<f32>) -> f32 {
         self.0
@@ -246,5 +251,26 @@ mod test {
             my_node.0[0].knots().cloned().collect::<Vec<f32>>(),
             expected_knots
         );
+    }
+
+    #[test]
+    fn test_activate() {
+        // create two splines
+        let k = 3;
+        let coef_size = 4;
+        let knot_size = coef_size + k + 1;
+        let mut knots = vec![0.0; knot_size];
+        knots[0] = -1.0;
+        for i in 1..knots.len() {
+            knots[i] = -1.0 + (i as f32 / (knot_size - 1) as f32 * 2.0);
+        }
+        let spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
+        let spline2 = Spline::new(k, vec![-1.0; coef_size], knots.clone()).unwrap();
+        let mut node = Node(vec![spline1, spline2]);
+
+        let preactivation = vec![0.0, 0.571];
+        let activation = node.activate(&preactivation);
+        let expected_activation = 1.0 - 0.50112504; // the first spline should get 0 as an input and output 1, the second spline should get 0.571 as an input and output -0.5012
+        assert_eq!(activation, expected_activation);
     }
 }
