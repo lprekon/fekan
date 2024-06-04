@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+// #![allow(dead_code)]
 
 mod spline;
 
@@ -186,16 +186,29 @@ impl Node {
             .sum()
     }
 
+    // sample size is checked at the layer level, so we don't need to check it here
+    // samples is a vector of vectors, where each inner vector is a sample of the input to the layer, and the outer vector contains all the samples
+    // we have to take the nth element from each inner vector, repack it into a vector, and pass that to the edge to use for updating.
+    // TODO move the repackaging into the layer, so it's done once for all nodes
     fn update_knots_from_samples(&mut self, samples: &Vec<Vec<f32>>) {
-        todo!("Update knots from samples")
+        for i in 0..self.0.len() {
+            let samples_for_edge: Vec<f32> = samples.iter().map(|sample| sample[i]).collect();
+            self.0[i].update_knots_from_samples(samples_for_edge);
+        }
     }
 
     /// apply the backward propogation step to each incoming edge to this node
-    fn backward(&mut self, error: &f32) {
-        let partial_error = error / self.0.len() as f32; // divide the error evenly among the incoming edges
-        for i in 0..self.0.len() {
-            self.0[i].backward(partial_error);
+    ///
+    /// returns the input error for each incoming edge
+    fn backward(&mut self, error: &f32) -> Result<Vec<f32>, String> {
+        let num_incoming_edges = self.0.len();
+        let partial_error = error / num_incoming_edges as f32; // divide the error evenly among the incoming edges
+        let mut input_error = Vec::with_capacity(num_incoming_edges);
+        for i in 0..num_incoming_edges {
+            let edge_input_error = self.0[i].backward(partial_error)?;
+            input_error.push(edge_input_error);
         }
+        Ok(input_error)
     }
 
     /// update the control points for each incoming edge to this node

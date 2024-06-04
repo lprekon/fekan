@@ -44,32 +44,6 @@ impl Spline {
         })
     }
 
-    /// construct a new spline from the given degree, control points, and inner knots, padding the inner knots by
-    /// prepending and appending at least `degree` knots of the first and last inner knot respectively
-    ///
-    /// if the total number of knots after padding is less than `|control_points| + degree + 1`, additional knots are added
-    pub(super) fn new_from_inner_knots(
-        degree: usize,
-        control_points: Vec<f32>,
-        inner_knots: Vec<f32>,
-    ) -> Self {
-        let starting_knot = inner_knots[0];
-        let ending_knot = inner_knots[inner_knots.len() - 1];
-        // ensure that there are at least `degree` knots at the beginning and end of the knot vector, but also add more than `degree` knots if necessary to ensure that the knot vector is at least `|control_points| + degree + 1
-        let knots_to_add_per_end = if inner_knots.len() >= control_points.len() + 1 - degree {
-            degree
-        } else {
-            ((control_points.len() + degree + 1) - inner_knots.len()) / 2
-        };
-
-        let mut knots = inner_knots;
-        for _ in 0..knots_to_add_per_end {
-            knots.insert(0, starting_knot);
-            knots.push(ending_knot);
-        }
-        Spline::new(degree, control_points, knots).unwrap()
-    }
-
     /// compute the point on the spline at the given parameter `t`
     ///
     /// accumulate the activations of the spline at each interval in the internal `activations` field
@@ -131,18 +105,15 @@ impl Spline {
         }
     }
 
-    pub(super) fn update_and_zero(&mut self, learning_rate: f32) {
-        self.update(learning_rate);
-        self.zero_gradients();
-    }
-
+    #[allow(dead_code)]
+    // used in tests for parent module
     pub(super) fn knots(&self) -> Iter<'_, f32> {
         self.knots.iter()
     }
 
-    pub(super) fn control_points(&self) -> Iter<'_, f32> {
-        self.control_points.iter()
-    }
+    // pub(super) fn control_points(&self) -> Iter<'_, f32> {
+    //     self.control_points.iter()
+    // }
 
     /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
     // this function is a static method because it needs to recurse down values of 'k', so there's no point in getting the degree from 'self'
@@ -161,7 +132,7 @@ impl Spline {
         }
     }
 
-    fn update_knots_from_samples(&mut self, mut samples: Vec<f32>) {
+    pub(super) fn update_knots_from_samples(&mut self, mut samples: Vec<f32>) {
         // at some point I'll requure samples to be sorted so we can just reference a slice, but for now we'll take ownership and sort
         samples.sort_by(|a, b| a.partial_cmp(b).unwrap()); // this is annoying, but f32 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp
         let knot_size = self.knots.len();
@@ -189,34 +160,6 @@ mod test {
     //     assert_eq!(Spline::b(0, 2, &knots, 0.5), 0.5);
     //     assert_eq!(Spline::b(0, 2, &knots, 1.0), 0.0);
     // }
-
-    #[test]
-    fn test_new_from_inner_knots_with_plenty_of_knots() {
-        let inner_knots = vec![0.0, 0.25, 0.5, 0.75, 1.0];
-        let my_spline = Spline::new_from_inner_knots(2, vec![1.0, 1.0, 1.0], inner_knots);
-        assert_eq!(my_spline.knots.len(), 9);
-    }
-
-    #[test]
-    fn test_new_from_inner_knots_with_exactly_right_amount_of_knots() {
-        let inner_knots = vec![0.0, 0.25, 0.5, 0.75, 1.0];
-        let my_spline = Spline::new_from_inner_knots(2, vec![1.0; 6], inner_knots);
-        assert_eq!(my_spline.knots.len(), 9);
-    }
-
-    #[test]
-    fn test_new_from_inner_knots_with_not_enough_knots_a() {
-        let inner_knots = vec![0.0, 0.25, 0.5, 0.75, 1.0];
-        let my_spline = Spline::new_from_inner_knots(2, vec![1.0; 10], inner_knots);
-        assert_eq!(my_spline.knots.len(), 13);
-    }
-
-    #[test]
-    fn test_new_from_inner_knots_with_not_enough_knots_b() {
-        let inner_knots = vec![0.0, 0.25, 0.5, 0.75, 1.0];
-        let my_spline = Spline::new_from_inner_knots(3, vec![1.0; 9], inner_knots);
-        assert_eq!(my_spline.knots.len(), 13);
-    }
 
     #[test]
     fn test_b() {
@@ -285,7 +228,7 @@ mod test {
         let mut spline = Spline::new(3, control_points, knots).unwrap();
         let mut samples = Vec::with_capacity(150);
         // assuming unordered samples for now
-        for i in 0..50 {
+        for _ in 0..50 {
             samples.push(3.0)
         }
         for i in 0..100 {
