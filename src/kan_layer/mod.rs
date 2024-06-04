@@ -238,6 +238,20 @@ mod test {
 
     // new layer tested with doc test
 
+    fn build_test_node() -> Node {
+        let k = 3;
+        let coef_size = 4;
+        let knot_size = coef_size + k + 1;
+        let mut knots = vec![0.0; knot_size];
+        knots[0] = -1.0;
+        for i in 1..knots.len() {
+            knots[i] = -1.0 + (i as f32 / (knot_size - 1) as f32 * 2.0);
+        }
+        let spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
+        let spline2 = Spline::new(k, vec![-1.0; coef_size], knots.clone()).unwrap();
+        Node(vec![spline1, spline2])
+    }
+
     #[test]
     fn test_new_node() {
         let input_dimension = 2;
@@ -255,22 +269,33 @@ mod test {
 
     #[test]
     fn test_activate() {
-        // create two splines
-        let k = 3;
-        let coef_size = 4;
-        let knot_size = coef_size + k + 1;
-        let mut knots = vec![0.0; knot_size];
-        knots[0] = -1.0;
-        for i in 1..knots.len() {
-            knots[i] = -1.0 + (i as f32 / (knot_size - 1) as f32 * 2.0);
-        }
-        let spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
-        let spline2 = Spline::new(k, vec![-1.0; coef_size], knots.clone()).unwrap();
-        let mut node = Node(vec![spline1, spline2]);
+        let mut node = build_test_node();
 
-        let preactivation = vec![0.0, 0.571];
+        let preactivation = vec![0.0, 0.5];
         let activation = node.activate(&preactivation);
-        let expected_activation = 1.0 - 0.50112504; // the first spline should get 0 as an input and output 1, the second spline should get 0.571 as an input and output -0.5012
+        let expected_activation = 1.0 - 0.68229163; // the first spline should get 0 as an input and output 1, the second spline should get 0.5 as an input and output -0.68229163
         assert_eq!(activation, expected_activation);
+    }
+
+    #[test]
+    fn test_activate_and_backward() {
+        let mut node = build_test_node();
+        // println!("to start: {:#?}\n", node);
+        let preactivation = vec![0.0, 0.5];
+        let _ = node.activate(&preactivation);
+        // println!("post activation: {:#?}\n", node);
+        let error = 1.0;
+        let input_error = node.backward(&error).unwrap();
+        // println!("post backprop: {:#?}\n", node);
+        let expected_input_drts = vec![0.0, 2.40626];
+        let expected_input_error = expected_input_drts
+            .iter()
+            .map(|f| f * error / node.0.len() as f32) // the error gets divided amongst the incoming edges
+            .collect::<Vec<f32>>();
+        let rounded_input_error: Vec<f32> = input_error
+            .iter()
+            .map(|f| (f * 100000.0).round() / 100000.0)
+            .collect();
+        assert_eq!(rounded_input_error, expected_input_error);
     }
 }
