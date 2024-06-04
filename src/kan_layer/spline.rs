@@ -90,7 +90,7 @@ impl Spline {
             input_gradient += self.control_points[i] * basis_derivative;
         }
 
-        return Ok(input_gradient);
+        return Ok(input_gradient * error);
     }
 
     pub(super) fn update(&mut self, learning_rate: f32) {
@@ -196,7 +196,7 @@ mod test {
         let _result = spline.forward(t);
         let error = -0.6;
         let input_gradient = spline.backward(error).unwrap();
-        let expected_input_gradient = 1.2290;
+        let expected_spline_drt_wrt_input = 1.2290;
         let expedted_control_point_gradients = vec![-0.0077, -0.0867, -0.0547, -0.0009];
         let rounded_control_point_gradients: Vec<f32> = spline
             .gradients
@@ -208,7 +208,10 @@ mod test {
             "control point gradients"
         );
         let rounded_input_gradient = (input_gradient * 10000.0).round() / 10000.0;
-        assert_eq!(rounded_input_gradient, expected_input_gradient);
+        assert_eq!(
+            rounded_input_gradient,
+            expected_spline_drt_wrt_input * error
+        );
     }
 
     #[test]
