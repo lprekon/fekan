@@ -181,6 +181,19 @@ mod test {
     }
 
     #[test]
+    fn test_b_2() {
+        let knots = vec![-1.0, -0.7143, -0.4286, -0.1429, 0.1429, 0.4286, 0.7143, 1.0];
+        let expected_results = vec![0.0208, 0.4792, 0.4792, 0.0208];
+        let k = 3;
+        let t = 0.0;
+        for i in 0..4 {
+            let result = Spline::b(i, k, &knots, t);
+            let rounded_result = (result * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
+            assert_eq!(rounded_result, expected_results[i]);
+        }
+    }
+
+    #[test]
     fn test_forward() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
@@ -193,7 +206,25 @@ mod test {
     }
 
     #[test]
-    fn test_forward_and_backward() {
+    fn test_forward_2() {
+        let k = 3;
+        let coef_size = 4;
+        let knot_size = coef_size + k + 1;
+        let mut knots = vec![0.0; knot_size];
+        knots[0] = -1.0;
+        for i in 1..knots.len() {
+            knots[i] = -1.0 + (i as f32 / (knot_size - 1) as f32 * 2.0);
+        }
+        let mut spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
+        println!("{:#?}", spline1);
+        let activation = spline1.forward(0.0);
+        println!("{:#?}", spline1);
+        let rounded_activation = (activation * 10000.0).round() / 10000.0;
+        assert_eq!(rounded_activation, 1.0);
+    }
+
+    #[test]
+    fn test_forward_then_backward() {
         // backward can't be run without forward, so we include forward in the name to make it obvious that if forward fails, backward will also fail
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
