@@ -1,7 +1,7 @@
 use std::slice::Iter;
 
 /// margin to add to the beginning and end of the knot vector when updating it from samples
-const KNOT_MARGIN: f32 = 0.01;
+pub(super) const KNOT_MARGIN: f32 = 0.01;
 
 #[derive(Debug)]
 pub(super) struct Spline {

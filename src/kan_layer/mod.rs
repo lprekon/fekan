@@ -237,7 +237,7 @@ mod test {
     use super::*;
 
     // new layer tested with doc test
-
+    /// returns a node with two splines, each with 4 control points, and knots from -1 to 1
     fn build_test_node() -> Node {
         let k = 3;
         let coef_size = 4;
@@ -297,5 +297,49 @@ mod test {
             .map(|f| (f * 100000.0).round() / 100000.0)
             .collect();
         assert_eq!(rounded_input_error, expected_input_error);
+    }
+
+    #[test]
+    fn test_node_update_from_samples() {
+        let mut node = build_test_node();
+
+        let mut sample_values = Vec::with_capacity(150);
+        // assuming unordered samples for now
+        for _ in 0..50 {
+            sample_values.push(3.0)
+        }
+        for i in 0..100 {
+            sample_values.push(-3.0 + i as f32 * 0.06);
+        }
+        // outer samples should be length 150, but each inner vector should be length 2 with the same value, since the node has 2 incoming edges, and the inner vectors are supposed to be the values coming down each edge.
+        // at this level, the outer vector spans time, and the inner vectors span the incoming edges
+        let mut samples = Vec::with_capacity(150);
+        for i in 0..150 {
+            samples.push(vec![sample_values[i], sample_values[i]]);
+        }
+
+        node.update_knots_from_samples(&samples);
+
+        let mut expected_knots = vec![-3.0, -1.74, -0.48, 0.78, 2.04, 3.0, 3.0, 3.0];
+        expected_knots[0] -= spline::KNOT_MARGIN;
+        expected_knots[7] += spline::KNOT_MARGIN;
+        assert_eq!(
+            node.0[0]
+                .knots()
+                .cloned()
+                .map(|v| (v * 10000.0).round() / 10000.0)
+                .collect::<Vec<f32>>(),
+            expected_knots,
+            "spline 1 knots"
+        );
+        assert_eq!(
+            node.0[1]
+                .knots()
+                .cloned()
+                .map(|v| (v * 10000.0).round() / 10000.0)
+                .collect::<Vec<f32>>(),
+            expected_knots,
+            "spline 2 knots"
+        );
     }
 }
