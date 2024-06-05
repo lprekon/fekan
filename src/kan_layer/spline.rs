@@ -168,6 +168,14 @@ mod test {
     // }
 
     #[test]
+    fn test_new_spline_with_too_few_knots() {
+        let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143];
+        let control_points = vec![0.75, 1.0, 1.6, -1.0];
+        let result = Spline::new(3, control_points, knots);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_b() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let expected_results = vec![0.0513, 0.5782, 0.3648, 0.0057];
