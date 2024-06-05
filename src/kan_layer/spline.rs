@@ -64,6 +64,9 @@ impl Spline {
     /// returns the gradient of the input used in the forward pass,to be accumulated by the caller and passed back to the pervious layer as its error
     ///
     /// uses the memoized activations from the most recent forward pass
+    ///
+    /// # Errors
+    /// returns an error if `backward` is called before `forward`
     pub(super) fn backward(&mut self, error: f32) -> Result<f32, String> {
         if let None = self.last_t {
             return Err("backward called before forward".to_string());
