@@ -199,4 +199,63 @@ mod test {
             .collect();
         assert_eq!(rounded_activations, expected_activations);
     }
+
+    #[test]
+    fn test_forward_bad_activations() {
+        let mut layer = build_test_layer();
+        let preacts = vec![0.0, 0.5, 0.5];
+        let acts = layer.forward(preacts);
+        assert_eq!(
+            acts,
+            Err("preactivation vector has length 3, but expected length 2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_forward_then_backward() {
+        let mut layer = build_test_layer();
+        let preacts = vec![0.0, 0.5];
+        let acts = layer.forward(preacts).unwrap();
+        let expected_activations = vec![0.3177, -0.3177];
+        let rounded_activations: Vec<f32> = acts
+            .iter()
+            .map(|x| (x * 10000.0).round() / 10000.0)
+            .collect();
+        assert_eq!(rounded_activations, expected_activations);
+
+        let error = vec![1.0, 0.5];
+        let input_error = layer.backward(error).unwrap();
+        let expected_input_error = vec![0.0, 0.60156];
+        let rounded_input_error: Vec<f32> = input_error
+            .iter()
+            .map(|f| (f * 100000.0).round() / 100000.0)
+            .collect();
+        assert_eq!(rounded_input_error, expected_input_error);
+    }
+
+    #[test]
+    fn test_backward_before_forward() {
+        let mut layer = build_test_layer();
+        let error = vec![1.0, 0.5];
+        let input_error = layer.backward(error);
+        assert!(input_error.is_err());
+    }
+
+    #[test]
+    fn test_backward_bad_error_length() {
+        let mut layer = build_test_layer();
+        let preacts = vec![0.0, 0.5];
+        let _ = layer.forward(preacts).unwrap();
+        let error = vec![1.0, 0.5, 0.5];
+        let input_error = layer.backward(error);
+        assert!(input_error.is_err());
+    }
+
+    #[test]
+    fn test_update_samples_bad_sample_length() {
+        let mut layer = build_test_layer();
+        let samples = vec![vec![0.0, 0.5, 0.5], vec![0.0, 0.5, 0.5]];
+        let update = layer.update_knots_from_samples(&samples);
+        assert!(update.is_err());
+    }
 }
