@@ -21,8 +21,13 @@ use std::vec;
 
 #[derive(Debug)]
 pub struct KanLayer {
+    // I think it will make sense to have each KanLayer be a vector of splines, plus the input and output dimension.
+    // the first `out_dim` splines will read from the first input, the second `out_dim` splines will read from the second input, etc., with `in_dim` such chunks
+    // to caluclate the output of the layer, the first element is the sum of the output of splines 0, out_dim, 2*out_dim, etc., the second element is the sum of splines 1, out_dim+1, 2*out_dim+1, etc.
     /// the nodes in this layer. This nested vector contains the b-spline coefficients (control points) for the layer. This is the main parameter that the network learns.
     pub(crate) nodes: Vec<Node>,
+    /// a vector of previous inputs to the layer, used to update the knot vectors for each incoming edge.
+    samples: Vec<Vec<f32>>,
 }
 
 impl KanLayer {
@@ -50,7 +55,10 @@ impl KanLayer {
         for _ in 0..output_dimension {
             nodes.push(Node::new(input_dimension, k, coef_size));
         }
-        KanLayer { nodes }
+        KanLayer {
+            nodes,
+            samples: vec![],
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -73,6 +81,7 @@ impl KanLayer {
                 self.nodes[0].num_incoming_edges()
             ));
         }
+        self.samples.push(preactivation.clone()); // save a copy of the preactivation for updating the knot vectors later
         let activations: Vec<f32> = self
             .nodes
             .iter_mut()
@@ -82,21 +91,19 @@ impl KanLayer {
         Ok(activations)
     }
 
-    /// update the knot vectors for each incoming edge in this layer given the samples
+    /// update the knot vectors for each incoming edge in this layer using the memoized samples
     ///
-    /// samples is a vector of vectors, where each inner vector is a sample of the input to the layer, and the outer vector contains all the samples
-    ///
-    /// # Errors
-    /// returns and error if the length of the inner vectors in `samples` is not equal to the input dimension of the layer
-    pub fn update_knots_from_samples(&mut self, samples: &Vec<Vec<f32>>) -> Result<(), String> {
-        if !samples
+    pub fn update_knots_from_samples(&mut self) -> Result<(), String> {
+        // this should never fire, but I'm leaving it here for now just to be safe.
+        if !self
+            .samples
             .iter()
             .all(|sample| sample.len() == self.nodes[0].num_incoming_edges())
         {
-            return Err(format!("samples must have the same length as the input dimension of the layer! Expected {}, got {}", self.nodes[0].num_incoming_edges(), samples.len()));
+            return Err(format!("samples must have the same length as the input dimension of the layer! Expected {}, got {}", self.nodes[0].num_incoming_edges(), self.samples.len()));
         }
         for i in 0..self.nodes.len() {
-            self.nodes[i].update_knots_from_samples(samples);
+            self.nodes[i].update_knots_from_samples(&self.samples);
         }
 
         Ok(())
@@ -171,6 +178,7 @@ mod test {
         let node2 = Node::new_from_splines(vec![spline2, spline1]);
         KanLayer {
             nodes: vec![node1, node2],
+            samples: vec![],
         }
     }
 
@@ -251,11 +259,12 @@ mod test {
         assert!(input_error.is_err());
     }
 
-    #[test]
-    fn test_update_samples_bad_sample_length() {
-        let mut layer = build_test_layer();
-        let samples = vec![vec![0.0, 0.5, 0.5], vec![0.0, 0.5, 0.5]];
-        let update = layer.update_knots_from_samples(&samples);
-        assert!(update.is_err());
-    }
+    // it doesn't make sense to have this test anymore
+    // #[test]
+    // fn test_update_samples_bad_sample_length() {
+    //     let mut layer = build_test_layer();
+    //     let samples = vec![vec![0.0, 0.5, 0.5], vec![0.0, 0.5, 0.5]];
+    //     let update = layer.update_knots_from_samples(&samples);
+    //     assert!(update.is_err());
+    // }
 }
