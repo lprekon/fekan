@@ -147,3 +147,56 @@ impl KanLayer {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use spline::Spline;
+
+    use super::*;
+
+    /// returns a new layer with input and output dimension = 2, k = 3, and coef_size = 4
+    fn build_test_layer() -> KanLayer {
+        // this doesn't work because I need to specify the exact coefficients for each node
+        let k = 3;
+        let coef_size = 4;
+        let knot_size = coef_size + k + 1;
+        let mut knots = vec![0.0; knot_size];
+        knots[0] = -1.0;
+        for i in 1..knots.len() {
+            knots[i] = -1.0 + (i as f32 / (knot_size - 1) as f32 * 2.0);
+        }
+        let spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
+        let spline2 = Spline::new(k, vec![-1.0; coef_size], knots.clone()).unwrap();
+        let node1 = Node::new_from_splines(vec![spline1.clone(), spline2.clone()]);
+        let node2 = Node::new_from_splines(vec![spline2, spline1]);
+        KanLayer {
+            nodes: vec![node1, node2],
+        }
+    }
+
+    #[test]
+    fn test_new() {
+        let input_dimension = 3;
+        let output_dimension = 4;
+        let k = 5;
+        let coef_size = 6;
+        let my_layer = KanLayer::new(input_dimension, output_dimension, k, coef_size);
+        assert_eq!(my_layer.len(), output_dimension);
+        assert_eq!(my_layer.nodes[0].num_incoming_edges(), input_dimension);
+        // assert_eq!(my_layer.total_edges(), output_dimension * input_dimension);
+    }
+
+    #[test]
+    fn test_forward() {
+        // to properly test layer forward, I need a layer with output and input dim = 2, which means 4 total edges
+        let mut layer = build_test_layer();
+        let preacts = vec![0.0, 0.5];
+        let acts = layer.forward(preacts).unwrap();
+        let expected_activations = vec![0.3177, -0.3177];
+        let rounded_activations: Vec<f32> = acts
+            .iter()
+            .map(|x| (x * 10000.0).round() / 10000.0)
+            .collect();
+        assert_eq!(rounded_activations, expected_activations);
+    }
+}

@@ -38,6 +38,12 @@ impl Node {
         Node(incoming_edges)
     }
 
+    #[allow(dead_code)]
+    // used in KanLayer tests
+    pub(super) fn new_from_splines(splines: Vec<Spline>) -> Self {
+        Node(splines)
+    }
+
     pub(super) fn num_incoming_edges(&self) -> usize {
         self.0.len()
     }
@@ -100,7 +106,7 @@ impl Node {
 }
 
 #[cfg(test)]
-mod node_test {
+mod test {
     use crate::kan_layer::spline::KNOT_MARGIN;
 
     use super::*;
