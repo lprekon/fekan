@@ -156,6 +156,10 @@ impl Spline {
         adaptive_knots[knot_size - 1] += KNOT_MARGIN;
         self.knots = adaptive_knots;
     }
+
+    pub(super) fn get_parameter_count(&self) -> usize {
+        self.control_points.len() + self.knots.len()
+    }
 }
 
 #[cfg(test)]

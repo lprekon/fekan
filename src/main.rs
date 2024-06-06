@@ -3,12 +3,19 @@
 use fekan::Kan;
 
 fn main() {
-    let input_dimension = 3;
+    let input_dimension = 64;
     let k = 3;
     let coef_size = 5;
-    let layer_sizes = vec![4, 3, 2];
-    let my_kan = Kan::new(input_dimension, layer_sizes, k, coef_size);
-    println!("{:#?}", my_kan);
+    let layer_sizes = vec![128, 128, 128];
+    let my_kan = Kan::new(input_dimension, layer_sizes.clone(), k, coef_size);
+    println!(
+        "A KAN with input dimension {}, layer sizes {:?}, k {}, and coef size {} has {} parameters",
+        input_dimension,
+        layer_sizes,
+        k,
+        coef_size,
+        my_kan.get_parameter_count()
+    );
 
     // let mut my_layer = KanLayer::new(input_dimension, output_dimension, k, coef_size);
     // print!("{:#?}", my_layer);

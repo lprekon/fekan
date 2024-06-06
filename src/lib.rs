@@ -31,6 +31,24 @@ impl Kan {
         }
         Ok(error)
     }
+    pub fn update(&mut self, learning_rate: f32) {
+        for layer in self.layers.iter_mut() {
+            layer.update(learning_rate);
+        }
+    }
+
+    pub fn zero_gradients(&mut self) {
+        for layer in self.layers.iter_mut() {
+            layer.zero_gradients();
+        }
+    }
+
+    pub fn get_parameter_count(&self) -> usize {
+        self.layers
+            .iter()
+            .map(|layer| layer.get_parameter_count())
+            .sum()
+    }
 }
 
 #[cfg(test)]

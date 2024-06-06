@@ -103,6 +103,10 @@ impl Node {
             self.0[i].zero_gradients();
         }
     }
+
+    pub(super) fn get_parameter_count(&self) -> usize {
+        self.0.iter().map(|edge| edge.get_parameter_count()).sum()
+    }
 }
 
 #[cfg(test)]

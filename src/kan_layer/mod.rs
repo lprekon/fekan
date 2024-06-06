@@ -153,6 +153,13 @@ impl KanLayer {
             self.nodes[i].zero_gradients();
         }
     }
+
+    pub fn get_parameter_count(&self) -> usize {
+        self.nodes
+            .iter()
+            .map(|node| node.get_parameter_count())
+            .sum()
+    }
 }
 
 #[cfg(test)]
