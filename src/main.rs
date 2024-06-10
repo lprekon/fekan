@@ -26,9 +26,6 @@ struct Cli {
     /// path to the output file for the model weights. Only used for Build and LoadTrain commands
     #[arg(short = 'o', long = "model-out")]
     model_output_file: Option<String>,
-    /// number of rows to pass through the model per batch. Weights knots are updated after each batch
-    #[arg(long, default_value = "1024")]
-    batch_size: usize,
 
     /// how many rows to evaluate between knot updates
     #[arg(short, long, default_value = "100")]
@@ -47,13 +44,11 @@ struct Cli {
     #[arg(short, long, default_value = "100")]
     epochs: usize,
 
-    /// number of batches to process before printing the loss and other metrics
-    #[arg(long, default_value = "10")]
-    batches_per_heartbeat: usize,
-
     /// fraction of the data to use for validation
     #[arg(long, default_value = "0.1")]
     validation_split: f32,
+
+    validate_each_epoch: bool,
 }
 
 #[derive(ValueEnum, Clone)]
@@ -203,74 +198,68 @@ fn build_and_train(args: Cli) -> Result<(), Box<dyn Error>> {
 
     // train the model
     for epoch in 0..args.epochs {
-        // run as many epochs (1 epoch = 1 pass through the data) as specified
-        let mut samples_this_epoch = 0;
-        while samples_this_epoch < training_data.len() {
-            // keep running batches until we've processed the entire dataset
-            let mut batch_loss = 0.0;
-            for i in samples_this_epoch..samples_this_epoch + args.batch_size {
-                // run a batch with the specified number of samples
-                let sample = &training_data[i];
-                let logits = model
-                    .forward(sample.features.iter().map(|&x| x as f32).collect())
-                    .unwrap();
-                // calculate classification probability from logits
-                // let logit_max = logits.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-                let (logit_max, logit_max_index) = {
-                    let mut max = f32::NEG_INFINITY;
-                    let mut max_index = 0;
-                    for (i, &logit) in logits.iter().enumerate() {
-                        if logit > max {
-                            max = logit;
-                            max_index = i;
-                        }
+        let mut epoch_loss = 0.0;
+        for sample in &training_data {
+            // run over each sample in the training data for each epoch
+            let logits = model
+                .forward(sample.features.iter().map(|&x| x as f32).collect())
+                .unwrap();
+            // calculate classification probability from logits
+            // let logit_max = logits.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+            let (logit_max, logit_max_index) = {
+                let mut max = f32::NEG_INFINITY;
+                let mut max_index = 0;
+                for (i, &logit) in logits.iter().enumerate() {
+                    if logit > max {
+                        max = logit;
+                        max_index = i;
                     }
-                    (max, max_index)
-                };
-                let norm_logits = logits.iter().map(|&x| x - logit_max).collect::<Vec<f32>>();
-                let counts = norm_logits.iter().map(|&x| x.exp()).collect::<Vec<f32>>();
-                let count_sum = counts.iter().sum::<f32>();
-                let probs = counts.iter().map(|&x| x / count_sum).collect::<Vec<f32>>();
-                let logprobs = probs.iter().map(|&x| x.ln()).collect::<Vec<f32>>();
-                let loss = -logprobs[sample.label as usize];
+                }
+                (max, max_index)
+            };
+            let norm_logits = logits.iter().map(|&x| x - logit_max).collect::<Vec<f32>>();
+            let counts = norm_logits.iter().map(|&x| x.exp()).collect::<Vec<f32>>();
+            let count_sum = counts.iter().sum::<f32>();
+            let probs = counts.iter().map(|&x| x / count_sum).collect::<Vec<f32>>();
+            let logprobs = probs.iter().map(|&x| x.ln()).collect::<Vec<f32>>();
+            let loss = -logprobs[sample.label as usize];
 
-                // add the loss to the batch loss
-                batch_loss += loss;
+            // add the loss to the batch loss
+            epoch_loss += loss;
 
-                // calculate the error
-                let dlogprobs = (0..probs.len())
-                    .map(|i| {
-                        if i == sample.label as usize {
-                            -1.0
-                        } else {
-                            0.0
-                        }
-                    })
-                    .collect::<Vec<f32>>(); // dloss/dlogpobs. vector is 0 except for the correct class, where it's -1
-                let dprobs = probs
-                    .iter()
-                    .zip(dlogprobs.iter())
-                    .map(|(&p, &dlp)| dlp / p)
-                    .collect::<Vec<f32>>(); // dloss/dprobs = dlogprobs/dprobs * dloss/dlogprobs. d/dx ln(x) = 1/x. dlogprobs/dprobs = 1/probs, `dlp` = dloss/dlogprobs
-                let dcounts_sum: f32 = counts
-                    .iter()
-                    .zip(dprobs.iter())
-                    .map(|(&count, &dprob)| -count / (count_sum * count_sum) * dprob)
-                    .sum();
-                let dcounts = dprobs
-                    .iter()
-                    .map(|&dprob| dcounts_sum + dprob / count_sum)
-                    .collect::<Vec<f32>>();
-                let dnorm_logits = dcounts
-                    .iter()
-                    .zip(counts.iter())
-                    .map(|(&dcount, &e_norm_logit)| dcount * e_norm_logit)
-                    .collect::<Vec<f32>>(); // dloss/dnorm_logits = dloss/dcounts * dcounts/dnorm_logits, dcounts/dnorm_logits = d/dx exp(x) = exp(x), and exp(norm_logits) = counts, so we just use counts rather than recalculating
-                let dlogit_max: f32 = -dnorm_logits.iter().sum::<f32>();
-                let dlogits = dnorm_logits.iter().enumerate().map(|(i, &dnorm_logit)|{if i == logit_max_index {1.0} else {0.0}} * dlogit_max + dnorm_logit).collect::<Vec<f32>>();
-                // pass the error back through the model
-                let _ = model.backward(dlogits).unwrap();
-            }
+            // calculate the error
+            let dlogprobs = (0..probs.len())
+                .map(|i| {
+                    if i == sample.label as usize {
+                        -1.0
+                    } else {
+                        0.0
+                    }
+                })
+                .collect::<Vec<f32>>(); // dloss/dlogpobs. vector is 0 except for the correct class, where it's -1
+            let dprobs = probs
+                .iter()
+                .zip(dlogprobs.iter())
+                .map(|(&p, &dlp)| dlp / p)
+                .collect::<Vec<f32>>(); // dloss/dprobs = dlogprobs/dprobs * dloss/dlogprobs. d/dx ln(x) = 1/x. dlogprobs/dprobs = 1/probs, `dlp` = dloss/dlogprobs
+            let dcounts_sum: f32 = counts
+                .iter()
+                .zip(dprobs.iter())
+                .map(|(&count, &dprob)| -count / (count_sum * count_sum) * dprob)
+                .sum();
+            let dcounts = dprobs
+                .iter()
+                .map(|&dprob| dcounts_sum + dprob / count_sum)
+                .collect::<Vec<f32>>();
+            let dnorm_logits = dcounts
+                .iter()
+                .zip(counts.iter())
+                .map(|(&dcount, &e_norm_logit)| dcount * e_norm_logit)
+                .collect::<Vec<f32>>(); // dloss/dnorm_logits = dloss/dcounts * dcounts/dnorm_logits, dcounts/dnorm_logits = d/dx exp(x) = exp(x), and exp(norm_logits) = counts, so we just use counts rather than recalculating
+            let dlogit_max: f32 = -dnorm_logits.iter().sum::<f32>();
+            let dlogits = dnorm_logits.iter().enumerate().map(|(i, &dnorm_logit)|{if i == logit_max_index {1.0} else {0.0}} * dlogit_max + dnorm_logit).collect::<Vec<f32>>();
+            // pass the error back through the model
+            let _ = model.backward(dlogits).unwrap();
         }
     }
 
