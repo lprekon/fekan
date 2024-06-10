@@ -2,6 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    error::Error,
     fs::File,
     path::PathBuf,
 };
@@ -71,12 +72,13 @@ struct RawSample {
     label: String,
 }
 
+#[derive(Clone)]
 struct Sample {
     features: Vec<u8>,
     label: u8,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Build => {
@@ -139,8 +141,8 @@ static LABELS: &'static [&str] = &[
     "xtensa",
 ];
 
-fn load_data(args: Cli) -> (Vec<Sample>, Vec<Sample>) {
-    let file = File::open(args.data_file).unwrap();
+fn load_data(args: &Cli) -> (Vec<Sample>, Vec<Sample>) {
+    let file = File::open(args.data_file.clone()).unwrap();
     let raw_data: Vec<RawSample> = serde_pickle::from_reader(file, Default::default()).unwrap();
     let rows_loaded = raw_data.len();
     let mut label_map: HashMap<&str, u8> = HashMap::new();
@@ -179,7 +181,7 @@ fn load_data(args: Cli) -> (Vec<Sample>, Vec<Sample>) {
     (training_data, validation_data)
 }
 
-fn build_and_train(args: Cli) {
+fn build_and_train(args: Cli) -> Result<(), Box<dyn Error>> {
     /* 1. Load the data
        1a. PARSE the data
     * 2. Separate the data into training and validation sets
@@ -189,7 +191,7 @@ fn build_and_train(args: Cli) {
     */
 
     // load, parse, and separate the data
-    let (training_data, validation_data) = load_data(args);
+    let (training_data, validation_data) = load_data(&args);
 
     // build the model
     let input_dimension = training_data[0].features.len();
@@ -198,4 +200,79 @@ fn build_and_train(args: Cli) {
     let layer_sizes = vec![LABELS.len(), LABELS.len()];
     let mut model = Kan::new(input_dimension, layer_sizes, k, coef_size);
     println!("model parameter count: {}", model.get_parameter_count());
+
+    // train the model
+    for epoch in 0..args.epochs {
+        // run as many epochs (1 epoch = 1 pass through the data) as specified
+        let mut samples_this_epoch = 0;
+        while samples_this_epoch < training_data.len() {
+            // keep running batches until we've processed the entire dataset
+            let mut batch_loss = 0.0;
+            for i in samples_this_epoch..samples_this_epoch + args.batch_size {
+                // run a batch with the specified number of samples
+                let sample = &training_data[i];
+                let logits = model
+                    .forward(sample.features.iter().map(|&x| x as f32).collect())
+                    .unwrap();
+                // calculate classification probability from logits
+                // let logit_max = logits.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                let (logit_max, logit_max_index) = {
+                    let mut max = f32::NEG_INFINITY;
+                    let mut max_index = 0;
+                    for (i, &logit) in logits.iter().enumerate() {
+                        if logit > max {
+                            max = logit;
+                            max_index = i;
+                        }
+                    }
+                    (max, max_index)
+                };
+                let norm_logits = logits.iter().map(|&x| x - logit_max).collect::<Vec<f32>>();
+                let counts = norm_logits.iter().map(|&x| x.exp()).collect::<Vec<f32>>();
+                let count_sum = counts.iter().sum::<f32>();
+                let probs = counts.iter().map(|&x| x / count_sum).collect::<Vec<f32>>();
+                let logprobs = probs.iter().map(|&x| x.ln()).collect::<Vec<f32>>();
+                let loss = -logprobs[sample.label as usize];
+
+                // add the loss to the batch loss
+                batch_loss += loss;
+
+                // calculate the error
+                let dlogprobs = (0..probs.len())
+                    .map(|i| {
+                        if i == sample.label as usize {
+                            -1.0
+                        } else {
+                            0.0
+                        }
+                    })
+                    .collect::<Vec<f32>>(); // dloss/dlogpobs. vector is 0 except for the correct class, where it's -1
+                let dprobs = probs
+                    .iter()
+                    .zip(dlogprobs.iter())
+                    .map(|(&p, &dlp)| dlp / p)
+                    .collect::<Vec<f32>>(); // dloss/dprobs = dlogprobs/dprobs * dloss/dlogprobs. d/dx ln(x) = 1/x. dlogprobs/dprobs = 1/probs, `dlp` = dloss/dlogprobs
+                let dcounts_sum: f32 = counts
+                    .iter()
+                    .zip(dprobs.iter())
+                    .map(|(&count, &dprob)| -count / (count_sum * count_sum) * dprob)
+                    .sum();
+                let dcounts = dprobs
+                    .iter()
+                    .map(|&dprob| dcounts_sum + dprob / count_sum)
+                    .collect::<Vec<f32>>();
+                let dnorm_logits = dcounts
+                    .iter()
+                    .zip(counts.iter())
+                    .map(|(&dcount, &e_norm_logit)| dcount * e_norm_logit)
+                    .collect::<Vec<f32>>(); // dloss/dnorm_logits = dloss/dcounts * dcounts/dnorm_logits, dcounts/dnorm_logits = d/dx exp(x) = exp(x), and exp(norm_logits) = counts, so we just use counts rather than recalculating
+                let dlogit_max: f32 = -dnorm_logits.iter().sum::<f32>();
+                let dlogits = dnorm_logits.iter().enumerate().map(|(i, &dnorm_logit)|{if i == logit_max_index {1.0} else {0.0}} * dlogit_max + dnorm_logit).collect::<Vec<f32>>();
+                // pass the error back through the model
+                let _ = model.backward(dlogits).unwrap();
+            }
+        }
+    }
+
+    Ok(())
 }
