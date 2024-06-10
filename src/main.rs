@@ -1,11 +1,16 @@
 // use std::fs::File;
 
-use std::{fs::File, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    path::PathBuf,
+};
 
 // // use fekan::kan_layer::spline::Spline;
 // // use fekan::kan_layer::KanLayer;
-// use fekan::Kan;
 use clap::{CommandFactory, Parser, ValueEnum};
+use fekan::Kan;
+use serde::Deserialize;
 
 #[derive(Parser)]
 struct Cli {
@@ -60,9 +65,15 @@ enum Commands {
     LoadInfer,
 }
 
-struct DataSample {
+#[derive(Deserialize, Debug)]
+struct RawSample {
     features: Vec<u8>,
-    target: u8,
+    label: String,
+}
+
+struct Sample {
+    features: Vec<u8>,
+    label: u8,
 }
 
 fn main() {
@@ -113,6 +124,61 @@ fn main() {
     }
 }
 
+static LABELS: &'static [&str] = &[
+    "avr",
+    "alphaev56",
+    "arm",
+    "m68k",
+    "mips",
+    "mipsel",
+    "powerpc",
+    "s390",
+    "sh4",
+    "sparc",
+    "x86_64",
+    "xtensa",
+];
+
+fn load_data(args: Cli) -> (Vec<Sample>, Vec<Sample>) {
+    let file = File::open(args.data_file).unwrap();
+    let raw_data: Vec<RawSample> = serde_pickle::from_reader(file, Default::default()).unwrap();
+    let rows_loaded = raw_data.len();
+    let mut label_map: HashMap<&str, u8> = HashMap::new();
+    for (i, label) in LABELS.iter().enumerate() {
+        label_map.insert(label, i as u8);
+    }
+
+    // parse the data, maping the label string to a u8
+    let data = raw_data
+        .iter()
+        .map(|r| Sample {
+            features: r.features.clone(),
+            label: label_map[&r.label[..]],
+        })
+        .collect::<Vec<Sample>>();
+
+    // separate the data into training and validation sets
+    let mut validation_indecies: HashSet<usize> = HashSet::new();
+    while validation_indecies.len() < (args.validation_split * data.len() as f32) as usize {
+        let index = rand::random::<usize>() % data.len();
+        validation_indecies.insert(index);
+    }
+    let mut training_data: Vec<Sample> = Vec::with_capacity(data.len() - validation_indecies.len());
+    let mut validation_data: Vec<Sample> = Vec::with_capacity(validation_indecies.len());
+    for (i, sample) in data.into_iter().enumerate() {
+        if validation_indecies.contains(&i) {
+            validation_data.push(sample);
+        } else {
+            training_data.push(sample);
+        }
+    }
+    assert!(
+        training_data.len() + validation_data.len() == rows_loaded,
+        "data split error",
+    );
+    (training_data, validation_data)
+}
+
 fn build_and_train(args: Cli) {
     /* 1. Load the data
        1a. PARSE the data
@@ -122,5 +188,14 @@ fn build_and_train(args: Cli) {
     * 5. Save the model
     */
 
-    let file = File::open(args.data_file).unwrap();
+    // load, parse, and separate the data
+    let (training_data, validation_data) = load_data(args);
+
+    // build the model
+    let input_dimension = training_data[0].features.len();
+    let k = 3;
+    let coef_size = 5;
+    let layer_sizes = vec![LABELS.len(), LABELS.len()];
+    let mut model = Kan::new(input_dimension, layer_sizes, k, coef_size);
+    println!("model parameter count: {}", model.get_parameter_count());
 }
