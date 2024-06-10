@@ -85,7 +85,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                     )
                     .exit();
             }
-            build_and_train(cli)
+
+            let mut out_file = File::create(cli.model_output_file.clone().unwrap())?;
+            let model = build_and_train(cli)?;
+            serde_pickle::to_writer(&mut out_file, &model, Default::default()).unwrap();
+            Ok(())
         }
         Commands::LoadTrain => {
             if cli.model_input_file.is_none() {
@@ -176,7 +180,7 @@ fn load_data(args: &Cli) -> (Vec<Sample>, Vec<Sample>) {
     (training_data, validation_data)
 }
 
-fn build_and_train(args: Cli) -> Result<(), Box<dyn Error>> {
+fn build_and_train(args: Cli) -> Result<Kan, Box<dyn Error>> {
     /* 1. Load the data
        1a. PARSE the data
     * 2. Separate the data into training and validation sets
@@ -243,7 +247,7 @@ fn build_and_train(args: Cli) -> Result<(), Box<dyn Error>> {
         println!();
     }
 
-    Ok(())
+    Ok(model)
 }
 
 fn calculate_error(logits: &Vec<f32>, label: usize) -> (f32, Vec<f32>) {

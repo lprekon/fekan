@@ -1,5 +1,6 @@
 use rand::distributions::Distribution; // apparently the statrs distributions use the rand Distribution trait
 use rand::prelude::*;
+use serde::{Deserialize, Serialize};
 use statrs::distribution::Normal;
 
 use super::spline::Spline;
@@ -7,7 +8,7 @@ use super::spline::Spline;
 // use super::spline::Spline;
 
 /// a list of sets of control points, one for each incoming edge
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Node(Vec<Spline>);
 impl Node {
     /// create a new node with `input_dimension` incoming edges, each with a spline of degree `k` and `coef_size` control points

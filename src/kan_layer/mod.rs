@@ -4,6 +4,7 @@ mod node;
 mod spline;
 
 use node::Node;
+use serde::{Deserialize, Serialize};
 
 use std::vec;
 
@@ -19,7 +20,7 @@ use std::vec;
 /// the size of the node vector is equal to the output dimension of the layer
 /// the size of the incoming edge vector for each node is equal to the input dimension of the layer
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct KanLayer {
     // I think it will make sense to have each KanLayer be a vector of splines, plus the input and output dimension.
     // the first `out_dim` splines will read from the first input, the second `out_dim` splines will read from the second input, etc., with `in_dim` such chunks
@@ -105,6 +106,9 @@ impl KanLayer {
         for i in 0..self.nodes.len() {
             self.nodes[i].update_knots_from_samples(&self.samples);
         }
+
+        // clear the samples after updating the knots
+        self.samples.clear();
 
         Ok(())
     }

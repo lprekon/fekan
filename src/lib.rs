@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 pub mod kan_layer;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Kan {
     pub layers: Vec<kan_layer::KanLayer>,
 }
