@@ -49,6 +49,15 @@ impl Kan {
             .map(|layer| layer.get_parameter_count())
             .sum()
     }
+
+    pub fn update_knots_from_samples(&mut self) -> Result<(), String> {
+        for layer in self.layers.iter_mut() {
+            if let Err(e) = layer.update_knots_from_samples() {
+                return Err(e);
+            }
+        }
+        return Ok(());
+    }
 }
 
 #[cfg(test)]
