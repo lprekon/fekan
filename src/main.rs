@@ -70,11 +70,14 @@ struct Cli {
     /// number of nodes in each interal layer of the model. This argument does not include the output layer.
     /// If not provided, the model will be a single layer with the same number of nodes as the number of classes.
     /// Only used for the Build command
-    #[arg(long, default_value = "[]")]
-    hidden_layer_sizes: Vec<usize>,
+    /// Ex `--hidden-layers 10,20,30` will create a model with 3 hidden layers, with 10, 20, and 30 nodes respectively
+    #[arg(long = "hidden-layers", value_delimiter = ',')]
+    hidden_layer_sizes: Option<Vec<usize>>,
 
-    /// list of classes to predict, used to map output nodes to class labels. In Build or LoadTrain mode, any data points with labels not in this list will be ignored
-    #[arg(long)]
+    /// list of classes to predict, used to map output nodes to class labels, and to size the output layer in Build mode.
+    /// In Build or LoadTrain mode, any data points with labels not in this list will be ignored
+    /// Ex `--classes cat,dog,mouse`
+    #[arg(long, value_delimiter = ',')]
     classes: Vec<String>,
 }
 
@@ -123,7 +126,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .exit();
             }
 
-            let mut out_file = File::create(cli.model_output_file.clone().unwrap())?;
             let (training_data, validation_data) =
                 load_data(&cli.data_file, cli.validation_split, &cli.classes)?;
 
@@ -136,7 +138,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             // build the model
             let input_dimension = training_data[0].features.len();
             let output_dimension = cli.classes.len();
-            let mut layer_sizes: Vec<usize> = cli.hidden_layer_sizes.clone();
+            let mut layer_sizes: Vec<usize> = if cli.hidden_layer_sizes.is_some() {
+                cli.hidden_layer_sizes.clone().unwrap()
+            } else {
+                vec![]
+            };
             layer_sizes.push(output_dimension);
 
             let untrained_model = Kan::new(input_dimension, layer_sizes, cli.degree, cli.num_coef);
@@ -147,6 +153,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 to_pass_validation_data,
                 TrainingOptions::from(&cli),
             )?;
+            let mut out_file = File::create(cli.model_output_file.clone().unwrap())?;
             serde_pickle::to_writer(&mut out_file, &trained_model, Default::default()).unwrap();
             Ok(())
         }
@@ -206,6 +213,7 @@ pub fn load_data(
             .enumerate()
             .map(|(i, c)| (c.clone(), i as u32)),
     );
+    println!("Class map: {:?}", class_map);
     // let data: Vec<Sample> = raw_data.iter().filter(|raw_sample| class_map.contains_key(&raw_sample.label)).map(|raw_sample| {
     //     let label = class_map[&raw_sample.label];
     //     let features: Vec<f32> = raw_sample.features.iter().map(|&f| f as f32).collect();
@@ -238,7 +246,10 @@ pub fn load_data(
     }
     assert!(
         training_data.len() + validation_data.len() == rows_loaded,
-        "data split error",
+        "Data split error. Training: {}, Validation: {}, Total: {}",
+        training_data.len(),
+        validation_data.len(),
+        rows_loaded
     );
     Ok((training_data, validation_data))
 }
