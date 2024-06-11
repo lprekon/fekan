@@ -1,18 +1,12 @@
 // use std::fs::File;
 
-use std::{
-    collections::{HashMap, HashSet},
-    error::Error,
-    fs::File,
-    path::PathBuf,
-};
+use std::{error::Error, fs::File, path::PathBuf};
 
 // // use fekan::kan_layer::spline::Spline;
 // // use fekan::kan_layer::KanLayer;
 use clap::{CommandFactory, Parser, ValueEnum};
 
 use fekan::{build_and_train, TrainingOptions};
-use serde::Deserialize;
 
 #[derive(Parser)]
 struct Cli {
