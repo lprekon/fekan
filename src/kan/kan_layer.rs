@@ -35,7 +35,7 @@ impl KanLayer {
     /// create a new layer with the given number of nodes in the previous layer and the given number of nodes in this layer
     /// # Examples
     /// ```
-    /// use fekan::kan_layer::KanLayer;
+    /// use fekan::kan::kan_layer::KanLayer;
     ///
     /// let input_dimension = 3;
     /// let output_dimension = 4;
@@ -163,6 +163,10 @@ impl KanLayer {
             .iter()
             .map(|node| node.get_parameter_count())
             .sum()
+    }
+
+    pub fn total_edges(&self) -> usize {
+        self.nodes.iter().map(|node| node.total_edges()).sum()
     }
 }
 

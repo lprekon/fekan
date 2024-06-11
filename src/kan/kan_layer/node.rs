@@ -108,11 +108,16 @@ impl Node {
     pub(super) fn get_parameter_count(&self) -> usize {
         self.0.iter().map(|edge| edge.get_parameter_count()).sum()
     }
+
+    pub(super) fn total_edges(&self) -> usize {
+        self.0.len()
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::kan_layer::spline::KNOT_MARGIN;
+
+    use crate::kan::kan_layer::spline::KNOT_MARGIN;
 
     use super::*;
 
