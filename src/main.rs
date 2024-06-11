@@ -1,14 +1,21 @@
 // use std::fs::File;
 
-use std::{error::Error, fs::File, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    fs::File,
+    path::PathBuf,
+    vec,
+};
 
 // // use fekan::kan_layer::spline::Spline;
 // // use fekan::kan_layer::KanLayer;
 use clap::{CommandFactory, Parser, ValueEnum};
 
-use fekan::{build_and_train, TrainingOptions};
+use fekan::{kan::Kan, train_model, Sample, TrainingOptions};
+use serde::Deserialize;
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 struct Cli {
     #[arg(value_enum, long = "mode")]
     command: Commands,
@@ -43,7 +50,24 @@ struct Cli {
     #[arg(long, default_value = "0.1")]
     validation_split: f32,
 
+    /// if true, the model will be tested against the validation split after each epoch, and the validation loss included in the heartbeat
     validate_each_epoch: bool,
+
+    /// degree of B-Spline to use
+    #[arg(short = 'k', long, default_value = "3")]
+    degree: usize,
+
+    /// number of control points to use in each B-Spline
+    #[arg(long, default_value = "5")]
+    num_coef: usize,
+
+    /// number of nodes in each interal layer of the model. This argument does not include the output layer. If not provided, the model will be a single layer with the same number of nodes as the number of classes
+    #[arg(long, default_value = "[]")]
+    hidden_layer_sizes: Vec<usize>,
+
+    /// list of classes to predict, used to map output nodes to class labels. In training mode, any data points with labels not in this list will be ignored
+    #[arg(long)]
+    classes: Vec<String>,
 }
 
 // impl Into<TrainingOptions> for Cli {
@@ -63,12 +87,11 @@ impl From<&Cli> for TrainingOptions {
             num_epochs: cli.epochs,
             knot_update_interval: cli.knot_update_interval,
             learning_rate: cli.learning_rate,
-            validate_each_epoch: cli.validate_each_epoch,
         }
     }
 }
 
-#[derive(ValueEnum, Clone)]
+#[derive(ValueEnum, Clone, Debug)]
 enum Commands {
     /// Build a new model and train it on the provided data
     Build,
@@ -80,6 +103,7 @@ enum Commands {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+    println!("Using arguments {cli:?}");
     match cli.command {
         Commands::Build => {
             if cli.model_output_file.is_none() {
@@ -93,10 +117,31 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let mut out_file = File::create(cli.model_output_file.clone().unwrap())?;
             let (training_data, validation_data) =
-                fekan::load_data(&cli.data_file, cli.validation_split)?;
-            let model =
-                build_and_train(training_data, validation_data, TrainingOptions::from(&cli))?;
-            serde_pickle::to_writer(&mut out_file, &model, Default::default()).unwrap();
+                load_data(&cli.data_file, cli.validation_split, &cli.classes)?;
+
+            let to_pass_validation_data = if cli.validate_each_epoch {
+                Some(validation_data)
+            } else {
+                None
+            };
+
+            // build the model
+            let input_dimension = training_data[0].features.len();
+            let output_dimension = cli.classes.len();
+            let output_layer = vec![output_dimension];
+            let mut layer_sizes: Vec<usize> = cli.hidden_layer_sizes.clone();
+            layer_sizes.push(output_dimension);
+
+            let mut untrained_model =
+                Kan::new(input_dimension, layer_sizes, cli.degree, cli.num_coef);
+
+            let trained_model = train_model(
+                untrained_model,
+                training_data,
+                to_pass_validation_data,
+                TrainingOptions::from(&cli),
+            )?;
+            serde_pickle::to_writer(&mut out_file, &trained_model, Default::default()).unwrap();
             Ok(())
         }
         Commands::LoadTrain => {
@@ -131,4 +176,63 @@ fn main() -> Result<(), Box<dyn Error>> {
             todo!("implement LoadInfer command")
         }
     }
+}
+
+#[derive(Deserialize, Debug)]
+struct RawSample {
+    features: Vec<u8>,
+    label: String,
+}
+
+pub fn load_data(
+    data_file_path: &PathBuf,
+    validation_split: f32,
+    classes: &Vec<String>,
+) -> Result<(Vec<Sample>, Vec<Sample>), Box<dyn Error>> {
+    let file = File::open(data_file_path)?;
+    let raw_data: Vec<RawSample> = serde_pickle::from_reader(file, Default::default())?;
+    let rows_loaded = raw_data.len();
+
+    // parse the data, maping the label string to a u8
+    let class_map: HashMap<String, u32> = HashMap::from_iter(
+        classes
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.clone(), i as u32)),
+    );
+    // let data: Vec<Sample> = raw_data.iter().filter(|raw_sample| class_map.contains_key(&raw_sample.label)).map(|raw_sample| {
+    //     let label = class_map[&raw_sample.label];
+    //     let features: Vec<f32> = raw_sample.features.iter().map(|&f| f as f32).collect();
+    //     Sample { features, label }
+    // }).collect();
+    let mut data = Vec::with_capacity(raw_data.len());
+    for raw_sample in raw_data {
+        if !class_map.contains_key(&raw_sample.label) {
+            continue; // ignore data points with labels not in the provided class list
+        }
+        let label = class_map[&raw_sample.label];
+        let features: Vec<f32> = raw_sample.features.iter().map(|&f| f as f32).collect();
+        data.push(Sample { features, label });
+    }
+
+    // separate the data into training and validation sets
+    let mut validation_indecies: HashSet<usize> = HashSet::new();
+    while validation_indecies.len() < (validation_split * data.len() as f32) as usize {
+        let index = rand::random::<usize>() % data.len();
+        validation_indecies.insert(index);
+    }
+    let mut training_data: Vec<Sample> = Vec::with_capacity(data.len() - validation_indecies.len());
+    let mut validation_data: Vec<Sample> = Vec::with_capacity(validation_indecies.len());
+    for (i, sample) in data.into_iter().enumerate() {
+        if validation_indecies.contains(&i) {
+            validation_data.push(sample);
+        } else {
+            training_data.push(sample);
+        }
+    }
+    assert!(
+        training_data.len() + validation_data.len() == rows_loaded,
+        "data split error",
+    );
+    Ok((training_data, validation_data))
 }

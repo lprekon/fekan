@@ -9,23 +9,16 @@ use std::{
     path::PathBuf,
 };
 
-#[derive(Deserialize, Debug)]
-struct RawSample {
-    features: Vec<u8>,
-    label: String,
-}
-
 #[derive(Clone)]
 pub struct Sample {
-    features: Vec<u8>,
-    label: u8,
+    pub features: Vec<f32>,
+    pub label: u32, // use a u32 so the size doesn't change between platforms
 }
 
 pub struct TrainingOptions {
     pub num_epochs: usize,
     pub knot_update_interval: usize,
     pub learning_rate: f32,
-    pub validate_each_epoch: bool,
 }
 
 impl Default for TrainingOptions {
@@ -34,14 +27,16 @@ impl Default for TrainingOptions {
             num_epochs: 100,
             knot_update_interval: 100,
             learning_rate: 0.001,
-            validate_each_epoch: false,
         }
     }
 }
 
-pub fn build_and_train(
+/// Train the provided model with the provided data. This function will print a heartbeat with a timestamp, epoch count, and epoch loss after each epoch.
+/// If validation data is provided, the model will be validated after each epoch, and the validation loss will also be printed.
+pub fn train_model(
+    mut model: Kan,
     training_data: Vec<Sample>,
-    validation_data: Vec<Sample>,
+    validation_data: Option<Vec<Sample>>,
     options: TrainingOptions,
 ) -> Result<Kan, Box<dyn Error>> {
     /* 1. Load the data
@@ -56,12 +51,12 @@ pub fn build_and_train(
     // let (training_data, validation_data) = load_data(data_file_path, validation_split);
 
     // build the model
-    let input_dimension = training_data[0].features.len();
-    let k = 3;
-    let coef_size = 5;
-    let layer_sizes = vec![LABELS.len(), LABELS.len()];
-    let mut model = Kan::new(input_dimension, layer_sizes, k, coef_size);
-    println!("model parameter count: {}", model.get_parameter_count());
+    // let input_dimension = training_data[0].features.len();
+    // let k = 3;
+    // let coef_size = 5;
+    // let layer_sizes = vec![LABELS.len(), LABELS.len()];
+    // let mut model = Kan::new(input_dimension, layer_sizes, k, coef_size);
+    // println!("model parameter count: {}", model.get_parameter_count());
 
     // train the model
     for epoch in 0..options.num_epochs {
@@ -87,7 +82,7 @@ pub fn build_and_train(
         epoch_loss /= training_data.len() as f32;
 
         let mut validation_loss = 0.0;
-        if options.validate_each_epoch {
+        if let Some(validation_data) = &validation_data {
             validation_loss = validate_model(&validation_data, &mut model);
         }
         // print stats
@@ -97,7 +92,7 @@ pub fn build_and_train(
             epoch,
             epoch_loss
         );
-        if options.validate_each_epoch {
+        if validation_data.is_some() {
             print!(" validation_loss: {validation_loss}");
         }
         println!();
@@ -170,62 +165,4 @@ fn calculate_error(logits: &Vec<f32>, label: usize) -> (f32, Vec<f32>) {
     let dlogits = dnorm_logits.iter().enumerate().map(|(i, &dnorm_logit)|{if i == logit_max_index {1.0} else {0.0}} * dlogit_max + dnorm_logit).collect::<Vec<f32>>();
 
     (loss, dlogits)
-}
-
-static LABELS: &'static [&str] = &[
-    "avr",
-    "alphaev56",
-    "arm",
-    "m68k",
-    "mips",
-    "mipsel",
-    "powerpc",
-    "s390",
-    "sh4",
-    "sparc",
-    "x86_64",
-    "xtensa",
-];
-
-pub fn load_data(
-    data_file_path: &PathBuf,
-    validation_split: f32,
-) -> Result<(Vec<Sample>, Vec<Sample>), Box<dyn Error>> {
-    let file = File::open(data_file_path)?;
-    let raw_data: Vec<RawSample> = serde_pickle::from_reader(file, Default::default())?;
-    let rows_loaded = raw_data.len();
-    let mut label_map: HashMap<&str, u8> = HashMap::new();
-    for (i, label) in LABELS.iter().enumerate() {
-        label_map.insert(label, i as u8);
-    }
-
-    // parse the data, maping the label string to a u8
-    let data = raw_data
-        .iter()
-        .map(|r| Sample {
-            features: r.features.clone(),
-            label: label_map[&r.label[..]],
-        })
-        .collect::<Vec<Sample>>();
-
-    // separate the data into training and validation sets
-    let mut validation_indecies: HashSet<usize> = HashSet::new();
-    while validation_indecies.len() < (validation_split * data.len() as f32) as usize {
-        let index = rand::random::<usize>() % data.len();
-        validation_indecies.insert(index);
-    }
-    let mut training_data: Vec<Sample> = Vec::with_capacity(data.len() - validation_indecies.len());
-    let mut validation_data: Vec<Sample> = Vec::with_capacity(validation_indecies.len());
-    for (i, sample) in data.into_iter().enumerate() {
-        if validation_indecies.contains(&i) {
-            validation_data.push(sample);
-        } else {
-            training_data.push(sample);
-        }
-    }
-    assert!(
-        training_data.len() + validation_data.len() == rows_loaded,
-        "data split error",
-    );
-    Ok((training_data, validation_data))
 }
