@@ -1,13 +1,7 @@
 pub mod kan;
 
 use kan::Kan;
-use serde::Deserialize;
-use std::{
-    collections::{HashMap, HashSet},
-    error::Error,
-    fs::File,
-    path::PathBuf,
-};
+use std::error::Error;
 
 #[derive(Clone)]
 pub struct Sample {
@@ -39,25 +33,6 @@ pub fn train_model(
     validation_data: Option<Vec<Sample>>,
     options: TrainingOptions,
 ) -> Result<Kan, Box<dyn Error>> {
-    /* 1. Load the data
-       1a. PARSE the data
-    * 2. Separate the data into training and validation sets
-    * 3. Build the model
-    * 4. Run the training loop
-    * 5. Save the model
-    */
-
-    // load, parse, and separate the data
-    // let (training_data, validation_data) = load_data(data_file_path, validation_split);
-
-    // build the model
-    // let input_dimension = training_data[0].features.len();
-    // let k = 3;
-    // let coef_size = 5;
-    // let layer_sizes = vec![LABELS.len(), LABELS.len()];
-    // let mut model = Kan::new(input_dimension, layer_sizes, k, coef_size);
-    // println!("model parameter count: {}", model.get_parameter_count());
-
     // train the model
     for epoch in 0..options.num_epochs {
         let mut epoch_loss = 0.0;

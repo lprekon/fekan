@@ -5,7 +5,6 @@ use std::{
     error::Error,
     fs::File,
     path::PathBuf,
-    vec,
 };
 
 // // use fekan::kan_layer::spline::Spline;
@@ -22,50 +21,59 @@ struct Cli {
     /// path to the parquet file containing the data
     #[arg(short = 'd', long = "data")]
     data_file: PathBuf,
-    /// path to the model weights file. Only used for LoadTrain and LoadInfer commands
+    /// path to the model weights file.
+    /// Only used for LoadTrain and LoadInfer commands
     #[arg(short = 'm', long = "model-in")]
     model_input_file: Option<PathBuf>,
-    /// path to the output file for the model weights. Only used for Build and LoadTrain commands
+    /// path to the output file for the model weights.
+    /// Only used for Build and LoadTrain commands
     #[arg(short = 'o', long = "model-out")]
     model_output_file: Option<String>,
 
-    /// how many rows to evaluate between knot updates
-    #[arg(short, long, default_value = "100")]
+    /// how many samples to evaluate between knot updates.
+    /// Only used for Build and LoadTrain commands
+    #[arg(long, default_value = "100")]
     knot_update_interval: usize,
 
     // TODO implement the knot adaptivity parameter
-    /// at `0`, the knots are evenly spaced. At `1`, the knots are denser where the samples are denser. values between `0` and `1` interpolate between the two
-    // #[arg(long, default_value = "0.2")]
-    // knot_adaptivity: f32,
 
-    /// learning rate used to update the weights
+    // knot_adaptivity: f32,
+    /// learning rate used to update the weights.
+    /// Only used for Build and LoadTrain commands
     #[arg(short, long, default_value = "0.001")]
     learning_rate: f32,
 
-    /// number of epochs to train the model
+    /// number of epochs to train the model.
+    /// Only used for Build and LoadTrain commands
     #[arg(short, long, default_value = "100")]
     epochs: usize,
 
-    /// fraction of the data to use for validation
+    /// fraction of the data to use for validation. Only used for Build and LoadTrain commands
     #[arg(long, default_value = "0.1")]
     validation_split: f32,
 
-    /// if true, the model will be tested against the validation split after each epoch, and the validation loss included in the heartbeat
+    /// if true, the model will be tested against the validation split after each epoch, and the validation loss included in the heartbeat.
+    /// Only used for Build and LoadTrain commands
+    #[arg(long)]
     validate_each_epoch: bool,
 
-    /// degree of B-Spline to use
+    /// degree of B-Spline to use.
+    /// Only used for the Build command
     #[arg(short = 'k', long, default_value = "3")]
     degree: usize,
 
-    /// number of control points to use in each B-Spline
+    /// number of control points to use in each B-Spline.
+    /// Only used for the Build command
     #[arg(long, default_value = "5")]
     num_coef: usize,
 
-    /// number of nodes in each interal layer of the model. This argument does not include the output layer. If not provided, the model will be a single layer with the same number of nodes as the number of classes
+    /// number of nodes in each interal layer of the model. This argument does not include the output layer.
+    /// If not provided, the model will be a single layer with the same number of nodes as the number of classes.
+    /// Only used for the Build command
     #[arg(long, default_value = "[]")]
     hidden_layer_sizes: Vec<usize>,
 
-    /// list of classes to predict, used to map output nodes to class labels. In training mode, any data points with labels not in this list will be ignored
+    /// list of classes to predict, used to map output nodes to class labels. In Build or LoadTrain mode, any data points with labels not in this list will be ignored
     #[arg(long)]
     classes: Vec<String>,
 }
@@ -128,12 +136,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             // build the model
             let input_dimension = training_data[0].features.len();
             let output_dimension = cli.classes.len();
-            let output_layer = vec![output_dimension];
             let mut layer_sizes: Vec<usize> = cli.hidden_layer_sizes.clone();
             layer_sizes.push(output_dimension);
 
-            let mut untrained_model =
-                Kan::new(input_dimension, layer_sizes, cli.degree, cli.num_coef);
+            let untrained_model = Kan::new(input_dimension, layer_sizes, cli.degree, cli.num_coef);
 
             let trained_model = train_model(
                 untrained_model,
