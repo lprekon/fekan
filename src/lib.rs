@@ -88,14 +88,7 @@ pub fn build_and_train(
 
         let mut validation_loss = 0.0;
         if options.validate_each_epoch {
-            for sample in &validation_data {
-                let logits = model
-                    .forward(sample.features.iter().map(|&x| x as f32).collect())
-                    .unwrap();
-                let (loss, _) = calculate_error(&logits, sample.label as usize);
-                validation_loss += loss;
-            }
-            validation_loss /= validation_data.len() as f32;
+            validation_loss = validate_model(&validation_data, &mut model);
         }
         // print stats
         print!(
@@ -111,6 +104,21 @@ pub fn build_and_train(
     }
 
     Ok(model)
+}
+
+pub fn validate_model(validation_data: &Vec<Sample>, model: &mut Kan) -> f32 {
+    let mut validation_loss = 0.0;
+
+    for sample in validation_data {
+        let logits = model
+            .forward(sample.features.iter().map(|&x| x as f32).collect())
+            .unwrap();
+        let (loss, _) = calculate_error(&logits, sample.label as usize);
+        validation_loss += loss;
+    }
+    validation_loss /= validation_data.len() as f32;
+
+    validation_loss
 }
 
 fn calculate_error(logits: &Vec<f32>, label: usize) -> (f32, Vec<f32>) {
