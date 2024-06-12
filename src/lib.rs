@@ -30,7 +30,7 @@ impl Default for TrainingOptions {
 pub fn train_model(
     mut model: Kan,
     training_data: Vec<Sample>,
-    validation_data: Option<Vec<Sample>>,
+    validation_data: Option<&Vec<Sample>>,
     options: TrainingOptions,
 ) -> Result<Kan, Box<dyn Error>> {
     // train the model

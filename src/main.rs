@@ -130,7 +130,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 load_data(&cli.data_file, cli.validation_split, &cli.classes)?;
 
             let to_pass_validation_data = if cli.validate_each_epoch {
-                Some(validation_data)
+                Some(&validation_data)
             } else {
                 None
             };
