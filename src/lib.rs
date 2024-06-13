@@ -1,12 +1,12 @@
 pub mod kan;
 
-use kan::Kan;
+use kan::{Kan, ModelType};
 use std::error::Error;
 
 #[derive(Clone)]
 pub struct Sample {
     pub features: Vec<f32>,
-    pub label: u32, // use a u32 so the size doesn't change between platforms
+    pub label: f32, // use a u32 so the size doesn't change between platforms
 }
 
 pub struct TrainingOptions {
@@ -40,14 +40,25 @@ pub fn train_model(
         for sample in &training_data {
             samples_seen += 1;
             // run over each sample in the training data for each epoch
-            let logits = model
+            let output = model
                 .forward(sample.features.iter().map(|&x| x as f32).collect())
                 .unwrap();
-            // calculate classification probability from logits
-            let (loss, dlogits) = calculate_error(&logits, sample.label as usize);
-            epoch_loss += loss;
-            // pass the error back through the model
-            let _ = model.backward(dlogits).unwrap();
+            match model.model_type {
+                ModelType::Classification => {
+                    // calculate classification probability from logits
+                    let (loss, dlogits) =
+                        calculate_ce_loss_and_gradient(&output, sample.label as usize);
+                    epoch_loss += loss;
+                    // pass the error back through the model
+                    let _ = model.backward(dlogits).unwrap();
+                }
+                ModelType::Regression => {
+                    let (loss, dlogits) =
+                        calculate_mse_and_gradient(output[0], sample.label as f32);
+                    epoch_loss += loss;
+                    let _ = model.backward(vec![dlogits]).unwrap();
+                }
+            }
             model.update(options.learning_rate); // TODO implement momentum
             model.zero_gradients();
             if samples_seen % options.knot_update_interval == 0 {
@@ -80,10 +91,19 @@ pub fn validate_model(validation_data: &Vec<Sample>, model: &mut Kan) -> f32 {
     let mut validation_loss = 0.0;
 
     for sample in validation_data {
-        let logits = model
+        let output = model
             .forward(sample.features.iter().map(|&x| x as f32).collect())
             .unwrap();
-        let (loss, _) = calculate_error(&logits, sample.label as usize);
+        let loss = match model.model_type {
+            ModelType::Classification => {
+                let (loss, _) = calculate_ce_loss_and_gradient(&output, sample.label as usize);
+                loss
+            }
+            ModelType::Regression => {
+                let (loss, _) = calculate_mse_and_gradient(output[0], sample.label as f32);
+                loss
+            }
+        };
         validation_loss += loss;
     }
     validation_loss /= validation_data.len() as f32;
@@ -91,7 +111,8 @@ pub fn validate_model(validation_data: &Vec<Sample>, model: &mut Kan) -> f32 {
     validation_loss
 }
 
-fn calculate_error(logits: &Vec<f32>, label: usize) -> (f32, Vec<f32>) {
+/// Calculates the cross entropy loss and the gradient of the loss with respect to the logits, and the gradient of the loss with respect to the passed logits
+fn calculate_ce_loss_and_gradient(logits: &Vec<f32>, label: usize) -> (f32, Vec<f32>) {
     // calculate the classification probabilities
     let (logit_max, logit_max_index) = {
         let mut max = f32::NEG_INFINITY;
@@ -140,4 +161,10 @@ fn calculate_error(logits: &Vec<f32>, label: usize) -> (f32, Vec<f32>) {
     let dlogits = dnorm_logits.iter().enumerate().map(|(i, &dnorm_logit)|{if i == logit_max_index {1.0} else {0.0}} * dlogit_max + dnorm_logit).collect::<Vec<f32>>();
 
     (loss, dlogits)
+}
+
+fn calculate_mse_and_gradient(actual: f32, expected: f32) -> (f32, f32) {
+    let loss = (actual - expected).powi(2);
+    let gradient = 2.0 * (actual - expected);
+    (loss, gradient)
 }
