@@ -11,7 +11,10 @@ use std::{
 // // use fekan::kan_layer::KanLayer;
 use clap::{CommandFactory, Parser, ValueEnum};
 
-use fekan::{kan::Kan, train_model, Sample, TrainingOptions};
+use fekan::{
+    kan::{Kan, KanOptions, ModelType},
+    train_model, Sample, TrainingOptions,
+};
 use serde::Deserialize;
 
 #[derive(Parser, Debug)]
@@ -127,7 +130,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             let (training_data, validation_data) =
-                load_data(&cli.data_file, cli.validation_split, &cli.classes)?;
+                load_classification_data(&cli.data_file, cli.validation_split, &cli.classes)?;
 
             let to_pass_validation_data = if cli.validate_each_epoch {
                 Some(&validation_data)
@@ -145,7 +148,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             };
             layer_sizes.push(output_dimension);
 
-            let untrained_model = Kan::new(input_dimension, layer_sizes, cli.degree, cli.num_coef);
+            let untrained_model = Kan::new(&KanOptions {
+                input_size: input_dimension,
+                layer_sizes,
+                degree: cli.degree,
+                coef_size: cli.num_coef,
+                model_type: ModelType::Classification,
+            });
 
             let trained_model = train_model(
                 untrained_model,
@@ -197,7 +206,7 @@ struct RawSample {
     label: String,
 }
 
-pub fn load_data(
+pub fn load_classification_data(
     data_file_path: &PathBuf,
     validation_split: f32,
     classes: &Vec<String>,
@@ -226,7 +235,10 @@ pub fn load_data(
         }
         let label = class_map[&raw_sample.label];
         let features: Vec<f32> = raw_sample.features.iter().map(|&f| f as f32).collect();
-        data.push(Sample { features, label });
+        data.push(Sample {
+            features,
+            label: label as f32,
+        });
     }
 
     // separate the data into training and validation sets

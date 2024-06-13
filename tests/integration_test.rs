@@ -1,7 +1,10 @@
-use fekan::{kan::Kan, train_model, validate_model, Sample, TrainingOptions};
+use fekan::{
+    kan::{Kan, KanOptions, ModelType},
+    train_model, validate_model, Sample, TrainingOptions,
+};
 use rand::{thread_rng, Rng};
 
-/// Build a model and train it on the function f(x, y, z) = x + y + z > 0
+/// Build a model and train it on the function f(x, y, z) = x + y + z > 0. Tests that the trained validation loss is less than the untrained validation loss
 #[test]
 fn sum_greater_than_zero() {
     // select 10000 random x's, y's, and z's in the range -1000 to 1000 to train on, and 100 random x's, y's, and z's in the range -1000 to 1000 to validate on
@@ -13,7 +16,7 @@ fn sum_greater_than_zero() {
             let label = (x + y + z) > 0.0;
             Sample {
                 features: vec![x, y, z],
-                label: label as u32,
+                label: label as u32 as f32,
             }
         })
         .collect::<Vec<Sample>>();
@@ -25,16 +28,18 @@ fn sum_greater_than_zero() {
             let label = (x + y + z) > 0.0;
             Sample {
                 features: vec![x, y, z],
-                label: label as u32,
+                label: label as u32 as f32,
             }
         })
         .collect::<Vec<Sample>>();
 
-    let input_dimension = 3;
-    let layers = vec![2]; // two possible ouputs, true or false
-    let k = 3;
-    let coef_size = 4;
-    let mut untrained_model = Kan::new(input_dimension, layers, k, coef_size);
+    let mut untrained_model = Kan::new(&KanOptions {
+        input_size: 3,
+        layer_sizes: vec![2],
+        degree: 3,
+        coef_size: 4,
+        model_type: ModelType::Classification,
+    });
     let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
     let mut trained_model = train_model(
         untrained_model,
@@ -61,17 +66,29 @@ fn sum_greater_than_zero() {
 #[ignore]
 fn xy() {
     // select 1000 random points in the range -1000 to 1000 to train on, and 100 random points in the range -1000 to 1000 to validate on
-    // let training_data = {
-    //     let mut rng = rand::thread_rng();
-    //     let mut training_data = Vec::new();
-    //     for _ in 0..1000 {
-    //         let x = rng.gen_range(-1000.0..1000.0);
-    //         let y = rng.gen_range(-1000.0..1000.0);
-    //         training_data.push();
-    //     }
-    //     training_data
-    // };
+    // let mut rand = rand::thread_rng();
+    // let mut training_data = Vec::with_capacity(1000);
+    // let mut validation_data = Vec::with_capacity(100);
+    // for _ in 0..1000 {
+    //     let x = rand.gen_range(-1000.0..1000.0);
+    //     let y = rand.gen_range(-1000.0..1000.0);
+    //     training_data.push(RegressionSample {
+    //         features: vec![x, y],
+    //         label: x * y,
+    //     });
     // }
+    // for _ in 0..100 {
+    //     let x = rand.gen_range(-1000.0..1000.0);
+    //     let y = rand.gen_range(-1000.0..1000.0);
+    //     validation_data.push(RegressionSample {
+    //         features: vec![x, y],
+    //         label: x * y,
+    //     });
+    // }
+    // let input_dimension = 2;
+    // let k = 3;
+    // let coef_size = 4;
+
     todo!("Implement f(x,y) = xy test");
 }
 
