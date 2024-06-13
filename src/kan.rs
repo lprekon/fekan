@@ -5,17 +5,40 @@ pub mod kan_layer;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Kan {
     pub layers: Vec<kan_layer::KanLayer>,
+    pub model_type: ModelType, // determined how the output is interpreted, and what the loss function ought to be
+}
+
+pub struct KanOptions {
+    pub input_size: usize,
+    pub layer_sizes: Vec<usize>,
+    pub degree: usize,
+    pub coef_size: usize,
+    pub model_type: ModelType,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub enum ModelType {
+    Classification,
+    Regression,
 }
 
 impl Kan {
-    pub fn new(input_size: usize, layer_sizes: Vec<usize>, k: usize, coef_size: usize) -> Self {
-        let mut layers = Vec::with_capacity(layer_sizes.len());
-        let mut prev_size = input_size;
-        for &size in layer_sizes.iter() {
-            layers.push(kan_layer::KanLayer::new(prev_size, size, k, coef_size));
+    pub fn new(options: &KanOptions) -> Self {
+        let mut layers = Vec::with_capacity(options.layer_sizes.len());
+        let mut prev_size = options.input_size;
+        for &size in options.layer_sizes.iter() {
+            layers.push(kan_layer::KanLayer::new(
+                prev_size,
+                size,
+                options.degree,
+                options.coef_size,
+            ));
             prev_size = size;
         }
-        Kan { layers }
+        Kan {
+            layers,
+            model_type: options.model_type,
+        }
     }
 
     pub fn forward(&mut self, input: Vec<f32>) -> Result<Vec<f32>, String> {
@@ -68,13 +91,19 @@ mod test {
 
     #[test]
     fn test_forward() {
-        let input_dimension = 3;
-        let k = 3;
-        let coef_size = 4;
-        let layer_sizes = vec![4, 2, 3];
-        let mut first_kan = Kan::new(input_dimension, layer_sizes, k, coef_size);
-        let layer_sizes = vec![2, 4, 3];
-        let mut second_kan = Kan::new(input_dimension, layer_sizes, k, coef_size);
+        let kan_config = KanOptions {
+            input_size: 3,
+            layer_sizes: vec![4, 2, 3],
+            degree: 3,
+            coef_size: 4,
+            model_type: ModelType::Classification,
+        };
+        let mut first_kan = Kan::new(&kan_config);
+        let second_kan_config = KanOptions {
+            layer_sizes: vec![2, 4, 3],
+            ..kan_config
+        };
+        let mut second_kan = Kan::new(&second_kan_config);
         let input = vec![0.5, 0.4, 0.5];
         let result = first_kan.forward(input.clone()).unwrap();
         assert_eq!(result.len(), 3);
@@ -84,16 +113,19 @@ mod test {
 
     #[test]
     fn test_forward_then_backward() {
-        let input_dimension = 5;
-        let k = 3;
-        let coef_size = 4;
-        let layer_sizes = vec![4, 2, 3];
-        let mut first_kan = Kan::new(input_dimension, layer_sizes.clone(), k, coef_size);
+        let options = &KanOptions {
+            input_size: 5,
+            layer_sizes: vec![4, 2, 3],
+            degree: 3,
+            coef_size: 4,
+            model_type: ModelType::Classification,
+        };
+        let mut first_kan = Kan::new(options);
         let input = vec![0.5, 0.4, 0.5, 0.5, 0.4];
         let result = first_kan.forward(input.clone()).unwrap();
-        assert_eq!(result.len(), layer_sizes.last().unwrap().clone());
+        assert_eq!(result.len(), options.layer_sizes.last().unwrap().clone());
         let error = vec![0.5, 0.4, 0.5];
         let result = first_kan.backward(error).unwrap();
-        assert_eq!(result.len(), input_dimension);
+        assert_eq!(result.len(), options.input_size);
     }
 }
