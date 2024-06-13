@@ -4,19 +4,9 @@ use kan::Kan;
 use std::error::Error;
 
 #[derive(Clone)]
-pub struct ClassificationSample {
+pub struct Sample {
     pub features: Vec<f32>,
     pub label: u32, // use a u32 so the size doesn't change between platforms
-}
-
-pub struct RegressionSample {
-    pub features: Vec<f32>,
-    pub label: f32,
-}
-
-pub enum SampleType {
-    Classification(ClassificationSample),
-    Regression(RegressionSample),
 }
 
 pub struct TrainingOptions {
@@ -39,8 +29,8 @@ impl Default for TrainingOptions {
 /// If validation data is provided, the model will be validated after each epoch, and the validation loss will also be printed.
 pub fn train_model(
     mut model: Kan,
-    training_data: Vec<ClassificationSample>,
-    validation_data: Option<&Vec<ClassificationSample>>,
+    training_data: Vec<Sample>,
+    validation_data: Option<&Vec<Sample>>,
     options: TrainingOptions,
 ) -> Result<Kan, Box<dyn Error>> {
     // train the model
@@ -86,7 +76,7 @@ pub fn train_model(
     Ok(model)
 }
 
-pub fn validate_model(validation_data: &Vec<ClassificationSample>, model: &mut Kan) -> f32 {
+pub fn validate_model(validation_data: &Vec<Sample>, model: &mut Kan) -> f32 {
     let mut validation_loss = 0.0;
 
     for sample in validation_data {
