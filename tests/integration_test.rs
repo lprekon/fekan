@@ -66,28 +66,33 @@ fn sum_greater_than_zero() {
 #[ignore]
 fn xy() {
     // select 1000 random points in the range -1000 to 1000 to train on, and 100 random points in the range -1000 to 1000 to validate on
-    // let mut rand = rand::thread_rng();
-    // let mut training_data = Vec::with_capacity(1000);
-    // let mut validation_data = Vec::with_capacity(100);
-    // for _ in 0..1000 {
-    //     let x = rand.gen_range(-1000.0..1000.0);
-    //     let y = rand.gen_range(-1000.0..1000.0);
-    //     training_data.push(RegressionSample {
-    //         features: vec![x, y],
-    //         label: x * y,
-    //     });
-    // }
-    // for _ in 0..100 {
-    //     let x = rand.gen_range(-1000.0..1000.0);
-    //     let y = rand.gen_range(-1000.0..1000.0);
-    //     validation_data.push(RegressionSample {
-    //         features: vec![x, y],
-    //         label: x * y,
-    //     });
-    // }
-    // let input_dimension = 2;
-    // let k = 3;
-    // let coef_size = 4;
+    let mut rand = rand::thread_rng();
+    let mut training_data = Vec::with_capacity(1000);
+    let mut validation_data = Vec::with_capacity(100);
+    for _ in 0..1000 {
+        let x = rand.gen_range(-1000.0..1000.0);
+        let y = rand.gen_range(-1000.0..1000.0);
+        training_data.push(Sample {
+            features: vec![x, y],
+            label: x * y,
+        });
+    }
+    for _ in 0..100 {
+        let x = rand.gen_range(-1000.0..1000.0);
+        let y = rand.gen_range(-1000.0..1000.0);
+        validation_data.push(Sample {
+            features: vec![x, y],
+            label: x * y,
+        });
+    }
+    let mut untrained_model = Kan::new(&KanOptions {
+        input_size: 2,
+        layer_sizes: vec![3, 2, 1],
+        degree: 3,
+        coef_size: 4,
+        model_type: ModelType::Regression,
+    });
+    let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
 
     todo!("Implement f(x,y) = xy test");
 }
