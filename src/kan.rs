@@ -57,7 +57,7 @@ impl Kan {
     pub fn backward(&mut self, error: Vec<f32>) -> Result<Vec<f32>, String> {
         let mut error = error;
         for layer in self.layers.iter_mut().rev() {
-            error = layer.backward(error)?;
+            error = layer.backward(&error)?;
         }
         Ok(error)
     }

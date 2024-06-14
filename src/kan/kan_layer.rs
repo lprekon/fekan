@@ -124,7 +124,7 @@ impl KanLayer {
     ///
     /// # Errors
     /// Returns an error if the length of `error` is not equal to the number of nodes in this layer, or if `backward` is called before `forward`
-    pub fn backward(&mut self, error: Vec<f32>) -> Result<Vec<f32>, String> {
+    pub fn backward(&mut self, error: &Vec<f32>) -> Result<Vec<f32>, String> {
         if error.len() != self.nodes.len() {
             return Err(format!(
                 "error vector has length {}, but expected length {}",
@@ -249,7 +249,7 @@ mod test {
         assert_eq!(rounded_activations, expected_activations);
 
         let error = vec![1.0, 0.5];
-        let input_error = layer.backward(error).unwrap();
+        let input_error = layer.backward(&error).unwrap();
         let expected_input_error = vec![0.0, 0.60156];
         let rounded_input_error: Vec<f32> = input_error
             .iter()
@@ -262,7 +262,7 @@ mod test {
     fn test_backward_before_forward() {
         let mut layer = build_test_layer();
         let error = vec![1.0, 0.5];
-        let input_error = layer.backward(error);
+        let input_error = layer.backward(&error);
         assert!(input_error.is_err());
     }
 
@@ -272,7 +272,7 @@ mod test {
         let preacts = vec![0.0, 0.5];
         let _ = layer.forward(&preacts).unwrap();
         let error = vec![1.0, 0.5, 0.5];
-        let input_error = layer.backward(error);
+        let input_error = layer.backward(&error);
         assert!(input_error.is_err());
     }
 
