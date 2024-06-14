@@ -40,12 +40,7 @@ fn sum_greater_than_zero() {
         untrained_model,
         training_data,
         Some(&validation_data),
-        TrainingOptions {
-            num_epochs: 100,
-            knot_update_interval: 500,
-            learning_rate: 0.01,
-            knot_adaptivity: 0.1,
-        },
+        TrainingOptions::default(),
     )
     .unwrap();
     let validation_loss = validate_model(&validation_data, &mut trained_model);
