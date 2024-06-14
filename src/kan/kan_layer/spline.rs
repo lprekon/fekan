@@ -54,7 +54,9 @@ impl Spline {
         for i in 0..self.control_points.len() {
             self.activations[i] = Spline::b(i, self.degree, &self.knots, t)
         }
-
+        if self.activations.iter().any(|f| f.is_nan()) {
+            panic!("input of {t} caused NaN activations in the spline {self:?}");
+        }
         self.activations
             .iter()
             .zip(self.control_points.iter())

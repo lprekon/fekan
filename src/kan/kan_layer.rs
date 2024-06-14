@@ -88,7 +88,9 @@ impl KanLayer {
             .iter_mut()
             .map(|node| node.activate(&preactivation))
             .collect();
-
+        if activations.iter().any(|x| x.is_nan()) {
+            return Err("NaN detected in activations".to_string());
+        }
         Ok(activations)
     }
 
