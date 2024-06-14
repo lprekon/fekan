@@ -33,6 +33,7 @@ pub fn train_model(
     mut model: Kan,
     training_data: Vec<Sample>,
     validation_data: Option<&Vec<Sample>>,
+    progress_bar: Option<&indicatif::ProgressBar>,
     options: TrainingOptions,
 ) -> Result<Kan, Box<dyn Error>> {
     // train the model
@@ -66,6 +67,9 @@ pub fn train_model(
             if samples_seen % options.knot_update_interval == 0 {
                 let _ = model.update_knots_from_samples(options.knot_adaptivity)?;
                 model.clear_samples();
+            }
+            if let Some(pb) = progress_bar {
+                pb.inc(1);
             }
         }
         epoch_loss /= training_data.len() as f32;

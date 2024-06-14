@@ -158,12 +158,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 model_type: ModelType::Classification,
             });
 
+            let pb = indicatif::ProgressBar::new((cli.epochs * training_data.len()) as u64);
             let trained_model = train_model(
                 untrained_model,
                 training_data,
                 to_pass_validation_data,
+                Some(&pb),
                 TrainingOptions::from(&cli),
             )?;
+            pb.finish();
             let mut out_file = File::create(cli.model_output_file.clone().unwrap())?;
             serde_pickle::to_writer(&mut out_file, &trained_model, Default::default()).unwrap();
             Ok(())
@@ -264,6 +267,11 @@ pub fn load_classification_data(
         training_data.len(),
         validation_data.len(),
         rows_loaded
+    );
+    println!(
+        "Data loaded. Training: {}, Validation: {}",
+        training_data.len(),
+        validation_data.len()
     );
     Ok((training_data, validation_data))
 }
