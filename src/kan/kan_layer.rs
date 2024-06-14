@@ -109,10 +109,11 @@ impl KanLayer {
             self.nodes[i].update_knots_from_samples(&self.samples, knot_adaptivity);
         }
 
-        // clear the samples after updating the knots
-        self.samples.clear();
-
         Ok(())
+    }
+    /// wipe the internal state that tracks the samples used to update the knot vectors
+    pub fn clear_samples(&mut self) {
+        self.samples.clear();
     }
 
     /// given `error`, containing an error value for each node, calculate the gradients for the control points on each incoming edge,

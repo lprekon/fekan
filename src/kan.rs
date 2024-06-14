@@ -80,6 +80,7 @@ impl Kan {
             .sum()
     }
 
+    /// Update the knots in each layer based on the samples that have been passed through the model
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f32) -> Result<(), String> {
         for layer in self.layers.iter_mut() {
             if let Err(e) = layer.update_knots_from_samples(knot_adaptivity) {
@@ -87,6 +88,13 @@ impl Kan {
             }
         }
         return Ok(());
+    }
+
+    /// Clear the samples from each layer
+    pub fn clear_samples(&mut self) {
+        for layer in self.layers.iter_mut() {
+            layer.clear_samples();
+        }
     }
 }
 

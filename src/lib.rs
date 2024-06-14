@@ -65,6 +65,7 @@ pub fn train_model(
             model.zero_gradients();
             if samples_seen % options.knot_update_interval == 0 {
                 let _ = model.update_knots_from_samples(options.knot_adaptivity)?;
+                model.clear_samples();
             }
         }
         epoch_loss /= training_data.len() as f32;
