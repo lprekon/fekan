@@ -73,7 +73,7 @@ impl KanLayer {
     /// calculate the activations of the nodes in this layer given the preactivations. This operation mutates internal state, which will be read in [`KanLayer::backward()`].
     ///
     /// `preactivation.len()` must be equal to `input_dimension` provided when the layer was created
-    pub fn forward(&mut self, preactivation: Vec<f32>) -> Result<Vec<f32>, String> {
+    pub fn forward(&mut self, preactivation: &Vec<f32>) -> Result<Vec<f32>, String> {
         //  check the length here since it's the same check for the entire layer, even though the node is technically the part that cares
         if preactivation.len() != self.nodes[0].num_incoming_edges() {
             return Err(format!(
@@ -216,7 +216,7 @@ mod test {
         // to properly test layer forward, I need a layer with output and input dim = 2, which means 4 total edges
         let mut layer = build_test_layer();
         let preacts = vec![0.0, 0.5];
-        let acts = layer.forward(preacts).unwrap();
+        let acts = layer.forward(&preacts).unwrap();
         let expected_activations = vec![0.3177, -0.3177];
         let rounded_activations: Vec<f32> = acts
             .iter()
@@ -229,7 +229,7 @@ mod test {
     fn test_forward_bad_activations() {
         let mut layer = build_test_layer();
         let preacts = vec![0.0, 0.5, 0.5];
-        let acts = layer.forward(preacts);
+        let acts = layer.forward(&preacts);
         assert_eq!(
             acts,
             Err("preactivation vector has length 3, but expected length 2".to_string())
@@ -240,7 +240,7 @@ mod test {
     fn test_forward_then_backward() {
         let mut layer = build_test_layer();
         let preacts = vec![0.0, 0.5];
-        let acts = layer.forward(preacts).unwrap();
+        let acts = layer.forward(&preacts).unwrap();
         let expected_activations = vec![0.3177, -0.3177];
         let rounded_activations: Vec<f32> = acts
             .iter()
@@ -270,7 +270,7 @@ mod test {
     fn test_backward_bad_error_length() {
         let mut layer = build_test_layer();
         let preacts = vec![0.0, 0.5];
-        let _ = layer.forward(preacts).unwrap();
+        let _ = layer.forward(&preacts).unwrap();
         let error = vec![1.0, 0.5, 0.5];
         let input_error = layer.backward(error);
         assert!(input_error.is_err());

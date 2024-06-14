@@ -44,7 +44,7 @@ impl Kan {
     pub fn forward(&mut self, input: Vec<f32>) -> Result<Vec<f32>, String> {
         let mut preacts = input.clone();
         for (idx, layer) in self.layers.iter_mut().enumerate() {
-            let result = layer.forward(preacts);
+            let result = layer.forward(&preacts);
             if let Err(e) = result {
                 return Err(format!("Error in layer {}: {}", idx, e));
             }
