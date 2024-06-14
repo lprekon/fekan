@@ -6,7 +6,7 @@ use rand::{thread_rng, Rng};
 
 /// Build a model and train it on the function f(x, y, z) = x + y + z > 0. Tests that the trained validation loss is less than the untrained validation loss
 #[test]
-fn sum_greater_than_zero() {
+fn classifier_sum_greater_than_zero() {
     // select 10000 random x's, y's, and z's in the range -1000 to 1000 to train on, and 100 random x's, y's, and z's in the range -1000 to 1000 to validate on
     let training_data = (0..10000)
         .map(|_| {
@@ -63,8 +63,7 @@ fn sum_greater_than_zero() {
 
 /// build a model and train it on the function f(x, y) = xy
 #[test]
-#[ignore]
-fn xy() {
+fn regressor_xy() {
     // select 1000 random points in the range -1000 to 1000 to train on, and 100 random points in the range -1000 to 1000 to validate on
     let mut rand = rand::thread_rng();
     let mut training_data = Vec::with_capacity(1000);
@@ -93,14 +92,27 @@ fn xy() {
         model_type: ModelType::Regression,
     });
     let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
-
-    todo!("Implement f(x,y) = xy test");
+    let mut trained_model = train_model(
+        untrained_model,
+        training_data,
+        Some(&validation_data), // this way if the test fails, we can see the validation loss over time
+        TrainingOptions {
+            num_epochs: 100,
+            knot_update_interval: 500,
+            learning_rate: 0.01,
+        },
+    )
+    .unwrap();
+    let validation_loss = validate_model(&validation_data, &mut trained_model);
+    assert!(
+        validation_loss < untrained_validation_loss,
+        "Validation loss did not decrease after training. Before training: {}, After training: {}",
+        untrained_validation_loss,
+        validation_loss
+    );
 }
 
 /// build a model and train it on the function f(x, y) = e^(sin(pi*x) * y^2)
 #[test]
 #[ignore]
-fn exp_sin_pix_y_squared() {
-    // I need to implement regression models for this
-    todo!("Implement f(x,y) = e^(sin(pi*x) * y^2) test")
-}
+fn exp_sin_pix_y_squared() {}
