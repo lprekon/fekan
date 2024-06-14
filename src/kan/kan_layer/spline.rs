@@ -185,16 +185,8 @@ impl Spline {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
-
-    // #[test]
-    // fn test_b() {
-    //     let knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
-    //     assert_eq!(Spline::b(0, 2, &knots, 0.0), 1.0);
-    //     assert_eq!(Spline::b(0, 2, &knots, 0.5), 0.5);
-    //     assert_eq!(Spline::b(0, 2, &knots, 1.0), 0.0);
-    // }
 
     #[test]
     fn test_new_spline_with_too_few_knots() {
