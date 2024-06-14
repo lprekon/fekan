@@ -87,6 +87,8 @@ pub fn train_model(
     Ok(model)
 }
 
+/// Calculates the loss of the model on the provided validation data. If the model is a classification model, the cross entropy loss is calculated.
+/// If the model is a regression model, the mean squared error is calculated.
 pub fn validate_model(validation_data: &Vec<Sample>, model: &mut Kan) -> f32 {
     let mut validation_loss = 0.0;
 
@@ -135,6 +137,7 @@ fn calculate_ce_loss_and_gradient(logits: &Vec<f32>, label: usize) -> (f32, Vec<
     let loss = -logprobs[label];
 
     // calculate the error
+    // should I multiply the actual loss in here? intuitively it feels like I should, but the math doesn't tell me I must
     let dlogprobs = (0..probs.len())
         .map(|i| if i == label { -1.0 } else { 0.0 })
         .collect::<Vec<f32>>(); // dloss/dlogpobs. vector is 0 except for the correct class, where it's -1
@@ -163,6 +166,7 @@ fn calculate_ce_loss_and_gradient(logits: &Vec<f32>, label: usize) -> (f32, Vec<
     (loss, dlogits)
 }
 
+/// Calculates the mean squared error loss and the gradient of the loss with respect to the actual value
 fn calculate_mse_and_gradient(actual: f32, expected: f32) -> (f32, f32) {
     let loss = (actual - expected).powi(2);
     let gradient = 2.0 * (actual - expected);
