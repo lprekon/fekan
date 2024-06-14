@@ -92,11 +92,7 @@ fn regressor_xy() {
         untrained_model,
         training_data,
         Some(&validation_data), // this way if the test fails, we can see the validation loss over time
-        TrainingOptions {
-            num_epochs: 100,
-            knot_update_interval: 500,
-            learning_rate: 0.01,
-        },
+        TrainingOptions::default(),
     )
     .unwrap();
     let validation_loss = validate_model(&validation_data, &mut trained_model);
