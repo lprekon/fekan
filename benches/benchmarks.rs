@@ -1,5 +1,6 @@
 #![feature(test)]
 extern crate test;
+use rand::{thread_rng, Rng};
 use test::Bencher;
 
 use fekan::kan::kan_layer::KanLayer;
@@ -33,8 +34,8 @@ fn bench_update(b: &mut Bencher) {
 #[bench]
 fn bench_update_knots_from_samples(b: &mut Bencher) {
     let mut layer = KanLayer::new(3, 2, 3, 4);
-    let input = vec![1.0, 2.0, 3.0];
     for _ in 0..100 {
+        let input = (0..3).map(|_| thread_rng().gen()).collect();
         let _ = layer.forward(&input);
         let error = vec![1.0, 2.0];
         let _ = layer.backward(&error);

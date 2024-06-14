@@ -31,10 +31,10 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 
 running 4 tests
-test bench_backward                  ... bench:         751.62 ns/iter (+/- 3.56)
-test bench_forward                   ... bench:         770.97 ns/iter (+/- 11.65)
-test bench_update                    ... bench:          16.87 ns/iter (+/- 0.20)
-test bench_update_knots_from_samples ... bench:       1,428.52 ns/iter (+/- 23.77)
+test bench_backward                  ... bench:         750.18 ns/iter (+/- 25.20)
+test bench_forward                   ... bench:         774.63 ns/iter (+/- 17.40)
+test bench_update                    ... bench:          20.88 ns/iter (+/- 1.08)
+test bench_update_knots_from_samples ... bench:      10,273.80 ns/iter (+/- 609.54)
 
-test result: ok. 0 passed; 0 failed; 0 ignored; 4 measured; 0 filtered out; finished in 3.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 4 measured; 0 filtered out; finished in 5.54s
 
