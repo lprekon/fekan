@@ -1,6 +1,8 @@
 use fekan::{
     kan::{Kan, KanOptions, ModelType},
-    train_model, validate_model, Sample, TrainingOptions,
+    train_model,
+    training_observer::TrainingObserver,
+    validate_model, EmptyObserver, Sample, TrainingOptions,
 };
 use rand::{thread_rng, Rng};
 
@@ -45,6 +47,7 @@ fn classifier_sum_greater_than_zero() {
         untrained_model,
         training_data,
         Some(&validation_data),
+        &EmptyObserver::new(),
         TrainingOptions::default(),
     )
     .unwrap();
@@ -92,6 +95,7 @@ fn regressor_xy() {
         untrained_model,
         training_data,
         Some(&validation_data), // this way if the test fails, we can see the validation loss over time
+        &EmptyObserver::new(),
         TrainingOptions::default(),
     )
     .unwrap();
@@ -142,6 +146,7 @@ fn exp_sin_pix_y_squared() {
         untrained_model,
         training_data,
         Some(&validation_data),
+        &EmptyObserver::new(),
         TrainingOptions::default(),
     )
     .unwrap();
@@ -152,4 +157,25 @@ fn exp_sin_pix_y_squared() {
         untrained_validation_loss,
         validation_loss
     );
+}
+
+struct TestObserver {}
+
+impl TestObserver {
+    pub fn new() -> Self {
+        TestObserver {}
+    }
+}
+
+impl TrainingObserver for TestObserver {
+    fn on_epoch_end(&self, epoch: usize, epoch_loss: f32, validation_loss: f32) {
+        println!(
+            "Epoch: {}, Epoch Loss: {}, Validation Loss: {}",
+            epoch, epoch_loss, validation_loss
+        );
+    }
+
+    fn on_sample_end(&self) {
+        println!("Sample end");
+    }
 }

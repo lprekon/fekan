@@ -1,7 +1,9 @@
 pub mod kan;
+pub mod training_observer;
 
 use kan::{Kan, ModelType};
 use std::error::Error;
+use training_observer::TrainingObserver;
 
 #[derive(Clone)]
 pub struct Sample {
@@ -27,13 +29,13 @@ impl Default for TrainingOptions {
     }
 }
 
-/// Train the provided model with the provided data. This function will print a heartbeat with a timestamp, epoch count, and epoch loss after each epoch.
-/// If validation data is provided, the model will be validated after each epoch, and the validation loss will also be printed.
-pub fn train_model(
+/// Train the provided model with the provided data. This function will report status to the provided observer.
+/// If validation data is provided, the model will be validated after each epoch, and provided to the observer. If validation is not provided, the validation loss will be `NaN` in the epoch-end report.
+pub fn train_model<T: TrainingObserver>(
     mut model: Kan,
     training_data: Vec<Sample>,
     validation_data: Option<&Vec<Sample>>,
-    progress_bar: Option<&indicatif::ProgressBar>,
+    training_observer: &T,
     options: TrainingOptions,
 ) -> Result<Kan, Box<dyn Error>> {
     // train the model
@@ -68,27 +70,17 @@ pub fn train_model(
                 let _ = model.update_knots_from_samples(options.knot_adaptivity)?;
                 model.clear_samples();
             }
-            if let Some(pb) = progress_bar {
-                pb.inc(1);
-            }
+
+            training_observer.on_sample_end();
         }
         epoch_loss /= training_data.len() as f32;
 
-        let mut validation_loss = 0.0;
-        if let Some(validation_data) = &validation_data {
-            validation_loss = validate_model(&validation_data, &mut model);
-        }
-        // print stats
-        print!(
-            "[HEARTBEAT] {} epoch: {} epoch_loss: {}",
-            chrono::Local::now(),
-            epoch,
-            epoch_loss
-        );
-        if validation_data.is_some() {
-            print!(" validation_loss: {validation_loss}");
-        }
-        println!();
+        let validation_loss = match validation_data {
+            Some(validation_data) => validate_model(&validation_data, &mut model),
+            None => f32::NAN,
+        };
+
+        training_observer.on_epoch_end(epoch, epoch_loss, validation_loss);
     }
 
     Ok(model)
@@ -178,4 +170,15 @@ fn calculate_mse_and_gradient(actual: f32, expected: f32) -> (f32, f32) {
     let loss = (actual - expected).powi(2);
     let gradient = 2.0 * (actual - expected);
     (loss, gradient)
+}
+
+pub struct EmptyObserver {}
+impl EmptyObserver {
+    pub fn new() -> Self {
+        EmptyObserver {}
+    }
+}
+impl TrainingObserver for EmptyObserver {
+    fn on_epoch_end(&self, _epoch: usize, _epoch_loss: f32, _validation_loss: f32) {}
+    fn on_sample_end(&self) {}
 }

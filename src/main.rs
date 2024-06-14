@@ -13,8 +13,11 @@ use clap::{CommandFactory, Parser, ValueEnum};
 
 use fekan::{
     kan::{Kan, KanOptions, ModelType},
-    train_model, Sample, TrainingOptions,
+    train_model,
+    training_observer::TrainingObserver,
+    Sample, TrainingOptions,
 };
+use indicatif::ProgressBar;
 use serde::Deserialize;
 
 #[derive(Parser, Debug)]
@@ -158,15 +161,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 model_type: ModelType::Classification,
             });
 
-            let pb = indicatif::ProgressBar::new((cli.epochs * training_data.len()) as u64);
+            let observer = TrainingProgress::new(
+                (cli.epochs * training_data.len()) as u64 * training_data.len() as u64,
+            );
             let trained_model = train_model(
                 untrained_model,
                 training_data,
                 to_pass_validation_data,
-                Some(&pb),
+                &observer,
                 TrainingOptions::from(&cli),
             )?;
-            pb.finish();
+            observer.into_inner().finish();
             let mut out_file = File::create(cli.model_output_file.clone().unwrap())?;
             serde_pickle::to_writer(&mut out_file, &trained_model, Default::default()).unwrap();
             Ok(())
@@ -202,6 +207,34 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             todo!("implement LoadInfer command")
         }
+    }
+}
+
+struct TrainingProgress {
+    pb: ProgressBar,
+}
+
+impl TrainingProgress {
+    fn new(total: u64) -> Self {
+        TrainingProgress {
+            pb: ProgressBar::new(total),
+        }
+    }
+
+    fn into_inner(self) -> ProgressBar {
+        self.pb
+    }
+}
+
+impl TrainingObserver for TrainingProgress {
+    fn on_sample_end(&self) {
+        self.pb.inc(1);
+    }
+    fn on_epoch_end(&self, epoch: usize, epoch_loss: f32, validation_loss: f32) {
+        self.pb.println(format!(
+            "Epoch {}: Training Loss: {}, Validation Loss: {}",
+            epoch, epoch_loss, validation_loss
+        ));
     }
 }
 
