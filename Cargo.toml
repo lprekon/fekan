@@ -11,3 +11,6 @@ rand = "0.8.5"
 serde = { version = "1.0.203", features = ["derive"] }
 serde-pickle = "1.1.1"
 statrs = "0.16.0"
+
+[profile.release]
+debug = true
