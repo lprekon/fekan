@@ -44,6 +44,7 @@ fn sum_greater_than_zero() {
             num_epochs: 100,
             knot_update_interval: 500,
             learning_rate: 0.01,
+            knot_adaptivity: 0.1,
         },
     )
     .unwrap();
