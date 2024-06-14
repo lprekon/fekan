@@ -96,7 +96,7 @@ impl KanLayer {
 
     /// update the knot vectors for each incoming edge in this layer using the memoized samples
     ///
-    pub fn update_knots_from_samples(&mut self) -> Result<(), String> {
+    pub fn update_knots_from_samples(&mut self, knot_adaptivity: f32) -> Result<(), String> {
         // this should never fire, but I'm leaving it here for now just to be safe.
         if !self
             .samples
@@ -106,7 +106,7 @@ impl KanLayer {
             return Err(format!("samples must have the same length as the input dimension of the layer! Expected {}, got {}", self.nodes[0].num_incoming_edges(), self.samples.len()));
         }
         for i in 0..self.nodes.len() {
-            self.nodes[i].update_knots_from_samples(&self.samples);
+            self.nodes[i].update_knots_from_samples(&self.samples, knot_adaptivity);
         }
 
         // clear the samples after updating the knots

@@ -145,7 +145,11 @@ impl Spline {
         }
     }
 
-    pub(super) fn update_knots_from_samples(&mut self, mut samples: Vec<f32>) {
+    pub(super) fn update_knots_from_samples(
+        &mut self,
+        mut samples: Vec<f32>,
+        knot_adaptivity: f32,
+    ) {
         // at some point I'll requure samples to be sorted so we can just reference a slice, but for now we'll take ownership and sort
         samples.sort_by(|a, b| a.partial_cmp(b).unwrap()); // this is annoying, but f32 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp
         let knot_size = self.knots.len();
@@ -158,7 +162,21 @@ impl Spline {
         adaptive_knots.push(samples[samples.len() - 1]);
         adaptive_knots[0] -= KNOT_MARGIN;
         adaptive_knots[knot_size - 1] += KNOT_MARGIN;
-        self.knots = adaptive_knots;
+        let uniform_knots = {
+            let min_knot = adaptive_knots[0];
+            let max_knot = adaptive_knots[knot_size - 1];
+            let step_size = (max_knot - min_knot) / (knot_size - 1) as f32;
+            let mut knots = Vec::with_capacity(knot_size);
+            for i in 0..knot_size {
+                knots.push(min_knot + i as f32 * step_size);
+            }
+            knots
+        };
+        self.knots = adaptive_knots
+            .iter()
+            .zip(uniform_knots.iter())
+            .map(|(a, b)| a * knot_adaptivity + b * (1.0 - knot_adaptivity))
+            .collect();
     }
 
     pub(super) fn get_parameter_count(&self) -> usize {
@@ -319,7 +337,7 @@ mod test {
             samples.push(-3.0 + i as f32 * 0.06);
         }
         println!("{:?}", samples);
-        spline.update_knots_from_samples(samples);
+        spline.update_knots_from_samples(samples, 1.0);
         let mut expected_knots = vec![-3.0, -1.74, -0.48, 0.78, 2.04, 3.0, 3.0, 3.0];
         expected_knots[0] -= KNOT_MARGIN;
         expected_knots[7] += KNOT_MARGIN;

@@ -80,9 +80,9 @@ impl Kan {
             .sum()
     }
 
-    pub fn update_knots_from_samples(&mut self) -> Result<(), String> {
+    pub fn update_knots_from_samples(&mut self, knot_adaptivity: f32) -> Result<(), String> {
         for layer in self.layers.iter_mut() {
-            if let Err(e) = layer.update_knots_from_samples() {
+            if let Err(e) = layer.update_knots_from_samples(knot_adaptivity) {
                 return Err(e);
             }
         }

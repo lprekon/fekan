@@ -38,9 +38,10 @@ struct Cli {
     #[arg(long, default_value = "100")]
     knot_update_interval: usize,
 
-    // TODO implement the knot adaptivity parameter
+    /// when knot_adaptivity = 0, b-spline knots are uniformly distributed. When knot_adaptivity = 1, the knots are set using percentiles of the data. Values between 0 and 1 interpolate between these two extremes.
+    #[arg(long, default_value = "0.1")]
+    knot_adaptivity: f32,
 
-    // knot_adaptivity: f32,
     /// learning rate used to update the weights.
     /// Only used for Build and LoadTrain commands
     #[arg(short, long, default_value = "0.001")]
@@ -101,6 +102,7 @@ impl From<&Cli> for TrainingOptions {
             num_epochs: cli.epochs,
             knot_update_interval: cli.knot_update_interval,
             learning_rate: cli.learning_rate,
+            knot_adaptivity: cli.knot_adaptivity,
         }
     }
 }

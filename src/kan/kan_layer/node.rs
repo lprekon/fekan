@@ -65,10 +65,14 @@ impl Node {
     // samples is a vector of vectors, where each inner vector is a sample of the input to the layer, and the outer vector contains all the samples
     // we have to take the nth element from each inner vector, repack it into a vector, and pass that to the edge to use for updating.
     // TODO move the repackaging into the layer, so it's done once for all nodes
-    pub(super) fn update_knots_from_samples(&mut self, samples: &Vec<Vec<f32>>) {
+    pub(super) fn update_knots_from_samples(
+        &mut self,
+        samples: &Vec<Vec<f32>>,
+        knot_adaptivity: f32,
+    ) {
         for i in 0..self.0.len() {
             let samples_for_edge: Vec<f32> = samples.iter().map(|sample| sample[i]).collect();
-            self.0[i].update_knots_from_samples(samples_for_edge);
+            self.0[i].update_knots_from_samples(samples_for_edge, knot_adaptivity);
         }
     }
 
@@ -203,7 +207,7 @@ mod test {
             samples.push(vec![sample_values[i], sample_values[i]]);
         }
 
-        node.update_knots_from_samples(&samples);
+        node.update_knots_from_samples(&samples, 1.0);
 
         let mut expected_knots = vec![-3.0, -1.74, -0.48, 0.78, 2.04, 3.0, 3.0, 3.0];
         expected_knots[0] -= KNOT_MARGIN;

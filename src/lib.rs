@@ -12,6 +12,7 @@ pub struct Sample {
 pub struct TrainingOptions {
     pub num_epochs: usize,
     pub knot_update_interval: usize,
+    pub knot_adaptivity: f32,
     pub learning_rate: f32,
 }
 
@@ -20,6 +21,7 @@ impl Default for TrainingOptions {
         TrainingOptions {
             num_epochs: 100,
             knot_update_interval: 100,
+            knot_adaptivity: 0.1,
             learning_rate: 0.001,
         }
     }
@@ -62,7 +64,7 @@ pub fn train_model(
             model.update(options.learning_rate); // TODO implement momentum
             model.zero_gradients();
             if samples_seen % options.knot_update_interval == 0 {
-                let _ = model.update_knots_from_samples()?;
+                let _ = model.update_knots_from_samples(options.knot_adaptivity)?;
             }
         }
         epoch_loss /= training_data.len() as f32;
