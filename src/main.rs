@@ -17,7 +17,7 @@ use fekan::{
     training_observer::TrainingObserver,
     Sample, TrainingOptions,
 };
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::ProgressBar;
 use serde::Deserialize;
 
 #[derive(Parser, Debug)]
@@ -171,9 +171,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &observer,
                 TrainingOptions::from(&cli),
             )?;
-            observer
-                .into_inner()
-                .finish_with_message(format!("{} Training Complete", chrono::Local::now()));
+            observer.into_inner().finish();
             let mut out_file = File::create(cli.model_output_file.clone().unwrap())?;
             serde_pickle::to_writer(&mut out_file, &trained_model, Default::default()).unwrap();
             Ok(())
@@ -217,15 +215,10 @@ struct TrainingProgress {
 }
 
 impl TrainingProgress {
-    fn new(total_samples: u64) -> Self {
-        let pb = ProgressBar::new(total_samples);
-        pb.set_style(
-            ProgressStyle::with_template(
-                "[{elapsed_precise}] [{bar:80.cyan/blue}] {human_pos}/{human_len} {per_sec} ({eta})",
-            )
-            .unwrap(),
-        );
-        TrainingProgress { pb }
+    fn new(total: u64) -> Self {
+        TrainingProgress {
+            pb: ProgressBar::new(total),
+        }
     }
 
     fn into_inner(self) -> ProgressBar {
@@ -239,11 +232,8 @@ impl TrainingObserver for TrainingProgress {
     }
     fn on_epoch_end(&self, epoch: usize, epoch_loss: f32, validation_loss: f32) {
         self.pb.println(format!(
-            "{} Epoch {}: Training Loss: {}, Validation Loss: {}",
-            chrono::Local::now(),
-            epoch,
-            epoch_loss,
-            validation_loss
+            "Epoch {}: Training Loss: {}, Validation Loss: {}",
+            epoch, epoch_loss, validation_loss
         ));
     }
 }
