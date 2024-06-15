@@ -14,7 +14,12 @@ const COEF_SIZE: usize = 10;
 fn bench_forward(b: &mut Bencher) {
     let mut layer = KanLayer::new(INPUT_DIMENSION, OUTPUT_DIMENSION, DEGREE, COEF_SIZE);
     let input = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
-    b.iter(|| layer.forward(&input));
+    b.iter(|| {
+        // run multiple times per iteration so cache improvements will show.
+        for _ in 0..2 {
+            let _ = layer.forward(&input);
+        }
+    });
 }
 
 #[bench]
@@ -23,7 +28,12 @@ fn bench_backward(b: &mut Bencher) {
     let input = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
     let _ = layer.forward(&input);
     let error = (0..OUTPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
-    b.iter(|| layer.backward(&error));
+    b.iter(|| {
+        // run multiple times per iteration so cache improvements will show
+        for _ in 0..2 {
+            let _ = layer.backward(&error);
+        }
+    });
 }
 
 #[bench]
