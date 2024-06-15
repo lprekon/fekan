@@ -54,11 +54,7 @@ impl Spline {
             .iter()
             .enumerate()
             .map(|(idx, coef)| {
-                *coef
-                    * *self
-                        .activations
-                        .entry((idx, self.degree, t.to_bits()))
-                        .or_insert_with(|| Spline::b(idx, self.degree, &self.knots, t))
+                *coef * Spline::b(&mut self.activations, idx, self.degree, &self.knots, t)
             })
             .sum()
     }
@@ -93,8 +89,8 @@ impl Spline {
             // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
             let left = (k as f32 - 1.0) / (self.knots[i + k - 1] - self.knots[i]);
             let right = (k as f32 - 1.0) / (self.knots[i + k] - self.knots[i + 1]);
-            let left_recurse = Spline::b(i, k - 1, &self.knots, last_t);
-            let right_recurse = Spline::b(i + 1, k - 1, &self.knots, last_t);
+            let left_recurse = Spline::b(&mut self.activations, i, k - 1, &self.knots, last_t);
+            let right_recurse = Spline::b(&mut self.activations, i + 1, k - 1, &self.knots, last_t);
             // println!(
             //     "i: {} left: {}, right: {}, left_recurse: {}, right_recurse: {}",
             //     i, left, right, left_recurse, right_recurse
@@ -129,9 +125,15 @@ impl Spline {
     // }
 
     /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
-    // this function is a static method because it needs to recurse down values of 'k', so there's no point in getting the degree from 'self'
-    // TODO: memoize this function, since it's called again for the same `i` and `t` in the backward pass. This is apparently difficult to do with floats
-    fn b(i: usize, k: usize, knots: &Vec<f32>, t: f32) -> f32 {
+    /// checks the provided cache for a memoized result before computing it. If the result is not found, it is computed and stored in the cache before being returned
+    /// This way, both intermediate and final results are cached, and the caches belong to individual splines which can clear them when their knots change
+    fn b(
+        cache: &mut HashMap<(usize, usize, u32), f32>,
+        i: usize,
+        k: usize,
+        knots: &Vec<f32>,
+        t: f32,
+    ) -> f32 {
         if k == 0 {
             if knots[i] <= t && t < knots[i + 1] {
                 return 1.0;
@@ -139,10 +141,14 @@ impl Spline {
                 return 0.0;
             }
         } else {
+            if let Some(cached_result) = cache.get(&(i, k, t.to_bits())) {
+                return *cached_result;
+            }
             let left = (t - knots[i]) / (knots[i + k] - knots[i]);
             let right = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
-            let result =
-                left * Self::b(i, k - 1, knots, t) + right * Self::b(i + 1, k - 1, knots, t);
+            let result = left * Spline::b(cache, i, k - 1, knots, t)
+                + right * Spline::b(cache, i + 1, k - 1, knots, t);
+            cache.insert((i, k, t.to_bits()), result);
             return result;
         }
     }
@@ -206,7 +212,7 @@ mod tests {
         let k = 3;
         let t = 0.95;
         for i in 0..4 {
-            let result = Spline::b(i, k, &knots, t);
+            let result = Spline::b(&mut HashMap::new(), i, k, &knots, t);
             let rounded_result = (result * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
             assert_eq!(rounded_result, expected_results[i], "i = {}", i);
         }
@@ -219,7 +225,7 @@ mod tests {
         let k = 3;
         let t = 0.0;
         for i in 0..4 {
-            let result = Spline::b(i, k, &knots, t);
+            let result = Spline::b(&mut HashMap::new(), i, k, &knots, t);
             let rounded_result = (result * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
             assert_eq!(rounded_result, expected_results[i]);
         }
