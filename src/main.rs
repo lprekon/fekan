@@ -219,7 +219,7 @@ impl TrainingProgress {
         pb.set_style(
             ProgressStyle::default_bar()
                 .template(
-                    "[{elapsed_precise}] [{bar:40.green}] {human_pos}/{human_len} {per_sec} ({eta})",
+                    "[{elapsed_precise}] [{bar:40.green/white}] {human_pos}/{human_len} {per_sec} ({eta})",
                 )
                 .unwrap(),
         );
