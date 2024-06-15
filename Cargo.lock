@@ -203,6 +203,7 @@ dependencies = [
  "chrono",
  "clap",
  "indicatif",
+ "lazy_static",
  "rand",
  "serde",
  "serde-pickle",

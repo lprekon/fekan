@@ -1,5 +1,6 @@
-use std::slice::Iter;
+use std::{collections::HashMap, slice::Iter, sync::Mutex};
 
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 
 /// margin to add to the beginning and end of the knot vector when updating it from samples
@@ -132,6 +133,19 @@ impl Spline {
     // this function is a static method because it needs to recurse down values of 'k', so there's no point in getting the degree from 'self'
     // TODO: memoize this function, since it's called again for the same `i` and `t` in the backward pass. This is apparently difficult to do with floats
     fn b(i: usize, k: usize, knots: &Vec<f32>, t: f32) -> f32 {
+        lazy_static! {
+            static ref BASIS_CACHE: Mutex<HashMap<(usize, usize, Vec<u32>, u32), f32>> =
+                Mutex::new(HashMap::new());
+        }
+        let cachable_tuple = (
+            i,
+            k,
+            knots.iter().map(|f| f.to_bits()).collect(),
+            t.to_bits(),
+        );
+        if let Some(&result) = BASIS_CACHE.lock().unwrap().get(&cachable_tuple) {
+            return result;
+        }
         if k == 0 {
             if knots[i] <= t && t < knots[i + 1] {
                 return 1.0;
@@ -141,7 +155,10 @@ impl Spline {
         } else {
             let left = (t - knots[i]) / (knots[i + k] - knots[i]);
             let right = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
-            return left * Self::b(i, k - 1, knots, t) + right * Self::b(i + 1, k - 1, knots, t);
+            let result =
+                left * Self::b(i, k - 1, knots, t) + right * Self::b(i + 1, k - 1, knots, t);
+            BASIS_CACHE.lock().unwrap().insert(cachable_tuple, result);
+            return result;
         }
     }
 
