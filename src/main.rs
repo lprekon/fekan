@@ -17,7 +17,7 @@ use fekan::{
     training_observer::TrainingObserver,
     Sample, TrainingOptions,
 };
-use indicatif::ProgressBar;
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 
 #[derive(Parser, Debug)]
@@ -137,6 +137,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let (training_data, validation_data) =
                 load_classification_data(&cli.data_file, cli.validation_split, &cli.classes)?;
 
+            // if the user wants to validate the model after each epoch, pass the validation data to the training function as a signal to do so
             let to_pass_validation_data = if cli.validate_each_epoch {
                 Some(&validation_data)
             } else {
@@ -161,9 +162,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 model_type: ModelType::Classification,
             });
 
-            let observer = TrainingProgress::new(
-                (cli.epochs * training_data.len()) as u64 * training_data.len() as u64,
-            );
+            let observer = TrainingProgress::new((cli.epochs * training_data.len()) as u64);
             let trained_model = train_model(
                 untrained_model,
                 training_data,
@@ -216,9 +215,15 @@ struct TrainingProgress {
 
 impl TrainingProgress {
     fn new(total: u64) -> Self {
-        TrainingProgress {
-            pb: ProgressBar::new(total),
-        }
+        let pb = ProgressBar::new(total);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "[{elapsed_precise}] [{bar:40.green}] {human_pos}/{human_len} {per_sec} ({eta})",
+                )
+                .unwrap(),
+        );
+        TrainingProgress { pb }
     }
 
     fn into_inner(self) -> ProgressBar {
@@ -232,8 +237,11 @@ impl TrainingObserver for TrainingProgress {
     }
     fn on_epoch_end(&self, epoch: usize, epoch_loss: f32, validation_loss: f32) {
         self.pb.println(format!(
-            "Epoch {}: Training Loss: {}, Validation Loss: {}",
-            epoch, epoch_loss, validation_loss
+            "{} Epoch {}: Training Loss: {}, Validation Loss: {}",
+            chrono::Local::now(),
+            epoch,
+            epoch_loss,
+            validation_loss
         ));
     }
 }
