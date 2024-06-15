@@ -2,3 +2,4 @@
 *.info
 /data
 *.model
+./*.svg
