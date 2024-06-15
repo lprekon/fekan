@@ -48,7 +48,10 @@ fn classifier_sum_greater_than_zero() {
         training_data,
         Some(&validation_data),
         &EmptyObserver::new(),
-        TrainingOptions::default(),
+        TrainingOptions {
+            num_epochs: 50,
+            ..TrainingOptions::default()
+        },
     )
     .unwrap();
     let validation_loss = validate_model(&validation_data, &mut trained_model);
@@ -96,7 +99,10 @@ fn regressor_xy() {
         training_data,
         Some(&validation_data), // this way if the test fails, we can see the validation loss over time
         &EmptyObserver::new(),
-        TrainingOptions::default(),
+        TrainingOptions {
+            num_epochs: 50,
+            ..TrainingOptions::default()
+        },
     )
     .unwrap();
     let validation_loss = validate_model(&validation_data, &mut trained_model);
@@ -147,7 +153,10 @@ fn exp_sin_pix_y_squared() {
         training_data,
         Some(&validation_data),
         &EmptyObserver::new(),
-        TrainingOptions::default(),
+        TrainingOptions {
+            num_epochs: 50,
+            ..TrainingOptions::default()
+        },
     )
     .unwrap();
     let validation_loss = validate_model(&validation_data, &mut trained_model);
@@ -176,6 +185,6 @@ impl TrainingObserver for TestObserver {
     }
 
     fn on_sample_end(&self) {
-        println!("Sample end");
+        // do nothing
     }
 }

@@ -1,7 +1,5 @@
-use std::{collections::HashMap, slice::Iter, sync::Mutex};
-
-use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, slice::Iter};
 
 /// margin to add to the beginning and end of the knot vector when updating it from samples
 pub(super) const KNOT_MARGIN: f32 = 0.01;
@@ -14,7 +12,7 @@ pub(super) struct Spline {
     /// the most recent parameter used in the forward pass
     last_t: Option<f32>,
     /// the activations of the spline at each interval, memoized from the most recent forward pass
-    activations: Vec<f32>,
+    activations: HashMap<(usize, usize, u32), f32>,
     /// accumulated gradients for each control point
     gradients: Vec<f32>,
 }
@@ -42,7 +40,7 @@ impl Spline {
             control_points,
             knots,
             last_t: None,
-            activations: vec![0.0; size],
+            activations: HashMap::new(),
             gradients: vec![0.0; size],
         })
     }
@@ -51,17 +49,18 @@ impl Spline {
     ///
     /// accumulate the activations of the spline at each interval in the internal `activations` field
     pub fn forward(&mut self, t: f32) -> f32 {
-        self.last_t = Some(t);
-        for i in 0..self.control_points.len() {
-            self.activations[i] = Spline::b(i, self.degree, &self.knots, t)
-        }
-        if self.activations.iter().any(|f| f.is_nan()) {
-            panic!("input of {t} caused NaN activations in the spline {self:?}");
-        }
-        self.activations
+        self.last_t = Some(t); // store the most recent input for use in the backward pass
+        self.control_points
             .iter()
-            .zip(self.control_points.iter())
-            .fold(0.0, |acc, (a, c)| acc + a * c)
+            .enumerate()
+            .map(|(idx, coef)| {
+                *coef
+                    * *self
+                        .activations
+                        .entry((idx, self.degree, t.to_bits()))
+                        .or_insert_with(|| Spline::b(idx, self.degree, &self.knots, t))
+            })
+            .sum()
     }
 
     /// compute the gradients for each control point  on the spline and accumulate them internally.
@@ -86,7 +85,7 @@ impl Spline {
         for i in 0..self.control_points.len() {
             // calculate control point gradients
             // dC_i = B_ik(t) * adjusted_error
-            let basis_activation = self.activations[i];
+            let basis_activation = self.activations.get(&(i, k, last_t.to_bits())).unwrap();
             // gradients aka drt_output_wrt_control_point * error
             self.gradients[i] += adjusted_error * basis_activation;
 
@@ -133,19 +132,6 @@ impl Spline {
     // this function is a static method because it needs to recurse down values of 'k', so there's no point in getting the degree from 'self'
     // TODO: memoize this function, since it's called again for the same `i` and `t` in the backward pass. This is apparently difficult to do with floats
     fn b(i: usize, k: usize, knots: &Vec<f32>, t: f32) -> f32 {
-        lazy_static! {
-            static ref BASIS_CACHE: Mutex<HashMap<(usize, usize, Vec<u32>, u32), f32>> =
-                Mutex::new(HashMap::new());
-        }
-        let cachable_tuple = (
-            i,
-            k,
-            knots.iter().map(|f| f.to_bits()).collect(),
-            t.to_bits(),
-        );
-        if let Some(&result) = BASIS_CACHE.lock().unwrap().get(&cachable_tuple) {
-            return result;
-        }
         if k == 0 {
             if knots[i] <= t && t < knots[i + 1] {
                 return 1.0;
@@ -157,7 +143,6 @@ impl Spline {
             let right = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
             let result =
                 left * Self::b(i, k - 1, knots, t) + right * Self::b(i + 1, k - 1, knots, t);
-            BASIS_CACHE.lock().unwrap().insert(cachable_tuple, result);
             return result;
         }
     }
@@ -167,7 +152,8 @@ impl Spline {
         mut samples: Vec<f32>,
         knot_adaptivity: f32,
     ) {
-        // at some point I'll requure samples to be sorted so we can just reference a slice, but for now we'll take ownership and sort
+        self.activations.clear(); // clear the memoized activations. They're no longer valid, now that the knots are changing
+                                  // at some point I'll requure samples to be sorted so we can just reference a slice, but for now we'll take ownership and sort
         samples.sort_by(|a, b| a.partial_cmp(b).unwrap()); // this is annoying, but f32 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp
         let knot_size = self.knots.len();
         let mut adaptive_knots: Vec<f32> = Vec::with_capacity(knot_size);
