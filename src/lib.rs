@@ -52,7 +52,7 @@ pub fn train_model<T: TrainingObserver>(
                 ModelType::Classification => {
                     // calculate classification probability from logits
                     let (loss, dlogits) =
-                        calculate_ce_loss_and_gradient(&output, sample.label as usize);
+                        calculate_nll_loss_and_gradient(&output, sample.label as usize);
                     epoch_loss += loss;
                     // pass the error back through the model
                     let _ = model.backward(dlogits).unwrap();
@@ -97,7 +97,7 @@ pub fn validate_model(validation_data: &Vec<Sample>, model: &mut Kan) -> f32 {
             .unwrap();
         let loss = match model.model_type {
             ModelType::Classification => {
-                let (loss, _) = calculate_ce_loss_and_gradient(&output, sample.label as usize);
+                let (loss, _) = calculate_nll_loss_and_gradient(&output, sample.label as usize);
                 loss
             }
             ModelType::Regression => {
@@ -112,8 +112,8 @@ pub fn validate_model(validation_data: &Vec<Sample>, model: &mut Kan) -> f32 {
     validation_loss
 }
 
-/// Calculates the cross entropy loss and the gradient of the loss with respect to the logits, and the gradient of the loss with respect to the passed logits
-fn calculate_ce_loss_and_gradient(logits: &Vec<f32>, label: usize) -> (f32, Vec<f32>) {
+/// Returns the negative log liklihood loss and the gradient of the loss with respect to the logits,
+fn calculate_nll_loss_and_gradient(logits: &Vec<f32>, label: usize) -> (f32, Vec<f32>) {
     // calculate the classification probabilities
     let (logit_max, logit_max_index) = {
         let mut max = f32::NEG_INFINITY;
@@ -181,4 +181,36 @@ impl EmptyObserver {
 impl TrainingObserver for EmptyObserver {
     fn on_epoch_end(&self, _epoch: usize, _epoch_loss: f32, _validation_loss: f32) {}
     fn on_sample_end(&self) {}
+}
+
+#[cfg(test)]
+mod test {
+    // ! test the loss functions
+
+    use super::*;
+
+    #[test]
+    fn test_nll_loss_and_gradient() {
+        // values calculated using Karpathy's Makemore backpropogation example
+        let logits = vec![
+            0.0043, -0.2063, 0.0260, -0.1313, -0.2248, 0.0478, 0.1392, 0.1436, 0.0624, -0.1926,
+            0.0551, -0.2938, 0.1467, -0.0836, -0.1743, -0.0238, -0.1242, -0.2127, -0.1016, 0.0549,
+            -0.0582, -0.0845, 0.0619, -0.0104, -0.0895, 0.0112, -0.3106,
+        ];
+        let label = 1;
+        let (loss, gradient) = calculate_nll_loss_and_gradient(&logits, label);
+        let expected_loss = 3.4522;
+        let expected_gradients = vec![
+            0.0391, -0.9683, 0.0400, 0.0341, 0.0311, 0.0408, 0.0447, 0.0449, 0.0414, 0.0321,
+            0.0411, 0.0290, 0.0451, 0.0358, 0.0327, 0.0380, 0.0344, 0.0315, 0.0352, 0.0411, 0.0367,
+            0.0358, 0.0414, 0.0385, 0.0356, 0.0394, 0.0285,
+        ];
+        let rounded_loss = (loss * 10000.0).round() / 10000.0;
+        let rounded_gradients = gradient
+            .iter()
+            .map(|x| (x * 10000.0).round() / 10000.0)
+            .collect::<Vec<f32>>();
+        assert_eq!(rounded_loss, expected_loss);
+        assert_eq!(rounded_gradients, expected_gradients);
+    }
 }
