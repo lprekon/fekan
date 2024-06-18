@@ -9,7 +9,7 @@ use std::{
 
 // // use fekan::kan_layer::spline::Spline;
 // // use fekan::kan_layer::KanLayer;
-use clap::{CommandFactory, Parser, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 
 use fekan::{
     kan::{Kan, KanOptions, ModelType},
@@ -20,191 +20,207 @@ use fekan::{
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 struct Cli {
-    #[arg(value_enum, long = "mode")]
-    command: Commands,
-    /// path to the parquet file containing the data
-    #[arg(short = 'd', long = "data")]
+    #[command(subcommand)]
+    command: WhereCommands,
+    /// path to the file containing the data. currently only supports pickle files
+    #[arg(short = 'd', long = "data", required = true)]
     data_file: PathBuf,
-    /// path to the model weights file.
-    /// Only used for LoadTrain and LoadInfer commands
-    #[arg(short = 'm', long = "model-in")]
-    model_input_file: Option<PathBuf>,
-    /// path to the output file for the model weights.
-    /// Only used for Build and LoadTrain commands
-    #[arg(short = 'o', long = "model-out")]
-    model_output_file: Option<String>,
+}
 
-    /// how many samples to evaluate between knot updates.
-    /// Only used for Build and LoadTrain commands
-    #[arg(long, default_value = "100")]
-    knot_update_interval: usize,
+#[derive(Subcommand, Debug, Clone)]
+enum WhereCommands {
+    /// Build a new model and train it on the provided data
+    Build(BuildArgs),
+    /// Load an existing model for either further training or for inference
+    Load(LoadArgs),
+}
 
-    /// when knot_adaptivity = 0, b-spline knots are uniformly distributed. When knot_adaptivity = 1, the knots are set using percentiles of the data. Values between 0 and 1 interpolate between these two extremes.
-    #[arg(long, default_value = "0.1")]
-    knot_adaptivity: f32,
+#[derive(Args, Clone, Debug)]
+struct BuildArgs {
+    /// Classification or regression model. If classifier, ||output_layer|| = ||classes||, if regression, ||output_layer|| = 1
+    #[command(subcommand)]
+    model_type: CliModelType,
+}
 
-    /// learning rate used to update the weights.
-    /// Only used for Build and LoadTrain commands
-    #[arg(short, long, default_value = "0.001")]
-    learning_rate: f32,
+#[derive(Subcommand, Debug, Clone)]
+enum CliModelType {
+    // ! this enum should exactly match the fekan::ModelType enum
+    // ! This is a workaround for the fact that the ValueEnum derive macro doesn't support enums with associated data, so we can't wrap the ModelType enum in a new enum
+    /// Build a model to do classification with the provided classes
+    Classifier(ClassifierArgs),
+    /// Build a regression model to predict one or more continuous output values
+    Regressor(RegressorArgs),
+}
 
-    /// number of epochs to train the model.
-    /// Only used for Build and LoadTrain commands
-    #[arg(short, long, default_value = "100")]
-    epochs: usize,
+#[derive(Args, Clone, Debug)]
+struct ClassifierArgs {
+    /// A comma-separated list of classes which the model will be trained to predict. The model will have ||classes|| output nodes
+    #[arg(short, long, required = true, value_delimiter = ',')]
+    classes: Vec<String>,
 
-    /// fraction of the data to use for validation. Only used for Build and LoadTrain commands
-    #[arg(long, default_value = "0.1")]
-    validation_split: f32,
+    #[command(flatten)]
+    params: GenericBuildParams,
+}
 
-    /// if true, the model will be tested against the validation split after each epoch, and the validation loss included in the heartbeat.
-    /// Only used for Build and LoadTrain commands
-    #[arg(long)]
-    validate_each_epoch: bool,
+#[derive(Args, Clone, Debug)]
+struct RegressorArgs {
+    #[arg(long = "output-nodes", default_value = "1")]
+    /// The number of output nodes in the model. If > 1, the model will be a multi-output regression model
+    num_output_nodes: usize,
+    #[command(flatten)]
+    params: GenericBuildParams,
+}
 
-    /// degree of B-Spline to use.
-    /// Only used for the Build command
-    #[arg(short = 'k', long, default_value = "3")]
+#[derive(Args, Clone, Debug)]
+struct GenericBuildParams {
+    #[arg(short = 'k', long, default_value = "3", global = true)]
+    /// The degree of the spline basis functions
     degree: usize,
 
-    /// number of control points to use in each B-Spline.
-    /// Only used for the Build command
-    #[arg(long, default_value = "5")]
-    num_coef: usize,
+    #[arg(long = "coefs", default_value = "4", global = true)]
+    /// The number of coefficients/control points in the spline basis functions
+    num_coefficients: usize,
 
-    /// number of nodes in each interal layer of the model. This argument does not include the output layer.
-    /// If not provided, the model will be a single layer with the same number of nodes as the number of classes.
-    /// Only used for the Build command
-    /// Ex `--hidden-layers 10,20,30` will create a model with 3 hidden layers, with 10, 20, and 30 nodes respectively
-    #[arg(long = "hidden-layers", value_delimiter = ',')]
+    #[arg(long, alias = "hl", global = true)]
+    /// a comma-separated list of hidden layer sizes. If empty, the model will only have the output layer
     hidden_layer_sizes: Option<Vec<usize>>,
-
-    /// list of classes to predict, used to map output nodes to class labels, and to size the output layer in Build mode.
-    /// In Build or LoadTrain mode, any data points with labels not in this list will be ignored
-    /// Ex `--classes cat,dog,mouse`
-    #[arg(long, value_delimiter = ',')]
-    classes: Vec<String>,
+    // #[command(flatten)]
+    #[command(flatten)]
+    training_parameters: TrainArgs,
 }
 
-// impl Into<TrainingOptions> for Cli {
-//     fn into(self) -> TrainingOptions {
-//         TrainingOptions {
-//             num_epochs: self.epochs,
-//             knot_update_interval: self.knot_update_interval,
-//             learning_rate: self.learning_rate,
-//             validate_each_epoch: self.validate_each_epoch,
-//         }
-//     }
-// }
+#[derive(Args, Clone, Debug)]
+struct TrainArgs {
+    #[arg(short = 'e', long, default_value = "100", global = true)]
+    /// number of epochs to train the model for
+    num_epochs: usize,
 
-impl From<&Cli> for TrainingOptions {
-    fn from(cli: &Cli) -> Self {
-        TrainingOptions {
-            num_epochs: cli.epochs,
-            knot_update_interval: cli.knot_update_interval,
-            learning_rate: cli.learning_rate,
-            knot_adaptivity: cli.knot_adaptivity,
-        }
-    }
+    #[arg(long, default_value = "100", global = true)]
+    /// the interval at which to update the spline knot vectors, based on the inputs seen since the last update
+    knot_update_interval: usize,
+
+    #[arg(long, default_value = "0.1", global = true)]
+    /// A hyperparameter used when updating knots from recent samples.
+    /// When knot_adaptivity = 0, the knots are uniformly distributed over the sample space;
+    /// when knot_adaptivity = 1, the knots are placed at the quantiles of the input data;
+    /// 0 < knot_adaptivity < 1 interpolates between these two extremes.
+    knot_adaptivity: f32,
+
+    #[arg(long, alias = "lr", default_value = "0.01", global = true)]
+    /// the learning rate used to update the model weights
+    learning_rate: f32,
+
+    #[arg(long, global = true)]
+    /// if set, the model will be run against the validation data after each epoch, and the loss will be reported to the observer
+    validate_each_epoch: bool,
+
+    #[arg(long, default_value = "0.2", global = true)]
+    /// the fraction of the training data to use as validation data
+    validation_split: f32,
+
+    /// path to the output file for the model weights.
+    #[arg(short = 'o', long = "model-out", required = true)]
+    model_output_file: PathBuf,
 }
 
-#[derive(ValueEnum, Clone, Debug)]
-enum Commands {
-    /// Build a new model and train it on the provided data
-    Build,
-    /// Load an existing model from a file and train it on the provided data
-    LoadTrain,
-    /// Load an existing model from a file and predict on the provided data
-    LoadInfer,
+#[derive(Args, Clone, Debug)]
+struct LoadArgs {
+    /// path to the model weights file.
+    model_input_file: PathBuf,
+    #[command(subcommand)]
+    command: WhyCommands,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum WhyCommands {
+    /// Further train models weights loaded from a file
+    Train(TrainArgs),
+    /// Use a loaded model to make predictions on new data
+    Infer {
+        /// an ordered list of human-readable labels for the output nodes of the model
+        class_map: Vec<String>,
+    },
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     println!("Using arguments {cli:?}");
     match cli.command {
-        Commands::Build => {
-            if cli.model_output_file.is_none() {
-                Cli::command()
-                    .error(
-                        clap::error::ErrorKind::MissingRequiredArgument,
-                        "model output file is required for Build command",
-                    )
-                    .exit();
+        WhereCommands::Build(build_args) => match build_args.model_type {
+            CliModelType::Classifier(classifier_args) => {
+                let (training_data, validation_data) = load_classification_data(
+                    &cli.data_file,
+                    classifier_args.params.training_parameters.validation_split,
+                    &classifier_args.classes,
+                )?;
+                let training_observer = TrainingProgress::new(
+                    (training_data.len() * classifier_args.params.training_parameters.num_epochs)
+                        as u64,
+                );
+
+                // build our list of layer sizes, which should equal all the hidden layers specified by the user, plus the output layer
+                // `layers` only needs to be mutable while we build it, then should be immutable after that. Using a closure to build it accomplishes this nicely
+                let layers = {
+                    let mut layers = classifier_args
+                        .params
+                        .hidden_layer_sizes
+                        .unwrap_or_default();
+                    layers.push(classifier_args.classes.len() as usize);
+                    layers
+                };
+                // build the model
+                let untrained_model = Kan::new(&KanOptions {
+                    input_size: training_data[0].features.len() as usize,
+                    layer_sizes: layers,
+                    degree: classifier_args.params.degree,
+                    coef_size: classifier_args.params.num_coefficients,
+                    model_type: ModelType::Classification,
+                });
+
+                let training_options = TrainingOptions {
+                    num_epochs: classifier_args.params.training_parameters.num_epochs,
+                    knot_update_interval: classifier_args
+                        .params
+                        .training_parameters
+                        .knot_update_interval,
+                    knot_adaptivity: classifier_args.params.training_parameters.knot_adaptivity,
+                    learning_rate: classifier_args.params.training_parameters.learning_rate,
+                };
+
+                // if the user wants the model validated each epoch, pass the validation data to the training function.
+                // Otherwise, pass None
+                let passed_validation_data = if classifier_args
+                    .params
+                    .training_parameters
+                    .validate_each_epoch
+                {
+                    Some(&validation_data)
+                } else {
+                    None
+                };
+                // run the training loop on the model
+                let trained_model = train_model(
+                    untrained_model,
+                    training_data,
+                    passed_validation_data,
+                    &training_observer,
+                    training_options,
+                )?;
+                training_observer.into_inner().finish();
+                // save the model to a file
+                let mut out_file =
+                    File::create(classifier_args.params.training_parameters.model_output_file)?;
+                serde_pickle::to_writer(&mut out_file, &trained_model, Default::default()).unwrap();
+                Ok(())
             }
-
-            let (training_data, validation_data) =
-                load_classification_data(&cli.data_file, cli.validation_split, &cli.classes)?;
-
-            // if the user wants to validate the model after each epoch, pass the validation data to the training function as a signal to do so
-            let to_pass_validation_data = if cli.validate_each_epoch {
-                Some(&validation_data)
-            } else {
-                None
-            };
-
-            // build the model
-            let input_dimension = training_data[0].features.len();
-            let output_dimension = cli.classes.len();
-            let mut layer_sizes: Vec<usize> = if cli.hidden_layer_sizes.is_some() {
-                cli.hidden_layer_sizes.clone().unwrap()
-            } else {
-                vec![]
-            };
-            layer_sizes.push(output_dimension);
-
-            let untrained_model = Kan::new(&KanOptions {
-                input_size: input_dimension,
-                layer_sizes,
-                degree: cli.degree,
-                coef_size: cli.num_coef,
-                model_type: ModelType::Classification,
-            });
-
-            let observer = TrainingProgress::new((cli.epochs * training_data.len()) as u64);
-            let trained_model = train_model(
-                untrained_model,
-                training_data,
-                to_pass_validation_data,
-                &observer,
-                TrainingOptions::from(&cli),
-            )?;
-            observer.into_inner().finish();
-            let mut out_file = File::create(cli.model_output_file.clone().unwrap())?;
-            serde_pickle::to_writer(&mut out_file, &trained_model, Default::default()).unwrap();
-            Ok(())
-        }
-        Commands::LoadTrain => {
-            if cli.model_input_file.is_none() {
-                Cli::command()
-                    .error(
-                        clap::error::ErrorKind::MissingRequiredArgument,
-                        "model input file is required for LoadTrain command",
-                    )
-                    .exit();
+            CliModelType::Regressor(_regressor_args) => {
+                todo!("Reimplement the regressor model building")
             }
-            if cli.model_output_file.is_none() {
-                Cli::command()
-                    .error(
-                        clap::error::ErrorKind::MissingRequiredArgument,
-                        "model output file is required for LoadTrain command",
-                    )
-                    .exit();
-            }
-
-            todo!("implement LoadTrain command");
-        }
-        Commands::LoadInfer => {
-            if cli.model_input_file.is_none() {
-                Cli::command()
-                    .error(
-                        clap::error::ErrorKind::MissingRequiredArgument,
-                        "model input file is required for LoadInfer command",
-                    )
-                    .exit();
-            }
-            todo!("implement LoadInfer command")
+        },
+        WhereCommands::Load(_load_args) => {
+            todo!("Reimplement the load command")
         }
     }
 }
