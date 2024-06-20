@@ -53,9 +53,7 @@ impl Spline {
         self.control_points
             .iter()
             .enumerate()
-            .map(|(idx, coef)| {
-                *coef * Spline::b(&mut self.activations, idx, self.degree, &self.knots, t)
-            })
+            .map(|(idx, coef)| *coef * b(&mut self.activations, idx, self.degree, &self.knots, t))
             .sum()
     }
 
@@ -89,8 +87,8 @@ impl Spline {
             // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
             let left = (k as f32 - 1.0) / (self.knots[i + k - 1] - self.knots[i]);
             let right = (k as f32 - 1.0) / (self.knots[i + k] - self.knots[i + 1]);
-            let left_recurse = Spline::b(&mut self.activations, i, k - 1, &self.knots, last_t);
-            let right_recurse = Spline::b(&mut self.activations, i + 1, k - 1, &self.knots, last_t);
+            let left_recurse = b(&mut self.activations, i, k - 1, &self.knots, last_t);
+            let right_recurse = b(&mut self.activations, i + 1, k - 1, &self.knots, last_t);
             // println!(
             //     "i: {} left: {}, right: {}, left_recurse: {}, right_recurse: {}",
             //     i, left, right, left_recurse, right_recurse
@@ -153,73 +151,45 @@ impl Spline {
     }
 }
 
-    /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
-    /// checks the provided cache for a memoized result before computing it. If the result is not found, it is computed and stored in the cache before being returned
-    /// This way, both intermediate and final results are cached, and the caches belong to individual splines which can clear them when their knots change
-    fn b(
-        cache: &mut HashMap<(usize, usize, u32), f32>,
-        i: usize,
-        k: usize,
-        knots: &Vec<f32>,
-        t: f32,
-    ) -> f32 {
-        if k == 0 {
-            if knots[i] <= t && t < knots[i + 1] {
-                return 1.0;
-            } else {
-                return 0.0;
-            }
+/// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
+/// checks the provided cache for a memoized result before computing it. If the result is not found, it is computed and stored in the cache before being returned
+/// This way, both intermediate and final results are cached, and the caches belong to individual splines which can clear them when their knots change
+// since this function neither takes nor returns a Spline struct, it doesn't make sense to have it as a method on the struct, so I'm moving it outside the impl block
+fn b(
+    cache: &mut HashMap<(usize, usize, u32), f32>,
+    i: usize,
+    k: usize,
+    knots: &Vec<f32>,
+    t: f32,
+) -> f32 {
+    if k == 0 {
+        if knots[i] <= t && t < knots[i + 1] {
+            return 1.0;
         } else {
-            if let Some(cached_result) = cache.get(&(i, k, t.to_bits())) {
-                return *cached_result;
-            }
-            let left = (t - knots[i]) / (knots[i + k] - knots[i]);
-            let right = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
-            let result = left * Spline::b(cache, i, k - 1, knots, t)
-                + right * Spline::b(cache, i + 1, k - 1, knots, t);
-            cache.insert((i, k, t.to_bits()), result);
-            return result;
+            return 0.0;
         }
-    }
-
-    pub(super) fn update_knots_from_samples(
-        &mut self,
-        mut samples: Vec<f32>,
-        knot_adaptivity: f32,
-    ) {
-        self.activations.clear(); // clear the memoized activations. They're no longer valid, now that the knots are changing
-                                  // at some point I'll requure samples to be sorted so we can just reference a slice, but for now we'll take ownership and sort
-        samples.sort_by(|a, b| a.partial_cmp(b).unwrap()); // this is annoying, but f32 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp
-        let knot_size = self.knots.len();
-        let mut adaptive_knots: Vec<f32> = Vec::with_capacity(knot_size);
-        let num_intervals = self.knots.len() - 1;
-        let step_size = samples.len() / (num_intervals);
-        for i in 0..num_intervals {
-            adaptive_knots.push(samples[i * step_size]);
+    } else {
+        if let Some(cached_result) = cache.get(&(i, k, t.to_bits())) {
+            return *cached_result;
         }
-        adaptive_knots.push(samples[samples.len() - 1]);
-        adaptive_knots[0] -= KNOT_MARGIN;
-        adaptive_knots[knot_size - 1] += KNOT_MARGIN;
-        let uniform_knots = {
-            let min_knot = adaptive_knots[0];
-            let max_knot = adaptive_knots[knot_size - 1];
-            let step_size = (max_knot - min_knot) / (knot_size - 1) as f32;
-            let mut knots = Vec::with_capacity(knot_size);
-            for i in 0..knot_size {
-                knots.push(min_knot + i as f32 * step_size);
-            }
-            knots
-        };
-        self.knots = adaptive_knots
-            .iter()
-            .zip(uniform_knots.iter())
-            .map(|(a, b)| a * knot_adaptivity + b * (1.0 - knot_adaptivity))
-            .collect();
+        let left = (t - knots[i]) / (knots[i + k] - knots[i]);
+        let right = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
+        let result = left * b(cache, i, k - 1, knots, t) + right * b(cache, i + 1, k - 1, knots, t);
+        cache.insert((i, k, t.to_bits()), result);
+        return result;
     }
+}
 
-    pub(super) fn get_parameter_count(&self) -> usize {
-        self.control_points.len() + self.knots.len()
+/// generate a uniform distribution of `num_knots` values spanning the range from `min` to `max` inclusive
+pub(crate) fn generate_uniform_knots(min: f32, max: f32, num_knots: usize) -> Vec<f32> {
+    let mut knots = Vec::with_capacity(num_knots);
+    let num_intervals = num_knots - 1;
+    let step_size = (max - min) / (num_intervals) as f32;
+    for i in 0..num_intervals {
+        knots.push(min + i as f32 * step_size);
     }
+    knots.push(max);
+    knots
 }
 
 #[cfg(test)]
@@ -241,7 +211,7 @@ mod tests {
         let k = 3;
         let t = 0.95;
         for i in 0..4 {
-            let result = Spline::b(&mut HashMap::new(), i, k, &knots, t);
+            let result = b(&mut HashMap::new(), i, k, &knots, t);
             let rounded_result = (result * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
             assert_eq!(rounded_result, expected_results[i], "i = {}", i);
         }
@@ -254,7 +224,7 @@ mod tests {
         let k = 3;
         let t = 0.0;
         for i in 0..4 {
-            let result = Spline::b(&mut HashMap::new(), i, k, &knots, t);
+            let result = b(&mut HashMap::new(), i, k, &knots, t);
             let rounded_result = (result * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
             assert_eq!(rounded_result, expected_results[i]);
         }
@@ -366,8 +336,9 @@ mod tests {
         for i in 0..100 {
             samples.push(-3.0 + i as f32 * 0.06);
         }
+        samples.sort_by(|a, b| a.partial_cmp(b).unwrap()); // this is annoying, but f32 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp // this is annoying, but f32 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp)
         println!("{:?}", samples);
-        spline.update_knots_from_samples(samples, 1.0);
+        spline.update_knots_from_samples(samples.as_slice(), 1.0);
         let mut expected_knots = vec![-3.0, -1.74, -0.48, 0.78, 2.04, 3.0, 3.0, 3.0];
         expected_knots[0] -= KNOT_MARGIN;
         expected_knots[7] += KNOT_MARGIN;
