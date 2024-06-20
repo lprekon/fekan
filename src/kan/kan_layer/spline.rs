@@ -65,9 +65,9 @@ impl Spline {
     ///
     /// # Errors
     /// returns an error if `backward` is called before `forward`
-    pub(super) fn backward(&mut self, error: f32) -> Result<f32, String> {
+    pub(super) fn backward(&mut self, error: f32) -> Result<f32, SplineError> {
         if let None = self.last_t {
-            return Err("backward called before forward".to_string());
+            return Err(SplineError::BackwardBeforeForward);
         }
         let last_t = self.last_t.unwrap();
 
@@ -149,6 +149,10 @@ impl Spline {
     pub(super) fn get_parameter_count(&self) -> usize {
         self.control_points.len() + self.knots.len()
     }
+}
+
+pub(crate) enum SplineError {
+    BackwardBeforeForward,
 }
 
 /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
