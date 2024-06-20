@@ -124,6 +124,35 @@ impl Spline {
     //     self.control_points.iter()
     // }
 
+    /// given a sorted slice of previously seen inputs, update the knot vector to be a linear combination of a uniform vector and a vector of quantiles of the samples.
+    pub(super) fn update_knots_from_samples(&mut self, samples: &[f32], knot_adaptivity: f32) {
+        self.activations.clear(); // clear the memoized activations. They're no longer valid, now that the knots are changing
+
+        let knot_size = self.knots.len();
+        let mut adaptive_knots: Vec<f32> = Vec::with_capacity(knot_size);
+        let num_intervals = self.knots.len() - 1;
+        let step_size = samples.len() / (num_intervals);
+        for i in 0..num_intervals {
+            adaptive_knots.push(samples[i * step_size]);
+        }
+        adaptive_knots.push(samples[samples.len() - 1]);
+        // adaptive_knots[0] -= KNOT_MARGIN;
+        // adaptive_knots[knot_size - 1] += KNOT_MARGIN;
+        let uniform_knots = generate_uniform_knots(samples[0], samples[samples.len()], knot_size);
+        self.knots = adaptive_knots
+            .iter()
+            .zip(uniform_knots.iter())
+            .map(|(a, b)| a * knot_adaptivity + b * (1.0 - knot_adaptivity))
+            .collect();
+        self.knots[0] -= KNOT_MARGIN;
+        self.knots[knot_size - 1] += KNOT_MARGIN;
+    }
+
+    pub(super) fn get_parameter_count(&self) -> usize {
+        self.control_points.len() + self.knots.len()
+    }
+}
+
     /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
     /// checks the provided cache for a memoized result before computing it. If the result is not found, it is computed and stored in the cache before being returned
     /// This way, both intermediate and final results are cached, and the caches belong to individual splines which can clear them when their knots change
