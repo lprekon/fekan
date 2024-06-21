@@ -38,6 +38,7 @@ pub struct KanLayer {
     /// dim0 = number of samples
     ///
     /// dim1 = input_dimension
+    #[serde(skip)] // only used for updating knot vectors during training
     samples: Vec<Vec<f32>>,
 }
 

@@ -12,10 +12,14 @@ pub(crate) struct Spline {
     control_points: Vec<f32>,
     knots: Vec<f32>,
     /// the most recent parameter used in the forward pass
+    #[serde(skip)]
+    // only used during operation
     last_t: Option<f32>,
     /// the activations of the spline at each interval, memoized from the most recent forward pass
+    #[serde(skip)] // only used during training
     activations: FxHashMap<(usize, usize, u32), f32>,
     /// accumulated gradients for each control point
+    #[serde(skip)] // only used during training
     gradients: Vec<f32>,
 }
 
