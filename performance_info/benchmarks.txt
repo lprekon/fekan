@@ -27,11 +27,12 @@ running 0 tests
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
-running 4 tests
-test bench_backward                  ... bench:     331,764.59 ns/iter (+/- 19,509.49)
-test bench_forward                   ... bench:     217,723.44 ns/iter (+/- 1,254.79)
-test bench_update                    ... bench:       7,907.11 ns/iter (+/- 207.47)
-test bench_update_knots_from_samples ... bench:     404,484.90 ns/iter (+/- 19,086.98)
+running 5 tests
+test bench_backward                  ... bench:     563,191.70 ns/iter (+/- 20,004.81)
+test bench_forward                   ... bench:     380,681.25 ns/iter (+/- 6,703.34)
+test bench_forward_then_backward     ... bench:     469,925.00 ns/iter (+/- 7,334.51)
+test bench_update                    ... bench:      13,533.22 ns/iter (+/- 258.55)
+test bench_update_knots_from_samples ... bench:     695,090.62 ns/iter (+/- 4,372.40)
 
-test result: ok. 0 passed; 0 failed; 0 ignored; 4 measured; 0 filtered out; finished in 6.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 5 measured; 0 filtered out; finished in 3.48s
 

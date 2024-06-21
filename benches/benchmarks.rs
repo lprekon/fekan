@@ -56,3 +56,14 @@ fn bench_update_knots_from_samples(b: &mut Bencher) {
 
     b.iter(|| layer.update_knots_from_samples(0.1));
 }
+
+#[bench]
+fn bench_forward_then_backward(b: &mut Bencher) {
+    let mut layer = KanLayer::new(INPUT_DIMENSION, OUTPUT_DIMENSION, DEGREE, COEF_SIZE);
+    let input = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
+    b.iter(|| {
+        // no need for a loop - cached values from the forward pass should show up in the backward pass
+        let output = layer.forward(&input).unwrap();
+        let _ = layer.backward(&output);
+    });
+}
