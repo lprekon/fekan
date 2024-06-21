@@ -9,7 +9,7 @@ use std::{
 
 // // use fekan::kan_layer::spline::Spline;
 // // use fekan::kan_layer::KanLayer;
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgGroup, Args, Parser, Subcommand};
 
 use fekan::{
     kan::{Kan, KanOptions, ModelType},
@@ -92,6 +92,7 @@ struct GenericBuildParams {
 }
 
 #[derive(Args, Clone, Debug)]
+#[command(group(ArgGroup::new("output").required(true).multiple(false)))]
 struct TrainArgs {
     #[arg(short = 'e', long, default_value = "100", global = true)]
     /// number of epochs to train the model for
@@ -121,8 +122,12 @@ struct TrainArgs {
     validation_split: f32,
 
     /// path to the output file for the model weights.
-    #[arg(short = 'o', long = "model-out", required = true)]
-    model_output_file: PathBuf,
+    #[arg(short = 'o', long = "model-out", group = "output")]
+    model_output_file: Option<PathBuf>,
+
+    /// if set, the model will not be saved to a file after training. Useful for experimentation, as saving the model can be slow
+    #[arg(long, group = "output")]
+    no_save: bool,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -161,9 +166,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .training_parameters
                     .validate_each_epoch
                 {
-                    training_data.len() * classifier_args.params.training_parameters.num_epochs
+                    (training_data.len() + validation_data.len())
+                        * classifier_args.params.training_parameters.num_epochs
+                        + validation_data.len()
                 } else {
-                    training_data.len() + validation_data.len()
+                    training_data.len() * classifier_args.params.training_parameters.num_epochs
+                        + validation_data.len()
                 };
                 let training_observer = TrainingProgress::new(observer_ticks as u64);
 
@@ -215,11 +223,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                     &training_observer,
                     training_options,
                 )?;
-                training_observer.into_inner().finish();
+                training_observer
+                    .into_inner()
+                    .finish_with_message("Training complete");
                 // save the model to a file
-                let mut out_file =
-                    File::create(classifier_args.params.training_parameters.model_output_file)?;
-                serde_pickle::to_writer(&mut out_file, &trained_model, Default::default()).unwrap();
+                if let Some(model_output_file) =
+                    &classifier_args.params.training_parameters.model_output_file
+                {
+                    println!("Saving model to file: {:?}", model_output_file);
+                    let mut out_file = File::create(model_output_file)?;
+                    serde_pickle::to_writer(&mut out_file, &trained_model, Default::default())?;
+                }
                 Ok(())
             }
             CliModelType::Regressor(_regressor_args) => {
@@ -242,7 +256,7 @@ impl TrainingProgress {
         pb.set_style(
             ProgressStyle::default_bar()
                 .template(
-                    "[{elapsed_precise}] [{bar:40.green/white}] {human_pos}/{human_len} {per_sec} ({eta})",
+                    "[{elapsed_precise}] [{bar:40.green/white}] {human_pos}/{human_len} {per_sec} ({eta}) {msg}",
                 )
                 .unwrap(),
         );
