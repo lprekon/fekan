@@ -1,8 +1,8 @@
 sudo cargo flamegraph -- \
---mode build \
 --data data/clipped_data.pkl \
+build classifier \
 -o test.model \
---hidden-layers 24 \
+--hidden-layer-sizes 24 \
 --classes $(cat data/classes.txt) \
 -e 10 \
 --learning-rate 0.05 \
