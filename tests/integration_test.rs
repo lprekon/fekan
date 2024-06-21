@@ -44,7 +44,11 @@ mod classification {
             coef_size: 4,
             model_type: ModelType::Classification,
         });
-        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
+        let untrained_validation_loss = validate_model(
+            &validation_data,
+            &mut untrained_model,
+            &EmptyObserver::new(),
+        );
         let mut trained_model = train_model(
             untrained_model,
             training_data,
@@ -56,7 +60,8 @@ mod classification {
             },
         )
         .unwrap();
-        let validation_loss = validate_model(&validation_data, &mut trained_model);
+        let validation_loss =
+            validate_model(&validation_data, &mut trained_model, &EmptyObserver::new());
         assert!(
         validation_loss < untrained_validation_loss,
         "Validation loss did not decrease after training. Before training: {}, After training: {}",
@@ -97,7 +102,11 @@ mod regression {
             coef_size: 4,
             model_type: ModelType::Regression,
         });
-        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
+        let untrained_validation_loss = validate_model(
+            &validation_data,
+            &mut untrained_model,
+            &EmptyObserver::new(),
+        );
         let training_result = train_model(
             untrained_model,
             training_data,
@@ -112,7 +121,8 @@ mod regression {
             panic!("Error training model: {:#?}", e);
         }
         let mut trained_model = training_result.unwrap();
-        let validation_loss = validate_model(&validation_data, &mut trained_model);
+        let validation_loss =
+            validate_model(&validation_data, &mut trained_model, &EmptyObserver::new());
         assert!(
         validation_loss < untrained_validation_loss,
         "Validation loss did not decrease after training. Before training: {}, After training: {}",
@@ -154,7 +164,11 @@ mod regression {
             model_type: ModelType::Regression,
         });
 
-        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
+        let untrained_validation_loss = validate_model(
+            &validation_data,
+            &mut untrained_model,
+            &EmptyObserver::new(),
+        );
         let mut trained_model = train_model(
             untrained_model,
             training_data,
@@ -166,7 +180,8 @@ mod regression {
             },
         )
         .unwrap();
-        let validation_loss = validate_model(&validation_data, &mut trained_model);
+        let validation_loss =
+            validate_model(&validation_data, &mut trained_model, &EmptyObserver::new());
         assert!(
         validation_loss < untrained_validation_loss,
         "Validation loss did not decrease after training. Before training: {}, After training: {}",

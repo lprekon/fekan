@@ -93,7 +93,9 @@ pub fn train_model<T: TrainingObserver>(
         epoch_loss /= training_data.len() as f32;
 
         let validation_loss = match validation_data {
-            Some(validation_data) => validate_model(&validation_data, &mut model),
+            Some(validation_data) => {
+                validate_model(&validation_data, &mut model, training_observer)
+            }
             None => f32::NAN,
         };
 
@@ -105,7 +107,11 @@ pub fn train_model<T: TrainingObserver>(
 
 /// Calculates the loss of the model on the provided validation data. If the model is a classification model, the cross entropy loss is calculated.
 /// If the model is a regression model, the mean squared error is calculated.
-pub fn validate_model(validation_data: &Vec<Sample>, model: &mut Kan) -> f32 {
+pub fn validate_model<T: TrainingObserver>(
+    validation_data: &Vec<Sample>,
+    model: &mut Kan,
+    observer: &T,
+) -> f32 {
     let mut validation_loss = 0.0;
 
     for sample in validation_data {
@@ -123,6 +129,7 @@ pub fn validate_model(validation_data: &Vec<Sample>, model: &mut Kan) -> f32 {
             }
         };
         validation_loss += loss;
+        observer.on_sample_end();
     }
     validation_loss /= validation_data.len() as f32;
 
