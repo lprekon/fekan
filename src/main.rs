@@ -155,10 +155,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                     classifier_args.params.training_parameters.validation_split,
                     &classifier_args.classes,
                 )?;
-                let training_observer = TrainingProgress::new(
-                    (training_data.len() * classifier_args.params.training_parameters.num_epochs)
-                        as u64,
-                );
+
+                let observer_ticks = if classifier_args
+                    .params
+                    .training_parameters
+                    .validate_each_epoch
+                {
+                    training_data.len() * classifier_args.params.training_parameters.num_epochs
+                } else {
+                    training_data.len() + validation_data.len()
+                };
+                let training_observer = TrainingProgress::new(observer_ticks as u64);
 
                 // build our list of layer sizes, which should equal all the hidden layers specified by the user, plus the output layer
                 // `layers` only needs to be mutable while we build it, then should be immutable after that. Using a closure to build it accomplishes this nicely
