@@ -1,9 +1,5 @@
 
-running 21 tests
-test kan::kan_layer::node::test::test_activate ... ignored
-test kan::kan_layer::node::test::test_activate_and_backward ... ignored
-test kan::kan_layer::node::test::test_new_node ... ignored
-test kan::kan_layer::node::test::test_update_from_samples ... ignored
+running 18 tests
 test kan::kan_layer::spline::tests::test_b ... ignored
 test kan::kan_layer::spline::tests::test_b_2 ... ignored
 test kan::kan_layer::spline::tests::test_backward_before_forward ... ignored
@@ -21,8 +17,9 @@ test kan::kan_layer::test::test_forward_then_backward ... ignored
 test kan::kan_layer::test::test_new ... ignored
 test kan::test::test_forward ... ignored
 test kan::test::test_forward_then_backward ... ignored
+test test::test_nll_loss_and_gradient ... ignored
 
-test result: ok. 0 passed; 0 failed; 21 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 18 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 running 0 tests
@@ -31,10 +28,10 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 
 running 4 tests
-test bench_backward                  ... bench:   1,316,916.65 ns/iter (+/- 49,442.25)
-test bench_forward                   ... bench:     826,477.61 ns/iter (+/- 202,771.77)
-test bench_update                    ... bench:       7,978.77 ns/iter (+/- 112.80)
-test bench_update_knots_from_samples ... bench:   3,213,500.00 ns/iter (+/- 397,050.48)
+test bench_backward                  ... bench:   1,453,015.62 ns/iter (+/- 182,124.90)
+test bench_forward                   ... bench:     794,590.11 ns/iter (+/- 116,731.66)
+test bench_update                    ... bench:       7,928.64 ns/iter (+/- 94.80)
+test bench_update_knots_from_samples ... bench:     417,631.25 ns/iter (+/- 21,390.17)
 
-test result: ok. 0 passed; 0 failed; 0 ignored; 4 measured; 0 filtered out; finished in 10.98s
+test result: ok. 0 passed; 0 failed; 0 ignored; 4 measured; 0 filtered out; finished in 8.99s
 
