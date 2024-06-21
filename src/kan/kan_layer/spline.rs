@@ -1,6 +1,7 @@
 use core::fmt;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, slice::Iter};
+use std::slice::Iter;
 
 /// margin to add to the beginning and end of the knot vector when updating it from samples
 pub(super) const KNOT_MARGIN: f32 = 0.01;
@@ -13,7 +14,7 @@ pub(crate) struct Spline {
     /// the most recent parameter used in the forward pass
     last_t: Option<f32>,
     /// the activations of the spline at each interval, memoized from the most recent forward pass
-    activations: HashMap<(usize, usize, u32), f32>,
+    activations: FxHashMap<(usize, usize, u32), f32>,
     /// accumulated gradients for each control point
     gradients: Vec<f32>,
 }
@@ -41,7 +42,7 @@ impl Spline {
             control_points,
             knots,
             last_t: None,
-            activations: HashMap::new(),
+            activations: FxHashMap::default(),
             gradients: vec![0.0; size],
         })
     }
@@ -208,7 +209,7 @@ impl std::error::Error for SplineError {}
 /// Passing the cache into the function rather than having the caller cache the result allows caching the results of recursive calls, which is useful during backproopagation
 // since this function neither takes nor returns a Spline struct, it doesn't make sense to have it as a method on the struct, so I'm moving it outside the impl block
 fn b(
-    cache: &mut HashMap<(usize, usize, u32), f32>,
+    cache: &mut FxHashMap<(usize, usize, u32), f32>,
     i: usize,
     k: usize,
     knots: &Vec<f32>,
@@ -263,7 +264,7 @@ mod tests {
         let k = 3;
         let t = 0.95;
         for i in 0..4 {
-            let result = b(&mut HashMap::new(), i, k, &knots, t);
+            let result = b(&mut FxHashMap::default(), i, k, &knots, t);
             let rounded_result = (result * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
             assert_eq!(rounded_result, expected_results[i], "i = {}", i);
         }
@@ -276,7 +277,7 @@ mod tests {
         let k = 3;
         let t = 0.0;
         for i in 0..4 {
-            let result = b(&mut HashMap::new(), i, k, &knots, t);
+            let result = b(&mut FxHashMap::default(), i, k, &knots, t);
             let rounded_result = (result * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
             assert_eq!(rounded_result, expected_results[i]);
         }
