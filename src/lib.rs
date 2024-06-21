@@ -1,8 +1,7 @@
 pub mod kan;
 pub mod training_observer;
 
-use kan::{Kan, ModelType};
-use std::error::Error;
+use kan::{Kan, KanError, ModelType};
 use training_observer::TrainingObserver;
 
 #[derive(Clone)]
@@ -37,7 +36,7 @@ pub fn train_model<T: TrainingObserver>(
     validation_data: Option<&Vec<Sample>>,
     training_observer: &T,
     options: TrainingOptions,
-) -> Result<Kan, Box<dyn Error>> {
+) -> Result<Kan, TrainingError> {
     // train the model
     for epoch in 0..options.num_epochs {
         let mut epoch_loss = 0.0;
@@ -47,7 +46,11 @@ pub fn train_model<T: TrainingObserver>(
             // run over each sample in the training data for each epoch
             let output = model
                 .forward(sample.features.iter().map(|&x| x as f32).collect())
-                .unwrap();
+                .map_err(|e| TrainingError {
+                    source: e,
+                    epoch,
+                    sample: samples_seen,
+                })?;
             match model.model_type {
                 ModelType::Classification => {
                     // calculate classification probability from logits
@@ -55,19 +58,33 @@ pub fn train_model<T: TrainingObserver>(
                         calculate_nll_loss_and_gradient(&output, sample.label as usize);
                     epoch_loss += loss;
                     // pass the error back through the model
-                    let _ = model.backward(dlogits).unwrap();
+                    let _ = model.backward(dlogits).map_err(|e| TrainingError {
+                        source: e,
+                        epoch,
+                        sample: samples_seen,
+                    })?;
                 }
                 ModelType::Regression => {
                     let (loss, dlogits) =
                         calculate_mse_and_gradient(output[0], sample.label as f32);
                     epoch_loss += loss;
-                    let _ = model.backward(vec![dlogits]).unwrap();
+                    let _ = model.backward(vec![dlogits]).map_err(|e| TrainingError {
+                        source: e,
+                        epoch,
+                        sample: samples_seen,
+                    })?;
                 }
             }
             model.update(options.learning_rate); // TODO implement momentum
             model.zero_gradients();
             if samples_seen % options.knot_update_interval == 0 {
-                let _ = model.update_knots_from_samples(options.knot_adaptivity)?;
+                let _ = model
+                    .update_knots_from_samples(options.knot_adaptivity)
+                    .map_err(|e| TrainingError {
+                        source: e,
+                        epoch,
+                        sample: samples_seen,
+                    })?;
                 model.clear_samples();
             }
 
@@ -181,6 +198,29 @@ impl EmptyObserver {
 impl TrainingObserver for EmptyObserver {
     fn on_epoch_end(&self, _epoch: usize, _epoch_loss: f32, _validation_loss: f32) {}
     fn on_sample_end(&self) {}
+}
+
+#[derive(Debug)]
+pub struct TrainingError {
+    pub source: KanError,
+    pub epoch: usize,
+    pub sample: usize,
+}
+
+impl std::fmt::Display for TrainingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "epoch {} sample {} encountered error {}",
+            self.epoch, self.sample, self.source
+        )
+    }
+}
+
+impl std::error::Error for TrainingError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
 }
 
 #[cfg(test)]

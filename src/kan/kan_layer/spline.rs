@@ -1,11 +1,12 @@
+use core::fmt;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, slice::Iter};
 
 /// margin to add to the beginning and end of the knot vector when updating it from samples
 pub(super) const KNOT_MARGIN: f32 = 0.01;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Spline {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct Spline {
     degree: usize,
     control_points: Vec<f32>,
     knots: Vec<f32>,
@@ -26,14 +27,14 @@ impl Spline {
         degree: usize,
         control_points: Vec<f32>,
         knots: Vec<f32>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, SplineError> {
         let size = control_points.len();
-        if knots.len() < size + degree + 1 {
-            return Err(format!(
-                "knot vector has length {}, but expected length at least {}",
-                knots.len(),
-                size + degree + 1
-            ));
+        let min_required_knots = size + degree + 1;
+        if knots.len() < min_required_knots {
+            return Err(SplineError::BadKnotVectorLength {
+                expected: min_required_knots,
+                actual: knots.len(),
+            });
         }
         Ok(Spline {
             degree,
@@ -123,6 +124,10 @@ impl Spline {
     // }
 
     /// given a sorted slice of previously seen inputs, update the knot vector to be a linear combination of a uniform vector and a vector of quantiles of the samples.
+    ///
+    /// If the new knots would contain `degree` or more duplicates - generally caused by too many duplicates in the samples - the knots are not updated
+    ///
+    /// If `samples` is not sorted, the results of the update and future spline operation are undefined.
     pub(super) fn update_knots_from_samples(&mut self, samples: &[f32], knot_adaptivity: f32) {
         self.activations.clear(); // clear the memoized activations. They're no longer valid, now that the knots are changing
 
@@ -134,30 +139,73 @@ impl Spline {
             adaptive_knots.push(samples[i * step_size]);
         }
         adaptive_knots.push(samples[samples.len() - 1]);
-        // adaptive_knots[0] -= KNOT_MARGIN;
-        // adaptive_knots[knot_size - 1] += KNOT_MARGIN;
-        let uniform_knots = generate_uniform_knots(samples[0], samples[samples.len()], knot_size);
-        self.knots = adaptive_knots
+
+        let span_min = samples[0];
+        let span_max = samples[samples.len() - 1];
+        let uniform_knots = generate_uniform_knots(span_min, span_max, self.knots.len());
+
+        let mut new_knots: Vec<f32> = adaptive_knots
             .iter()
             .zip(uniform_knots.iter())
             .map(|(a, b)| a * knot_adaptivity + b * (1.0 - knot_adaptivity))
             .collect();
-        self.knots[0] -= KNOT_MARGIN;
-        self.knots[knot_size - 1] += KNOT_MARGIN;
+
+        // make sure new_knots doesn't have too many duplicates
+        let mut duplicate_count = 0;
+        for i in 1..new_knots.len() {
+            if new_knots[i] == new_knots[i - 1] {
+                duplicate_count += 1;
+            } else {
+                duplicate_count = 0;
+            }
+            if duplicate_count >= self.degree {
+                return; // we have too many duplicate knots, so we don't update the knots
+            }
+        }
+
+        new_knots[0] -= KNOT_MARGIN;
+        new_knots[knot_size - 1] += KNOT_MARGIN;
+        self.knots = new_knots;
     }
 
+    /// return the number of control points and knots in the spline
     pub(super) fn get_parameter_count(&self) -> usize {
         self.control_points.len() + self.knots.len()
     }
+
+    /// return the number of control points in the spline
+    pub(super) fn get_trainable_parameter_count(&self) -> usize {
+        self.control_points.len()
+    }
 }
 
+// this is a bit of a heavy duty implementation, but it makes building errors at higher levels and in the future easier
+
+#[derive(Debug, Clone)]
 pub(crate) enum SplineError {
+    BadKnotVectorLength { expected: usize, actual: usize },
     BackwardBeforeForward,
 }
 
+impl fmt::Display for SplineError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            SplineError::BackwardBeforeForward => write!(f, "backward called before forward"),
+            SplineError::BadKnotVectorLength { expected, actual } => write!(
+                f,
+                "knot vector has length {}, but expected length at least {}",
+                actual, expected
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SplineError {}
+
 /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
-/// checks the provided cache for a memoized result before computing it. If the result is not found, it is computed and stored in the cache before being returned
-/// This way, both intermediate and final results are cached, and the caches belong to individual splines which can clear them when their knots change
+/// checks the provided cache for a memoized result before computing it. If the result is not found, it is computed and stored in the cache before being returned.
+///
+/// Passing the cache into the function rather than having the caller cache the result allows caching the results of recursive calls, which is useful during backproopagation
 // since this function neither takes nor returns a Spline struct, it doesn't make sense to have it as a method on the struct, so I'm moving it outside the impl block
 fn b(
     cache: &mut HashMap<(usize, usize, u32), f32>,

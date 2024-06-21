@@ -1,3 +1,4 @@
+use kan_layer::LayerError;
 use serde::{Deserialize, Serialize};
 
 pub mod kan_layer;
@@ -41,12 +42,22 @@ impl Kan {
         }
     }
 
-    pub fn forward(&mut self, input: Vec<f32>) -> Result<Vec<f32>, String> {
+    /// passes the input to the [kan_layer::KanLayer::forward] method of the first layer,
+    /// then calls the `forward` method of each subsequent layer with the output of the previous layer,
+    /// returning the output of the final layer
+    ///
+    /// # Errors
+    /// returns an error if any layer returns an error.
+    /// See [kan_layer::KanLayer::forward] and [kan_layer::LayerError] for more information
+    pub fn forward(&mut self, input: Vec<f32>) -> Result<Vec<f32>, KanError> {
         let mut preacts = input.clone();
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             let result = layer.forward(&preacts);
             if let Err(e) = result {
-                return Err(format!("Error in layer {}: {}", idx, e));
+                return Err(KanError {
+                    source: e,
+                    index: idx,
+                });
             }
             let output = result.unwrap();
             preacts = output;
@@ -54,25 +65,47 @@ impl Kan {
         Ok(preacts)
     }
 
-    pub fn backward(&mut self, error: Vec<f32>) -> Result<Vec<f32>, String> {
+    /// passes the error to the [kan_layer::KanLayer::backward] method of the last layer,
+    /// then calls the `backward` method of each subsequent layer with the output of the previous layer,
+    /// returning the error returned by first layer
+    ///
+    /// # Errors
+    /// returns an error if any layer returns an error.
+    /// See [kan_layer::KanLayer::backward] and [kan_layer::LayerError] for more information
+    pub fn backward(&mut self, error: Vec<f32>) -> Result<Vec<f32>, KanError> {
         let mut error = error;
-        for layer in self.layers.iter_mut().rev() {
-            error = layer.backward(&error)?;
+        for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
+            let backward_result = layer.backward(&error);
+            match backward_result {
+                Ok(result) => {
+                    error = result;
+                }
+                Err(e) => {
+                    return Err(KanError {
+                        source: e,
+                        index: idx,
+                    });
+                }
+            }
         }
         Ok(error)
     }
+
+    /// updates the weights of each layer based on the stored gradients that have been calculated
     pub fn update(&mut self, learning_rate: f32) {
         for layer in self.layers.iter_mut() {
             layer.update(learning_rate);
         }
     }
 
+    /// sets the gradients of each layer to zero
     pub fn zero_gradients(&mut self) {
         for layer in self.layers.iter_mut() {
             layer.zero_gradients();
         }
     }
 
+    /// returns the total number of parameters in the model, inlcuding untrained parameters
     pub fn get_parameter_count(&self) -> usize {
         self.layers
             .iter()
@@ -80,11 +113,22 @@ impl Kan {
             .sum()
     }
 
+    /// returns the total number of trainable parameters in the model
+    pub fn get_trainable_parameter_count(&self) -> usize {
+        self.layers
+            .iter()
+            .map(|layer| layer.get_trainable_parameter_count())
+            .sum()
+    }
+
     /// Update the knots in each layer based on the samples that have been passed through the model
-    pub fn update_knots_from_samples(&mut self, knot_adaptivity: f32) -> Result<(), String> {
-        for layer in self.layers.iter_mut() {
+    pub fn update_knots_from_samples(&mut self, knot_adaptivity: f32) -> Result<(), KanError> {
+        for (idx, layer) in self.layers.iter_mut().enumerate() {
             if let Err(e) = layer.update_knots_from_samples(knot_adaptivity) {
-                return Err(e);
+                return Err(KanError {
+                    source: e,
+                    index: idx,
+                });
             }
         }
         return Ok(());
@@ -95,6 +139,24 @@ impl Kan {
         for layer in self.layers.iter_mut() {
             layer.clear_samples();
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct KanError {
+    source: LayerError,
+    index: usize,
+}
+
+impl std::fmt::Display for KanError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "layer {} encountered error {}", self.index, self.source)
+    }
+}
+
+impl std::error::Error for KanError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
     }
 }
 

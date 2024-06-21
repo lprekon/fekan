@@ -98,7 +98,7 @@ mod regression {
             model_type: ModelType::Regression,
         });
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
-        let mut trained_model = train_model(
+        let training_result = train_model(
             untrained_model,
             training_data,
             Some(&validation_data), // this way if the test fails, we can see the validation loss over time
@@ -107,8 +107,11 @@ mod regression {
                 num_epochs: 50,
                 ..TrainingOptions::default()
             },
-        )
-        .unwrap();
+        );
+        if let Err(e) = training_result {
+            panic!("Error training model: {:#?}", e);
+        }
+        let mut trained_model = training_result.unwrap();
         let validation_loss = validate_model(&validation_data, &mut trained_model);
         assert!(
         validation_loss < untrained_validation_loss,

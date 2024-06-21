@@ -1,17 +1,16 @@
 // #![allow(dead_code)]
-
-mod node;
 mod spline;
 
-use node::Node;
 use rand::distributions::Distribution;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use spline::{generate_uniform_knots, Spline, SplineError};
+use spline::{generate_uniform_knots, Spline};
 use statrs::distribution::Normal; // apparently the statrs distributions use the rand Distribution trait
 
-use core::num;
-use std::{error::Error, vec};
+use std::{
+    fmt::{self, Formatter},
+    vec,
+};
 
 /// A layer in a Kolmogorov-Arnold neural network
 ///
@@ -53,7 +52,6 @@ impl KanLayer {
     /// let k = 5;
     /// let coef_size = 6;
     /// let my_layer = KanLayer::new(input_dimension, output_dimension, k, coef_size);
-    /// assert_eq!(my_layer.len(), output_dimension);
     /// assert_eq!(my_layer.total_edges(), output_dimension * input_dimension);
     /// ```
     pub fn new(
@@ -64,7 +62,7 @@ impl KanLayer {
     ) -> Self {
         let num_edges = input_dimension * output_dimension;
         let num_knots = coef_size + k + 1;
-        let normal_dist = Normal::new(0.0, 1.0).unwrap();
+        let normal_dist = Normal::new(0.0, 1.0).expect("unable to create normal distribution");
         let mut randomness = thread_rng();
         let splines = (0..num_edges)
             .map(|_| {
@@ -76,7 +74,7 @@ impl KanLayer {
                     coefficients,
                     generate_uniform_knots(-1.0, 1.0, num_knots),
                 )
-                .unwrap()
+                .expect("spline creation error")
             })
             .collect();
 
@@ -99,13 +97,15 @@ impl KanLayer {
     /// calculate the activations of the nodes in this layer given the preactivations. This operation mutates internal state, which will be read in [`KanLayer::backward()`].
     ///
     /// `preactivation.len()` must be equal to `input_dimension` provided when the layer was created
+    /// # Errors
+    /// Returns an error if the length of `preactivation` is not equal to the input_dimension this layer
     pub fn forward(&mut self, preactivation: &Vec<f32>) -> Result<Vec<f32>, LayerError> {
         //  check the length here since it's the same check for the entire layer, even though the "node" is technically the part that cares
         if preactivation.len() != self.input_dimension {
-            return Err(LayerError::BadActivationLength(
-                preactivation.len(),
-                self.input_dimension,
-            ));
+            return Err(LayerError::BadPreactivationLength {
+                actual: preactivation.len(),
+                expected: self.input_dimension,
+            });
         }
         self.samples.push(preactivation.clone()); // save a copy of the preactivation for updating the knot vectors later
 
@@ -119,22 +119,19 @@ impl KanLayer {
         }
 
         if activations.iter().any(|x| x.is_nan()) {
-            return Err(LayerError::NaNInActivations);
+            return Err(LayerError::NaNsInActivations);
         }
         Ok(activations)
     }
 
     /// update the knot vectors for each incoming edge in this layer using the memoized samples
     ///
+    /// # Errors
+    /// Returns an error if the layer has no memoized samples, which most likely means that `forward` has not been called since initialization or the last call to `clear_samples`
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f32) -> Result<(), LayerError> {
-        // removing the check - it should never fire, and this way I can stop returning a result.
-        // if !self
-        //     .samples
-        //     .iter()
-        //     .all(|sample| sample.len() == self.nodes[0].num_incoming_edges())
-        // {
-        //     return Err(format!("samples must have the same length as the input dimension of the layer! Expected {}, got {}", self.nodes[0].num_incoming_edges(), self.samples.len()));
-        // }
+        if self.samples.is_empty() {
+            return Err(LayerError::SamplesEmpty);
+        }
 
         // lets construct a sorted vector of the samples for each incoming value
         // first we transpose the samples, so that dim0 = input_dimension, dim1 = number of samples
@@ -177,15 +174,18 @@ impl KanLayer {
     /// Returns an error if the length of `error` is not equal to the number of nodes in this layer, or if `backward` is called before `forward`
     pub fn backward(&mut self, error: &Vec<f32>) -> Result<Vec<f32>, LayerError> {
         if error.len() != self.output_dimension {
-            return Err(LayerError::BadErrorLength(
-                error.len(),
-                self.output_dimension,
-            ));
+            return Err(LayerError::BadErrorLength {
+                actual: error.len(),
+                expected: self.output_dimension,
+            });
         }
 
         let mut input_error = vec![0.0; self.input_dimension];
         for i in 0..self.splines.len() {
-            let error_at_edge_output = error[i / self.input_dimension]; // every `input_dimension` splines belong to the same node, and thus will use the same error value
+            // every `input_dimension` splines belong to the same node, and thus will use the same error value.
+            // "Distribute" the error at a given node among all incoming edges
+            let error_at_edge_output =
+                error[i / self.input_dimension] / self.input_dimension as f32;
             let error_at_edge_input = self.splines[i].backward(error_at_edge_output)?;
             input_error[i % self.input_dimension] += error_at_edge_input;
         }
@@ -208,9 +208,16 @@ impl KanLayer {
         }
     }
 
-    /// return the total number of trainable parameters in this layer
+    /// return the total number of parameters in this layer
     pub fn get_parameter_count(&self) -> usize {
         self.input_dimension * self.output_dimension * self.splines[0].get_parameter_count()
+    }
+
+    /// returns the total number of trainable parameters in this layer
+    pub fn get_trainable_parameter_count(&self) -> usize {
+        self.input_dimension
+            * self.output_dimension
+            * self.splines[0].get_trainable_parameter_count()
     }
 
     /// return the number of incoming edges to nodes in this layer
@@ -219,21 +226,60 @@ impl KanLayer {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum LayerError {
-    /// the preactivation vector passed to `forward` has the wrong length. The first value is the length of the preactivation vector, the second value is the expected length
-    BadActivationLength(usize, usize),
-    NaNInActivations,
-    /// the error vector passed to 'forward' has the wrong length. The first value is the length of the error vector, the second value is the expected length
-    BadErrorLength(usize, usize),
+#[derive(Debug, PartialEq, Clone)]
+pub enum LayerError {
+    BadPreactivationLength { actual: usize, expected: usize },
+    // If NaNs are in the activations, it's probably because the spline knot vectors had too many duplicates in a row
+    NaNsInActivations,
+    SamplesEmpty,
+    BadErrorLength { actual: usize, expected: usize },
     BackwardBeforeForward,
 }
 
-impl From<SplineError> for LayerError {
-    fn from(_: SplineError) -> Self {
-        LayerError::BackwardBeforeForward
+impl std::fmt::Display for LayerError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            LayerError::BadPreactivationLength { actual, expected } => {
+                write!(
+                    f,
+                    "Bad preactivation length. Expected {}, got {}",
+                    expected, actual
+                )
+            }
+            LayerError::NaNsInActivations => {
+                write!(f, "NaNs in activations")
+            }
+            LayerError::SamplesEmpty => {
+                write!(f, "No samples to update knot vectors")
+            }
+            LayerError::BadErrorLength { actual, expected } => {
+                write!(
+                    f,
+                    "received error vector of length {} but required vector of length {}",
+                    actual, expected
+                )
+            }
+            LayerError::BackwardBeforeForward => {
+                write!(f, "backward called before forward")
+            }
+        }
     }
 }
+
+impl From<spline::SplineError> for LayerError {
+    fn from(value: spline::SplineError) -> Self {
+        match value {
+            spline::SplineError::BackwardBeforeForward => LayerError::BackwardBeforeForward,
+            _ => {
+                panic!(
+                    "attempted to convert a non-BackwardBeforeForward SplineError to LayerError"
+                ); // panic because this should never happen
+            }
+        }
+    }
+}
+
+impl std::error::Error for LayerError {}
 
 #[cfg(test)]
 mod test {
@@ -294,7 +340,13 @@ mod test {
         let preacts = vec![0.0, 0.5, 0.5];
         let acts = layer.forward(&preacts);
         assert!(acts.is_err());
-        assert_eq!(acts.err().unwrap(), LayerError::BadActivationLength(3, 2));
+        assert_eq!(
+            acts.err().unwrap(),
+            LayerError::BadPreactivationLength {
+                actual: 3,
+                expected: 2
+            }
+        );
     }
 
     #[test]
@@ -307,7 +359,7 @@ mod test {
             .iter()
             .map(|x| (x * 10000.0).round() / 10000.0)
             .collect();
-        assert_eq!(rounded_activations, expected_activations);
+        assert_eq!(rounded_activations, expected_activations, "forward failed");
 
         let error = vec![1.0, 0.5];
         let input_error = layer.backward(&error).unwrap();
@@ -316,7 +368,7 @@ mod test {
             .iter()
             .map(|f| (f * 100000.0).round() / 100000.0)
             .collect();
-        assert_eq!(rounded_input_error, expected_input_error);
+        assert_eq!(rounded_input_error, expected_input_error, "backward failed");
     }
 
     #[test]
