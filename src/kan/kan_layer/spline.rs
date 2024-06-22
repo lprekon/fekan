@@ -36,7 +36,7 @@ impl Spline {
         let size = control_points.len();
         let min_required_knots = size + degree + 1;
         if knots.len() < min_required_knots {
-            return Err(SplineError::BadKnotVectorLength {
+            return Err(SplineError::TooFewKnotsError {
                 expected: min_required_knots,
                 actual: knots.len(),
             });
@@ -73,7 +73,7 @@ impl Spline {
     /// returns an error if `backward` is called before `forward`
     pub(super) fn backward(&mut self, error: f32) -> Result<f32, SplineError> {
         if let None = self.last_t {
-            return Err(SplineError::BackwardBeforeForward);
+            return Err(SplineError::BackwardBeforeForwardError);
         }
         let last_t = self.last_t.unwrap();
 
@@ -188,15 +188,15 @@ impl Spline {
 
 #[derive(Debug, Clone)]
 pub(crate) enum SplineError {
-    BadKnotVectorLength { expected: usize, actual: usize },
-    BackwardBeforeForward,
+    TooFewKnotsError { expected: usize, actual: usize },
+    BackwardBeforeForwardError,
 }
 
 impl fmt::Display for SplineError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            SplineError::BackwardBeforeForward => write!(f, "backward called before forward"),
-            SplineError::BadKnotVectorLength { expected, actual } => write!(
+            SplineError::BackwardBeforeForwardError => write!(f, "backward called before forward"),
+            SplineError::TooFewKnotsError { expected, actual } => write!(
                 f,
                 "knot vector has length {}, but expected length at least {}",
                 actual, expected

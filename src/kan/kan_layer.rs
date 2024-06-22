@@ -103,7 +103,7 @@ impl KanLayer {
     pub fn forward(&mut self, preactivation: &Vec<f32>) -> Result<Vec<f32>, LayerError> {
         //  check the length here since it's the same check for the entire layer, even though the "node" is technically the part that cares
         if preactivation.len() != self.input_dimension {
-            return Err(LayerError::BadPreactivationLength {
+            return Err(LayerError::MissizedPreactsError {
                 actual: preactivation.len(),
                 expected: self.input_dimension,
             });
@@ -120,7 +120,7 @@ impl KanLayer {
         }
 
         if activations.iter().any(|x| x.is_nan()) {
-            return Err(LayerError::NaNsInActivations);
+            return Err(LayerError::NaNsError);
         }
         Ok(activations)
     }
@@ -131,7 +131,7 @@ impl KanLayer {
     /// Returns an error if the layer has no memoized samples, which most likely means that `forward` has not been called since initialization or the last call to `clear_samples`
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f32) -> Result<(), LayerError> {
         if self.samples.is_empty() {
-            return Err(LayerError::SamplesEmpty);
+            return Err(LayerError::NoSamplesError);
         }
 
         // lets construct a sorted vector of the samples for each incoming value
@@ -175,7 +175,7 @@ impl KanLayer {
     /// Returns an error if the length of `error` is not equal to the number of nodes in this layer, or if `backward` is called before `forward`
     pub fn backward(&mut self, error: &Vec<f32>) -> Result<Vec<f32>, LayerError> {
         if error.len() != self.output_dimension {
-            return Err(LayerError::BadErrorLength {
+            return Err(LayerError::MissizedGradientError {
                 actual: error.len(),
                 expected: self.output_dimension,
             });
@@ -227,38 +227,38 @@ impl KanLayer {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum LayerError {
-    BadPreactivationLength { actual: usize, expected: usize },
+    MissizedPreactsError { actual: usize, expected: usize },
     // If NaNs are in the activations, it's probably because the spline knot vectors had too many duplicates in a row
-    NaNsInActivations,
-    SamplesEmpty,
-    BadErrorLength { actual: usize, expected: usize },
-    BackwardBeforeForward,
+    NaNsError,
+    NoSamplesError,
+    MissizedGradientError { actual: usize, expected: usize },
+    BackwardBeforeForwardError,
 }
 
 impl std::fmt::Display for LayerError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            LayerError::BadPreactivationLength { actual, expected } => {
+            LayerError::MissizedPreactsError { actual, expected } => {
                 write!(
                     f,
                     "Bad preactivation length. Expected {}, got {}",
                     expected, actual
                 )
             }
-            LayerError::NaNsInActivations => {
+            LayerError::NaNsError => {
                 write!(f, "NaNs in activations")
             }
-            LayerError::SamplesEmpty => {
+            LayerError::NoSamplesError => {
                 write!(f, "No samples to update knot vectors")
             }
-            LayerError::BadErrorLength { actual, expected } => {
+            LayerError::MissizedGradientError { actual, expected } => {
                 write!(
                     f,
                     "received error vector of length {} but required vector of length {}",
                     actual, expected
                 )
             }
-            LayerError::BackwardBeforeForward => {
+            LayerError::BackwardBeforeForwardError => {
                 write!(f, "backward called before forward")
             }
         }
@@ -268,7 +268,9 @@ impl std::fmt::Display for LayerError {
 impl From<spline::SplineError> for LayerError {
     fn from(value: spline::SplineError) -> Self {
         match value {
-            spline::SplineError::BackwardBeforeForward => LayerError::BackwardBeforeForward,
+            spline::SplineError::BackwardBeforeForwardError => {
+                LayerError::BackwardBeforeForwardError
+            }
             _ => {
                 panic!(
                     "attempted to convert a non-BackwardBeforeForward SplineError to LayerError"
@@ -341,7 +343,7 @@ mod test {
         assert!(acts.is_err());
         assert_eq!(
             acts.err().unwrap(),
-            LayerError::BadPreactivationLength {
+            LayerError::MissizedPreactsError {
                 actual: 3,
                 expected: 2
             }
