@@ -25,7 +25,7 @@
 //!
 //! # Examples
 //! Build, train and save a full KAN regression model with a 2-dimensional input, 1 hidden layer with 3 nodes, and 1 output node,
-//! where each layer uses degree-4 splines with 5 coefficients (AKA control points):
+//! where each layer uses degree-4 [B-splines](https://en.wikipedia.org/wiki/B-spline) with 5 coefficients (AKA control points):
 //! ```
 //! use fekan::kan::{Kan, KanOptions, ModelType};
 //! use fekan::{Sample, TrainingOptions};
@@ -60,7 +60,7 @@
 
 /// Contains the main struct of the library, the [`Kan`] struct, which represents a full Kolmogorov-Arnold Network.
 pub mod kan;
-/// Contains the struct [`KanLayer`], which represents a single layer of a Kolmogorov-Arnold Network.
+/// Contains the struct [`KanLayer`](crate::kan_layer::KanLayer), which represents a single layer of a Kolmogorov-Arnold Network.
 pub mod kan_layer;
 /// Provides a trait for observing the training process during [`crate::train_model`].
 pub mod training_observer;
@@ -79,7 +79,7 @@ pub struct Sample {
     pub label: f32, // use a f32 so the size doesn't change between platforms
 }
 
-/// Used by the [train_model] function to determine how the model should be trained.
+/// Used by the [`train_model`] function to determine how the model should be trained.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct TrainingOptions {
     /// number of epochs for which to train, where an epoch is one pass through the training data

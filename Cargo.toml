@@ -2,6 +2,18 @@
 name = "fekan"
 version = "0.1.0"
 edition = "2021"
+authors = ["John Farmer."]
+license = "MIT OR Apache-2.0"
+description = "A library for building and training Kolmogorov-Arnold neural networks."
+repository = "https://github.com/lprekon/fekan"
+keywords = [
+    "neural-networks",
+    "kolmogorov-arnold",
+    "machine-learning",
+    "ai",
+    "artificial-intelligence",
+]
+categories = ["science", "mathematics"]
 
 [dependencies]
 chrono = "0.4.38"
