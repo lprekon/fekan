@@ -40,6 +40,7 @@ pub struct KanLayer {
 /// # Examples
 /// see [`KanLayer::new`]
 #[derive(Debug, Copy, Clone)]
+#[allow(missing_docs)]
 pub struct KanLayerOptions {
     pub input_dimension: usize,
     pub output_dimension: usize,
@@ -370,7 +371,7 @@ impl PartialEq for KanLayer {
             && self.output_dimension == other.output_dimension
     }
 }
-
+#[allow(missing_docs)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum LayerError {
     /// the length of the preactivation vector passed to [`KanLayer::forward`] was not equal to the input dimension of the layer

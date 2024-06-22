@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 /// A full neural network model, consisting of multiple Kolmogorov-Arnold layers
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Kan {
+    /// the layers of the model
     pub layers: Vec<KanLayer>,
+    /// the type of model. This field is metadata and does not affect the operation of the model, though it is used elsewhere in the crate. See [`fekan::train_model()`](crate::train_model) for an example
     pub model_type: ModelType, // determined how the output is interpreted, and what the loss function ought to be
 }
 
@@ -17,13 +19,13 @@ pub struct Kan {
 pub struct KanOptions {
     /// the number of input features the model should except
     pub input_size: usize,
-    /// the sizes of the layers in the model, including the output layer
+    /// the sizes of the layers to use in the model, including the output layer
     pub layer_sizes: Vec<usize>,
-    /// the degree of the b-splines used in each layer
+    /// the degree of the b-splines to use in each layer
     pub degree: usize,
-    /// the number of coefficients used in each layer
+    /// the number of coefficients to use in each layer
     pub coef_size: usize,
-    /// the type of model. This field is metadata and does not affect the operation of the model, though it is used elsewhere in the crate. See [`fekan::train_model()`](crate::train_model) for an example
+    /// the type of model to create. This field is metadata and does not affect the operation of the model, though it is used elsewhere in the crate. See [`fekan::train_model()`](crate::train_model) for an example
     pub model_type: ModelType,
 }
 
@@ -32,7 +34,9 @@ pub struct KanOptions {
 /// For information on how model type can affect training, see [`train_model()`](crate::train_model)
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelType {
+    /// For models designed to assign a discreet class to an input. For example, determining if an image contains a cat or a dog
     Classification,
+    /// For models design to predict a continuous value. For example, predicting the price of a house
     Regression,
 }
 

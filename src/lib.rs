@@ -1,3 +1,7 @@
+#![warn(missing_docs)]
+#![warn(missing_doc_code_examples)]
+#![warn(rustdoc::broken_intra_doc_links)]
+
 //! A library to build and train Kolmogorov-Arnold neural networks.
 //!
 //! The `fekan` crate contains utilities to build and train Kolmogorov-Arnold Networks (KANs) in Rust.
@@ -54,19 +58,24 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+/// Contains the main struct of the library, the [`Kan`] struct, which represents a full Kolmogorov-Arnold Network.
 pub mod kan;
+/// Contains the struct [`KanLayer`], which represents a single layer of a Kolmogorov-Arnold Network.
 pub mod kan_layer;
+/// Provides a trait for observing the training process during [`crate::train_model`].
 pub mod training_observer;
 
 use kan::{Kan, KanError, ModelType};
 use training_observer::TrainingObserver;
 
-/// A sample of data to be used in training a model. The `features` field contains the input data, and the `label` field contains the expected output.
+/// A sample of data to be used in training a model.
 ///
 /// Used for both [training](train_model) and [validation](validate_model) data.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Sample {
+    /// The input data for the model
     pub features: Vec<f32>,
+    /// The expected output of the model
     pub label: f32, // use a f32 so the size doesn't change between platforms
 }
 
@@ -335,6 +344,7 @@ fn calculate_mse_and_gradient(actual: f32, expected: f32) -> (f32, f32) {
 #[derive(Default)]
 pub struct EmptyObserver {}
 impl EmptyObserver {
+    /// Create a new instance of the EmptyObserver
     pub fn new() -> Self {
         EmptyObserver {}
     }
@@ -353,8 +363,11 @@ impl TrainingObserver for EmptyObserver {
 /// If displayed, this error will show the epoch and sample at which the error was encountered, as well as the [KanError] that caused the error.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct TrainingError {
+    /// The error that caused the training error
     pub source: KanError,
+    /// The epoch at which the error was encountered
     pub epoch: usize,
+    /// The sample within the epoch at which the error was encountered
     pub sample: usize,
 }
 
