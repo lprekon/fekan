@@ -267,4 +267,16 @@ mod test {
         assert_eq!(rounded_loss, expected_loss);
         assert_eq!(rounded_gradients, expected_gradients);
     }
+
+    #[test]
+    fn test_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<TrainingError>();
+    }
+
+    #[test]
+    fn test_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<TrainingError>();
+    }
 }

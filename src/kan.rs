@@ -212,14 +212,26 @@ mod test {
     }
 
     #[test]
-    fn test_send() {
+    fn test_model_send() {
         fn assert_send<T: Send>() {}
         assert_send::<Kan>();
     }
 
     #[test]
-    fn test_sync() {
+    fn test_model_sync() {
         fn assert_sync<T: Sync>() {}
         assert_sync::<Kan>();
+    }
+
+    #[test]
+    fn test_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<KanError>();
+    }
+
+    #[test]
+    fn test_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<KanError>();
     }
 }

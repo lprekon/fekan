@@ -421,14 +421,26 @@ mod tests {
     }
 
     #[test]
-    fn test_send() {
+    fn test_spline_send() {
         fn assert_send<T: Send>() {}
         assert_send::<Spline>();
     }
 
     #[test]
-    fn test_sync() {
+    fn test_spline_sync() {
         fn assert_sync<T: Sync>() {}
         assert_sync::<Spline>();
+    }
+
+    #[test]
+    fn test_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<SplineError>();
+    }
+
+    #[test]
+    fn test_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<SplineError>();
     }
 }

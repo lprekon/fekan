@@ -409,14 +409,26 @@ mod test {
     }
 
     #[test]
-    fn test_send() {
+    fn test_layer_send() {
         fn assert_send<T: Send>() {}
         assert_send::<KanLayer>();
     }
 
     #[test]
-    fn test_sync() {
+    fn test_layer_sync() {
         fn assert_sync<T: Sync>() {}
         assert_sync::<KanLayer>();
+    }
+
+    #[test]
+    fn test_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<LayerError>();
+    }
+
+    #[test]
+    fn test_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<LayerError>();
     }
 }
