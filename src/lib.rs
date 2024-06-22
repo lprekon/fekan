@@ -1,4 +1,5 @@
 pub mod kan;
+pub mod kan_layer;
 pub mod training_observer;
 
 use kan::{Kan, KanError, ModelType};

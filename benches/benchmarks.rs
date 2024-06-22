@@ -3,7 +3,7 @@ extern crate test;
 use rand::{thread_rng, Rng};
 use test::Bencher;
 
-use fekan::kan::kan_layer::{KanLayer, KanLayerOptions};
+use fekan::kan_layer::{KanLayer, KanLayerOptions};
 
 const INPUT_DIMENSION: usize = 128;
 const OUTPUT_DIMENSION: usize = 12;

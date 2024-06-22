@@ -1,11 +1,11 @@
-use kan_layer::{KanLayerOptions, LayerError};
+use crate::kan_layer::{KanLayer, KanLayerOptions, LayerError};
 use serde::{Deserialize, Serialize};
 
-pub mod kan_layer;
+// use kan_layer;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Kan {
-    pub layers: Vec<kan_layer::KanLayer>,
+    pub layers: Vec<KanLayer>,
     pub model_type: ModelType, // determined how the output is interpreted, and what the loss function ought to be
 }
 
@@ -29,7 +29,7 @@ impl Kan {
         let mut layers = Vec::with_capacity(options.layer_sizes.len());
         let mut prev_size = options.input_size;
         for &size in options.layer_sizes.iter() {
-            layers.push(kan_layer::KanLayer::new(KanLayerOptions {
+            layers.push(KanLayer::new(KanLayerOptions {
                 input_dimension: prev_size,
                 output_dimension: size,
                 degree: options.degree,
