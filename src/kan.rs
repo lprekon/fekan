@@ -1,23 +1,35 @@
 use crate::kan_layer::{KanLayer, KanLayerOptions, LayerError};
 use serde::{Deserialize, Serialize};
 
-// use kan_layer;
-
+/// A full neural network model, consisting of multiple Kolmogorov-Arnold layers
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Kan {
     pub layers: Vec<KanLayer>,
     pub model_type: ModelType, // determined how the output is interpreted, and what the loss function ought to be
 }
 
+/// Hyperparameters for a Kan model
+///
+/// # Example
+/// see [Kan::new]
+///
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct KanOptions {
+    /// the number of input features the model should except
     pub input_size: usize,
+    /// the sizes of the layers in the model, including the output layer
     pub layer_sizes: Vec<usize>,
+    /// the degree of the b-splines used in each layer
     pub degree: usize,
+    /// the number of coefficients used in each layer
     pub coef_size: usize,
+    /// the type of model. This field is metadata and does not affect the operation of the model, though it is used elsewhere in the crate. See [`fekan::train_model()`](crate::train_model) for an example
     pub model_type: ModelType,
 }
 
+/// Metadata suggesting how the model's output ought to be interpreted
+///
+/// For information on how model type can affect training, see [`train_model()`](crate::train_model)
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelType {
     Classification,
@@ -25,6 +37,22 @@ pub enum ModelType {
 }
 
 impl Kan {
+    /// creates a new Kan model with the given hyperparameters
+    ///
+    /// # Example
+    /// Create a regression model with 5 input features, 2 hidden layers of size 4 and 3, and 1 output feature, using degree 3 b-splines with 6 coefficients
+    /// ```
+    /// use fekan::kan::{Kan, KanOptions, ModelType};
+    ///
+    /// let options = KanOptions {
+    ///     input_size: 5,
+    ///     layer_sizes: vec![4, 3],
+    ///     degree: 3,
+    ///     coef_size: 6,
+    ///     model_type: ModelType::Regression,
+    /// };
+    /// let mut model = Kan::new(&options);
+    ///```
     pub fn new(options: &KanOptions) -> Self {
         let mut layers = Vec::with_capacity(options.layer_sizes.len());
         let mut prev_size = options.input_size;
@@ -43,13 +71,34 @@ impl Kan {
         }
     }
 
-    /// passes the input to the [kan_layer::KanLayer::forward] method of the first layer,
+    /// passes the input to the [`crate::kan_layer::KanLayer::forward`] method of the first layer,
     /// then calls the `forward` method of each subsequent layer with the output of the previous layer,
     /// returning the output of the final layer
     ///
     /// # Errors
-    /// returns an error if any layer returns an error.
-    /// See [kan_layer::KanLayer::forward] and [kan_layer::LayerError] for more information
+    /// returns a [KanError] if any layer returns an error.
+    /// See [crate::kan_layer::KanLayer::forward] and [crate::kan_layer::LayerError] for more information
+    ///
+    /// # Example
+    /// ```
+    /// use fekan::kan::{Kan, KanOptions, ModelType};
+    /// let input_size = 5;
+    /// let output_size = 3;
+    /// let options = KanOptions {
+    ///     input_size: input_size,
+    ///     layer_sizes: vec![4, output_size],
+    ///     degree: 3,
+    ///     coef_size: 6,
+    ///     model_type: ModelType::Classification,
+    /// };
+    /// let mut model = Kan::new(&options);
+    /// let input = vec![0.5, 0.4, 0.5, 0.5, 0.4];
+    /// assert_eq!(input.len(), input_size);
+    /// let output = model.forward(input)?;
+    /// assert_eq!(output.len(), output_size);
+    /// /* interpret the output as you like, for example as logits in a classifier, or as predicted value in a regressor */
+    /// # Ok::<(), fekan::kan::KanError>(())
+    /// ```
     pub fn forward(&mut self, input: Vec<f32>) -> Result<Vec<f32>, KanError> {
         let mut preacts = input.clone();
         for (idx, layer) in self.layers.iter_mut().enumerate() {
@@ -66,13 +115,32 @@ impl Kan {
         Ok(preacts)
     }
 
-    /// passes the error to the [kan_layer::KanLayer::backward] method of the last layer,
+    /// passes the error to the [crate::kan_layer::KanLayer::backward] method of the last layer,
     /// then calls the `backward` method of each subsequent layer with the output of the previous layer,
     /// returning the error returned by first layer
     ///
     /// # Errors
     /// returns an error if any layer returns an error.
-    /// See [kan_layer::KanLayer::backward] and [kan_layer::LayerError] for more information
+    /// See [crate::kan_layer::KanLayer::backward] and [crate::kan_layer::LayerError] for more information
+    ///
+    /// # Example
+    /// ```
+    /// use fekan::kan::{Kan, KanOptions, ModelType};
+    ///
+    /// let options = KanOptions {
+    ///     input_size: 5,
+    ///     layer_sizes: vec![4, 3],
+    ///     degree: 3,
+    ///     coef_size: 6,
+    ///     model_type: ModelType::Regression,
+    /// };
+    /// let mut model = Kan::new(&options);
+    ///
+    /// let input = vec![0.5, 0.4, 0.5, 0.5, 0.4];
+    /// let output = model.forward(input)?;
+    /// /* interpret the output as you like, for example as logits */
+    /// # Ok::<(), fekan::kan::KanError>(())
+    /// ```
     pub fn backward(&mut self, error: Vec<f32>) -> Result<Vec<f32>, KanError> {
         let mut error = error;
         for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
@@ -92,14 +160,14 @@ impl Kan {
         Ok(error)
     }
 
-    /// updates the weights of each layer based on the stored gradients that have been calculated
+    /// calls each layer's [`crate::kan_layer::KanLayer::update`] method with the given learning rate
     pub fn update(&mut self, learning_rate: f32) {
         for layer in self.layers.iter_mut() {
             layer.update(learning_rate);
         }
     }
 
-    /// sets the gradients of each layer to zero
+    /// calls each layer's [`crate::kan_layer::KanLayer::zero_gradients`] method
     pub fn zero_gradients(&mut self) {
         for layer in self.layers.iter_mut() {
             layer.zero_gradients();
@@ -107,6 +175,8 @@ impl Kan {
     }
 
     /// returns the total number of parameters in the model, inlcuding untrained parameters
+    ///
+    /// see [`crate::kan_layer::KanLayer::parameter_count`] for more information
     pub fn parameter_count(&self) -> usize {
         self.layers
             .iter()
@@ -115,6 +185,8 @@ impl Kan {
     }
 
     /// returns the total number of trainable parameters in the model
+    ///
+    /// see [`crate::kan_layer::KanLayer::trainable_parameter_count`] for more information
     pub fn trainable_parameter_count(&self) -> usize {
         self.layers
             .iter()
@@ -123,6 +195,10 @@ impl Kan {
     }
 
     /// Update the knots in each layer based on the samples that have been passed through the model
+    ///
+    /// # Errors
+    /// returns a [KanError] if any layer returns an error. see [`crate::kan_layer::KanLayer::update_knots_from_samples`] for more information
+    ///
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f32) -> Result<(), KanError> {
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             if let Err(e) = layer.update_knots_from_samples(knot_adaptivity) {
@@ -136,6 +212,8 @@ impl Kan {
     }
 
     /// Clear the samples from each layer
+    ///
+    /// see [`crate::kan_layer::KanLayer::clear_samples`] for more information
     pub fn clear_samples(&mut self) {
         for layer in self.layers.iter_mut() {
             layer.clear_samples();
@@ -149,9 +227,14 @@ impl PartialEq for Kan {
     }
 }
 
+/// An error that occurs when a Kan model encounters an error in one of its layers
+///
+/// Displaying the error will show the index of the layer that encountered the error, and the error itself
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KanError {
+    /// the error that occurred
     source: LayerError,
+    /// the index of the layer that encountered the error
     index: usize,
 }
 

@@ -2,10 +2,10 @@
 //!
 //! The `fekan` crate contains utilities to build and train Kolmogorov-Arnold Networks (KANs) in Rust.
 //!
-//! The [kan_layer] module contains the [kan_layer::KanLayer] struct, representing a single layer of a KAN,
+//! The [kan_layer] module contains the [`kan_layer::KanLayer`] struct, representing a single layer of a KAN,
 //! which can be used to build full KANs or as a layer in other models.
 //!
-//! The crate also contains the [Kan] struct, which represents a full KAN model.
+//! The crate also contains the [`Kan`] struct, which represents a full KAN model.
 //!
 //! ## What is a Kolmogorov-Arnold Network?
 //! Rather than perform a weighted sum of the activations of the previous layer and passing the sum through a fixed non-linear function,
@@ -38,10 +38,10 @@
 //! let mut untrained_model = Kan::new(&model_options);
 //!
 //! // train the model
-//! # let sample_1 = Sample{features: vec![1.0, 2.0], label: 3.0};
-//! # let sample_2 = Sample{features: vec![-1.0, 1.0], label: 0.0};
 //! let training_data: Vec<Sample> = Vec::new();
 //! /* Load training data */
+//! # let sample_1 = Sample{features: vec![1.0, 2.0], label: 3.0};
+//! # let sample_2 = Sample{features: vec![-1.0, 1.0], label: 0.0};
 //! # let training_data = vec![sample_1, sample_2];
 //!
 //! let trained_model = fekan::train_model(untrained_model, training_data, None, &fekan::EmptyObserver::new(), TrainingOptions::default())?;
@@ -61,17 +61,25 @@ pub mod training_observer;
 use kan::{Kan, KanError, ModelType};
 use training_observer::TrainingObserver;
 
+/// A sample of data to be used in training a model. The `features` field contains the input data, and the `label` field contains the expected output.
+///
+/// Used for both [training](train_model) and [validation](validate_model) data.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Sample {
     pub features: Vec<f32>,
     pub label: f32, // use a f32 so the size doesn't change between platforms
 }
 
+/// Used by the [train_model] function to determine how the model should be trained.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct TrainingOptions {
+    /// number of epochs for which to train, where an epoch is one pass through the training data
     pub num_epochs: usize,
+    /// number of samples to pass through the model before updating the knots. See [kan_layer::KanLayer::update_knots_from_samples] for more information about this process.
     pub knot_update_interval: usize,
+    /// the adaptivity of the knots when updating them. See [kan_layer::KanLayer::update_knots_from_samples] for more information about this process.
     pub knot_adaptivity: f32,
+    /// the learning rate of the model
     pub learning_rate: f32,
 }
 
@@ -86,8 +94,74 @@ impl Default for TrainingOptions {
     }
 }
 
-/// Train the provided model with the provided data. This function will report status to the provided observer.
-/// If validation data is provided, the model will be validated after each epoch, and provided to the observer. If validation is not provided, the validation loss will be `NaN` in the epoch-end report.
+/// Train the provided model with the provided data.
+///
+/// if `validation_data` is not `None`, the model will be validated after each epoch, and the validation loss will be reported to the observer, otherwise the reported validation loss will be NaN.
+///
+/// This function will report status to the provided [`training_observer`](TrainingObserver).
+///
+/// This function uses the [ModelType] of the model to determine how to calculate the loss and gradient of the model.
+///
+/// Returns the trained model if no errors are thrown.
+///
+/// # Errors
+/// returns a [TrainingError] if the model reports an error at any point during training.
+///
+/// # Example
+/// train a model, using the provided [EmptyObserver] to ignore all training events:
+/// ```
+/// use fekan::{train_model, Sample, TrainingOptions, EmptyObserver};
+/// use fekan::kan::{Kan, KanOptions, ModelType};
+/// # use fekan::TrainingError;
+///
+/// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression};
+/// let untrained_model = Kan::new(&some_model_options);
+/// let training_data: Vec<Sample> = Vec::new();
+///
+/// /* Load training data */
+///
+/// let trained_model = train_model(
+///     untrained_model,
+///     training_data,
+///     None,
+///     &EmptyObserver::new(),
+///     TrainingOptions::default())?;
+/// # Ok::<(), TrainingError>(())
+/// ```
+///
+/// Train a model, testing it against the validation data after each epoch, and catching the results with a custom struct that implements [TrainingObserver]:
+/// ```
+/// use fekan::{train_model, Sample, TrainingOptions};
+/// use fekan::kan::{Kan, KanOptions, ModelType};
+/// # use fekan::TrainingError;
+/// # use fekan::training_observer::TrainingObserver;
+/// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression};
+/// # struct MyCustomObserver {}
+/// # impl MyCustomObserver {
+/// #     fn new() -> Self { MyCustomObserver{} }
+/// # }
+/// # impl TrainingObserver for MyCustomObserver {
+/// #     fn on_epoch_end(&self, epoch: usize, epoch_loss: f32, validation_loss: f32) {}
+/// #     fn on_sample_end(&self) {}
+/// # }
+///
+/// let untrained_model = Kan::new(&some_model_options);
+///
+/// let my_observer = MyCustomObserver::new(); // custom type that implements TrainingObserver
+///
+/// let training_data: Vec<Sample> = Vec::new();
+/// let validation_data: Vec<Sample> = Vec::new();
+///
+/// /* Load training and validation data */
+///
+/// let trained_model = train_model(
+///     untrained_model,
+///     training_data,
+///     Some(&validation_data),
+///     &my_observer,
+///     TrainingOptions::default())?;
+/// # Ok::<(), TrainingError>(())
+/// ```
 pub fn train_model<T: TrainingObserver>(
     mut model: Kan,
     training_data: Vec<Sample>,
@@ -165,6 +239,8 @@ pub fn train_model<T: TrainingObserver>(
 
 /// Calculates the loss of the model on the provided validation data. If the model is a classification model, the cross entropy loss is calculated.
 /// If the model is a regression model, the mean squared error is calculated.
+///
+/// Calls the [`TrainingObserver::on_sample_end`] method of the provided observer after each sample is processed.
 pub fn validate_model<T: TrainingObserver>(
     validation_data: &Vec<Sample>,
     model: &mut Kan,
@@ -255,6 +331,7 @@ fn calculate_mse_and_gradient(actual: f32, expected: f32) -> (f32, f32) {
 }
 
 // EmptyObserver is basically a singleton, so there's no point in implementing any other common traits
+/// An observer that does nothing when called.
 #[derive(Default)]
 pub struct EmptyObserver {}
 impl EmptyObserver {
@@ -271,6 +348,9 @@ impl TrainingObserver for EmptyObserver {
     }
 }
 
+/// Indicates that an error was encountered during training
+///
+/// If displayed, this error will show the epoch and sample at which the error was encountered, as well as the [KanError] that caused the error.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct TrainingError {
     pub source: KanError,

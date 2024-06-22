@@ -12,17 +12,10 @@ use std::{
     vec,
 };
 
-/// A layer in a Kolmogorov-Arnold neural network
+/// A layer in a Kolmogorov-Arnold neural Network (KAN)
 ///
-/// because the interesting work in a KAN is done on the edges between nodes, the layer needs to know how many nodes are in the previous layer as well in itself,
-/// so it can calculate the total number of incoming edges and initialize parameters for each edge
-///
-/// The layer keeps a vector of nodes, each of which has a vector of incoming edges. Each incoming edge has a knot vector and a set of control points.
-/// The control points are the parameters that the network learns.
-/// The knot vector is a set of values that define the b-spline.
-///
-/// the size of the "node" vector is equal to the output dimension of the layer
-/// the size of the incoming edge vector for each "node" is equal to the input dimension of the layer
+/// A KAN layer consists of a number of nodes equal to the output dimension of the layer.
+/// Each node has a number of incoming edges equal to the input dimension of the layer, and each edge holds a B-spline that operates on the value travelling down the edge
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct KanLayer {
@@ -42,6 +35,10 @@ pub struct KanLayer {
     samples: Vec<Vec<f32>>,
 }
 
+/// Hyperparameters for a KanLayer
+///
+/// # Examples
+/// see [`KanLayer::new`]
 #[derive(Debug, Copy, Clone)]
 pub struct KanLayerOptions {
     pub input_dimension: usize,
@@ -51,7 +48,12 @@ pub struct KanLayerOptions {
 }
 
 impl KanLayer {
-    /// create a new layer with the given number of nodes in the previous layer and the given number of nodes in this layer
+    /// create a new layer with `output_dimension` nodes in this layer that each expect an `input_dimension`-long preactivation vector.
+    ///
+    /// All incoming edges will be created with a degree `degree` B-spline and `coef_size` control points.
+    ///
+    /// All B-splines areinitialized with coefficients drawn from astandard normal distribution, and with
+    /// `degree + coef_size + 1` knots evenly spaced between -1.0 and 1.0.
     /// # Examples
     /// ```
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
@@ -101,11 +103,31 @@ impl KanLayer {
     //     self.nodes.len() * self.nodes[0].0.len()
     // }
 
-    /// calculate the activations of the nodes in this layer given the preactivations. This operation mutates internal state, which will be read in [`KanLayer::backward()`].
+    /// calculate the activations of the nodes in this layer given the preactivations.
+    /// This operation mutates internal state, which will be read in [`KanLayer::backward()`] and [`KanLayer::update_knots_from_samples()`]
     ///
-    /// `preactivation.len()` must be equal to `input_dimension` provided when the layer was created
+    /// `preactivation.len()` must be equal to the layer's `input_dimension`
     /// # Errors
-    /// Returns an error if the length of `preactivation` is not equal to the input_dimension this layer
+    /// Returns an [`LayerError`] if the length of `preactivation` is not equal to the input_dimension this layer, or if the activations contain NaNs.
+    /// See [`LayerError`] for more information
+    ///
+    /// # Examples
+    /// ```
+    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
+    /// let input_dimension = 3;
+    /// let output_dimension = 4;
+    /// let layer_options = KanLayerOptions {
+    ///     input_dimension,
+    ///     output_dimension,
+    ///     degree: 5,
+    ///     coef_size: 6,
+    /// };
+    /// let mut my_layer = KanLayer::new(layer_options);
+    /// let preacts = vec![0.0, 0.5, 0.5];
+    /// let acts = my_layer.forward(&preacts)?;
+    /// assert_eq!(acts.len(), output_dimension);
+    /// # Ok::<(), fekan::kan_layer::LayerError>(())
+    /// ```
     pub fn forward(&mut self, preactivation: &Vec<f32>) -> Result<Vec<f32>, LayerError> {
         //  check the length here since it's the same check for the entire layer, even though the "node" is technically the part that cares
         if preactivation.len() != self.input_dimension {
@@ -131,10 +153,37 @@ impl KanLayer {
         Ok(activations)
     }
 
-    /// update the knot vectors for each incoming edge in this layer using the memoized samples
+    /// Using samples memoized by [`KanLayer::forward`], update the knot vectors for each incoming edge in this layer.
+    ///
+    /// When `knot_adaptivity` is 0, the new knot vectors will be uniformly distributed over the range spanned by the samples;
+    /// when `knot_adaptivity` is 1, the new knots will be placed at the quantiles of the samples. 0 < `knot_adaptivity` < 1 will interpolate between these two extremes.
+    ///
+    /// ## Warning
+    /// calling this function with `knot_adaptivity = 1` can result in a large number of knots being placed at the same value, which can cause NaNs in the activations. See [`LayerError`] for more information
+    ///
+    /// calling this function with fewer samples than the number of knots in a spline AND `knot_adaptivity` > 0 results in undefined behavior
     ///
     /// # Errors
-    /// Returns an error if the layer has no memoized samples, which most likely means that `forward` has not been called since initialization or the last call to `clear_samples`
+    /// Returns an error if the layer has no memoized samples, which most likely means that [`KanLayer::forward`] has not been called since initialization or the last call to [`KanLayer::clear_samples`]
+    ///
+    /// # Examples
+    /// Update the knot vectors for a layer to cover the range of the samples. In practice, this function should be called every hundred forward passes or so
+    /// ```
+    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
+    /// # let some_layer_options = KanLayerOptions {input_dimension: 2,output_dimension: 4,degree: 5, coef_size: 6};
+    /// let mut my_layer = KanLayer::new(some_layer_options);
+    /// let sample1 = vec![100f32, -100f32];
+    /// let sample2 = vec![-100f32, 100f32];
+    ///
+    /// let acts = my_layer.forward(&sample1)?;
+    /// assert!(acts.iter().all(|x| *x == 0.0)); // the preacts were all outside the initial knot range, so the activations should all be 0
+    /// let acts = my_layer.forward(&sample2)?;
+    /// assert!(acts.iter().all(|x| *x == 0.0)); // the preacts were all outside the initial knot range, so the activations should all be 0
+    /// my_layer.update_knots_from_samples(0.0)?; // we don't have enough samples to calculate quantiles, so we have to keep the knots uniformly distributed. In practice, this function should be called every few hundred forward passes or so
+    /// let new_acts = my_layer.forward(&sample1)?;
+    /// assert!(new_acts.iter().all(|x| *x != 0.0)); // the knot range now covers the samples, so the activations should be non-zero
+    /// # Ok::<(), fekan::kan_layer::LayerError>(())
+    /// ```
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f32) -> Result<(), LayerError> {
         if self.samples.is_empty() {
             return Err(LayerError::NoSamplesError);
@@ -166,19 +215,67 @@ impl KanLayer {
     }
 
     /// wipe the internal state that tracks the samples used to update the knot vectors
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
+    /// # let some_layer_options = KanLayerOptions {input_dimension: 2,output_dimension: 4,degree: 5, coef_size: 6};
+    /// let mut my_layer = KanLayer::new(some_layer_options);
+    /// /* Run several forward passes */
+    /// # let sample1 = vec![100f32, -100f32];
+    /// # let sample2 = vec![-100f32, 100f32];
+    /// # let _acts = my_layer.forward(&sample1)?;
+    /// # let _acts = my_layer.forward(&sample2)?;
+    /// let update_result = my_layer.update_knots_from_samples(0.0);
+    /// assert!(update_result.is_ok());
+    /// my_layer.clear_samples();
+    /// let update_result = my_layer.update_knots_from_samples(0.0);
+    /// assert!(update_result.is_err()); // we've cleared the samples, so we can't update the knot vectors
+    /// # Ok::<(), fekan::kan_layer::LayerError>(())
     pub fn clear_samples(&mut self) {
         self.samples.clear();
     }
 
-    /// given `error`, containing an error value for each node, calculate the gradients for the control points on each incoming edge,
+    /// Given a vector of error values for the nodes in this layer, backpropogate the error through the layer, updating the internal gradients for the incoming edges
     /// and return the error for the previous layer.
     ///
     /// This function relies on mutated inner state and should be called after [`KanLayer::forward`].
     ///
-    /// This function mutates inner state, which will be used in [`KanLayer::update`]`
+    /// Calculated gradients are stored internally, and only applied during [`KanLayer::update`].
     ///
     /// # Errors
-    /// Returns an error if the length of `error` is not equal to the number of nodes in this layer, or if `backward` is called before `forward`
+    /// Returns a [`LayerError`] if the length of `error` is not equal to the number of nodes in this layer, or if `backward` is called before `forward`
+    ///
+    /// # Examples
+    /// Backpropgate the error through a two-layer network, and update the gradients
+    /// ```
+    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
+    /// let first_layer_options = KanLayerOptions { input_dimension: 2, output_dimension: 4, degree: 5, coef_size: 6 };
+    /// let second_layer_options = KanLayerOptions { input_dimension: 4, output_dimension: 3, degree: 5, coef_size: 6 };
+    /// let mut first_layer = KanLayer::new(first_layer_options);
+    /// let mut second_layer = KanLayer::new(second_layer_options);
+    /// /* forward pass */
+    /// let preacts = vec![0.0, 0.5];
+    /// let acts = first_layer.forward(&preacts)?;
+    /// let output = second_layer.forward(&acts)?;
+    /// /* calculate error */
+    /// # let error = vec![1.0, 0.5, 0.5];
+    /// assert_eq!(error.len(), second_layer_options.output_dimension);
+    /// let first_layer_error = second_layer.backward(&error)?;
+    /// assert_eq!(first_layer_error.len(), first_layer_options.output_dimension);
+    /// let input_error = first_layer.backward(&first_layer_error)?;
+    /// assert_eq!(input_error.len(), first_layer_options.input_dimension);
+    ///
+    /// // apply the gradients
+    /// let learning_rate = 0.1;
+    /// first_layer.update(learning_rate);
+    /// second_layer.update(learning_rate);
+    /// // reset the gradients
+    /// first_layer.zero_gradients();
+    /// second_layer.zero_gradients();
+    /// # Ok::<(), fekan::kan_layer::LayerError>(())
+    /// ```
     pub fn backward(&mut self, error: &Vec<f32>) -> Result<Vec<f32>, LayerError> {
         if error.len() != self.output_dimension {
             return Err(LayerError::MissizedGradientError {
@@ -201,26 +298,59 @@ impl KanLayer {
 
     /// update the control points for each incoming edge in this layer given the learning rate
     ///
-    /// this function relies on mutated inner state and should be called after [`KanLayer::backward()`]
+    /// this function relies on internally stored gradients calculated during [`KanLayer::backward()`]
+    ///
+    /// # Examples
+    /// see [`KanLayer::backward`]
     pub fn update(&mut self, learning_rate: f32) {
         for spline in self.splines.iter_mut() {
             spline.update(learning_rate);
         }
     }
 
-    /// zero out the gradients for each incoming edge in this layer
+    /// clear gradients for each incoming edge in this layer
+    ///
+    /// # Examples
+    /// see [`KanLayer::backward`]
     pub fn zero_gradients(&mut self) {
         for spline in self.splines.iter_mut() {
             spline.zero_gradients();
         }
     }
 
-    /// return the total number of parameters in this layer
+    /// return the total number of parameters in this layer.
+    /// A layer has `input_dimension * output_dimension` splines, each with `degree + coef_size + 1` knots and `coef_size` control points
+    ///
+    /// #Examples
+    /// ```
+    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
+    /// let layer_options = KanLayerOptions {
+    ///     input_dimension: 2,
+    ///     output_dimension: 4,
+    ///     degree: 5,
+    ///     coef_size: 6
+    /// };
+    /// let my_layer = KanLayer::new(layer_options);
+    /// assert_eq!(my_layer.parameter_count(), 2 * 4 * (6 + (5 + 6 + 1)));
+    ///```
     pub fn parameter_count(&self) -> usize {
         self.input_dimension * self.output_dimension * self.splines[0].parameter_count()
     }
 
-    /// returns the total number of trainable parameters in this layer
+    /// returns the total number of trainable parameters in this layer.
+    /// A layer has `input_dimension * output_dimension` splines, each with coef_size` control points, which are the trainable parameter in a KAN layer
+    /// # Examples
+    /// ```
+    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
+    /// let layer_options = KanLayerOptions {
+    ///     input_dimension: 2,
+    ///     output_dimension: 4,
+    ///     degree: 5,
+    ///     coef_size: 6
+    /// };
+    /// let my_layer = KanLayer::new(layer_options);
+    /// assert_eq!(my_layer.trainable_parameter_count(), 2 * 4 * 6);
+    ///```
     pub fn trainable_parameter_count(&self) -> usize {
         self.input_dimension * self.output_dimension * self.splines[0].trainable_parameter_count()
     }
@@ -243,11 +373,17 @@ impl PartialEq for KanLayer {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum LayerError {
+    /// the length of the preactivation vector passed to [`KanLayer::forward`] was not equal to the input dimension of the layer
     MissizedPreactsError { actual: usize, expected: usize },
-    // If NaNs are in the activations, it's probably because the spline knot vectors had too many duplicates in a row
+    /// the call to [`KanLayer::forward`] resulted in NaNs in the function's output. This is usually caused by too many duplicate knots in the spline.
+    /// Internal controls should prevent this situation from occuring, but this error check and type are left in for safety. If this error occurs,
+    /// the only course of action is to reinitalize the layer and, as a precaution, increase the number of forward-passes between calls to [`KanLayer::update_knots_from_samples`]
     NaNsError,
+    /// the layer has no samples to update the knot vectors with. This error is usually caused by calling [`KanLayer::update_knots_from_samples`] before calling [`KanLayer::forward`]
     NoSamplesError,
+    /// the length of the error vector passed to [`KanLayer::backward`] was not equal to the output dimension of the layer
     MissizedGradientError { actual: usize, expected: usize },
+    /// [`KanLayer::backward`] was called before [`KanLayer::forward`]. The backward pass relies on internal state set by the forward pass, so the forward pass must be called first
     BackwardBeforeForwardError,
 }
 
