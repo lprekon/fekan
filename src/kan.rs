@@ -3,12 +3,13 @@ use serde::{Deserialize, Serialize};
 
 pub mod kan_layer;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Kan {
     pub layers: Vec<kan_layer::KanLayer>,
     pub model_type: ModelType, // determined how the output is interpreted, and what the loss function ought to be
 }
 
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct KanOptions {
     pub input_size: usize,
     pub layer_sizes: Vec<usize>,
@@ -17,7 +18,7 @@ pub struct KanOptions {
     pub model_type: ModelType,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelType {
     Classification,
     Regression,
@@ -142,7 +143,13 @@ impl Kan {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl PartialEq for Kan {
+    fn eq(&self, other: &Self) -> bool {
+        self.layers == other.layers && self.model_type == other.model_type
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KanError {
     source: LayerError,
     index: usize,

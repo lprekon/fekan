@@ -4,12 +4,13 @@ pub mod training_observer;
 use kan::{Kan, KanError, ModelType};
 use training_observer::TrainingObserver;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Sample {
     pub features: Vec<f32>,
-    pub label: f32, // use a u32 so the size doesn't change between platforms
+    pub label: f32, // use a f32 so the size doesn't change between platforms
 }
 
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub struct TrainingOptions {
     pub num_epochs: usize,
     pub knot_update_interval: usize,
@@ -196,6 +197,8 @@ fn calculate_mse_and_gradient(actual: f32, expected: f32) -> (f32, f32) {
     (loss, gradient)
 }
 
+// EmptyObserver is basically a singleton, so there's no point in implementing any other common traits
+#[derive(Default)]
 pub struct EmptyObserver {}
 impl EmptyObserver {
     pub fn new() -> Self {
@@ -203,11 +206,15 @@ impl EmptyObserver {
     }
 }
 impl TrainingObserver for EmptyObserver {
-    fn on_epoch_end(&self, _epoch: usize, _epoch_loss: f32, _validation_loss: f32) {}
-    fn on_sample_end(&self) {}
+    fn on_epoch_end(&self, _epoch: usize, _epoch_loss: f32, _validation_loss: f32) {
+        // do nothing
+    }
+    fn on_sample_end(&self) {
+        // do nothing
+    }
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct TrainingError {
     pub source: KanError,
     pub epoch: usize,

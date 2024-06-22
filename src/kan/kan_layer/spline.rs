@@ -6,11 +6,16 @@ use std::slice::Iter;
 /// margin to add to the beginning and end of the knot vector when updating it from samples
 pub(super) const KNOT_MARGIN: f32 = 0.01;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Spline {
+    // degree, control points, and knots are the parameters of the spline
+    // these three fields constitute the "identity" of the spline, so they're the only ones that get serialized, considered for equality, etc.
     degree: usize,
     control_points: Vec<f32>,
     knots: Vec<f32>,
+
+    // the remaining fields represent the "state" of the spline.
+    // They're in flux during operation, and so are ignored for any sort of persitence or comparison.
     /// the most recent parameter used in the forward pass
     #[serde(skip)]
     // only used during operation
@@ -184,9 +189,17 @@ impl Spline {
     }
 }
 
-// this is a bit of a heavy duty implementation, but it makes building errors at higher levels and in the future easier
+impl PartialEq for Spline {
+    // if two splines have the same degree, control points and knots, they are equivalent, even if they are different instances
+    // if one wants to know if two splines are the same instance, one can compare references
+    fn eq(&self, other: &Self) -> bool {
+        self.degree == other.degree
+            && self.control_points == other.control_points
+            && self.knots == other.knots
+    }
+}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum SplineError {
     TooFewKnotsError { expected: usize, actual: usize },
     BackwardBeforeForwardError,

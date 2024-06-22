@@ -24,7 +24,7 @@ use std::{
 /// the size of the "node" vector is equal to the output dimension of the layer
 /// the size of the incoming edge vector for each "node" is equal to the input dimension of the layer
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct KanLayer {
     // I think it will make sense to have each KanLayer be a vector of splines, plus the input and output dimension.
     // the first `out_dim` splines will read from the first input, the second `out_dim` splines will read from the second input, etc., with `in_dim` such chunks
@@ -38,7 +38,7 @@ pub struct KanLayer {
     /// dim0 = number of samples
     ///
     /// dim1 = input_dimension
-    #[serde(skip)] // only used for updating knot vectors during training
+    #[serde(skip)] // part of the layer's operating state, not part of the model
     samples: Vec<Vec<f32>>,
 }
 
@@ -225,7 +225,17 @@ impl KanLayer {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+impl PartialEq for KanLayer {
+    // only in a VERY contrived case would two layers have equal splines but different input/output dimensions
+    // but it's technically possible, so we've got to check it
+    fn eq(&self, other: &Self) -> bool {
+        self.splines == other.splines
+            && self.input_dimension == other.input_dimension
+            && self.output_dimension == other.output_dimension
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum LayerError {
     MissizedPreactsError { actual: usize, expected: usize },
     // If NaNs are in the activations, it's probably because the spline knot vectors had too many duplicates in a row
