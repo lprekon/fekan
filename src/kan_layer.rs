@@ -54,13 +54,16 @@ impl KanLayer {
     /// create a new layer with the given number of nodes in the previous layer and the given number of nodes in this layer
     /// # Examples
     /// ```
-    /// use fekan::kan::kan_layer::KanLayer;
-    ///
+    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
     /// let input_dimension = 3;
     /// let output_dimension = 4;
-    /// let k = 5;
-    /// let coef_size = 6;
-    /// let my_layer = KanLayer::new(input_dimension, output_dimension, k, coef_size);
+    /// let layer_options = KanLayerOptions {
+    ///     input_dimension,
+    ///     output_dimension,
+    ///     degree: 5,
+    ///     coef_size: 6,
+    /// };
+    /// let my_layer = KanLayer::new(layer_options);
     /// assert_eq!(my_layer.total_edges(), output_dimension * input_dimension);
     /// ```
     pub fn new(options: KanLayerOptions) -> Self {
