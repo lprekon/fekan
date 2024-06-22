@@ -1,4 +1,4 @@
-use kan_layer::LayerError;
+use kan_layer::{KanLayerOptions, LayerError};
 use serde::{Deserialize, Serialize};
 
 pub mod kan_layer;
@@ -29,12 +29,12 @@ impl Kan {
         let mut layers = Vec::with_capacity(options.layer_sizes.len());
         let mut prev_size = options.input_size;
         for &size in options.layer_sizes.iter() {
-            layers.push(kan_layer::KanLayer::new(
-                prev_size,
-                size,
-                options.degree,
-                options.coef_size,
-            ));
+            layers.push(kan_layer::KanLayer::new(KanLayerOptions {
+                input_dimension: prev_size,
+                output_dimension: size,
+                degree: options.degree,
+                coef_size: options.coef_size,
+            }));
             prev_size = size;
         }
         Kan {

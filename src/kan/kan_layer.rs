@@ -42,6 +42,14 @@ pub struct KanLayer {
     samples: Vec<Vec<f32>>,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct KanLayerOptions {
+    pub input_dimension: usize,
+    pub output_dimension: usize,
+    pub degree: usize,
+    pub coef_size: usize,
+}
+
 impl KanLayer {
     /// create a new layer with the given number of nodes in the previous layer and the given number of nodes in this layer
     /// # Examples
@@ -55,23 +63,18 @@ impl KanLayer {
     /// let my_layer = KanLayer::new(input_dimension, output_dimension, k, coef_size);
     /// assert_eq!(my_layer.total_edges(), output_dimension * input_dimension);
     /// ```
-    pub fn new(
-        input_dimension: usize,
-        output_dimension: usize,
-        k: usize,
-        coef_size: usize,
-    ) -> Self {
-        let num_edges = input_dimension * output_dimension;
-        let num_knots = coef_size + k + 1;
+    pub fn new(options: KanLayerOptions) -> Self {
+        let num_edges = options.input_dimension * options.output_dimension;
+        let num_knots = options.coef_size + options.degree + 1;
         let normal_dist = Normal::new(0.0, 1.0).expect("unable to create normal distribution");
         let mut randomness = thread_rng();
         let splines = (0..num_edges)
             .map(|_| {
-                let coefficients: Vec<f32> = (0..coef_size)
+                let coefficients: Vec<f32> = (0..options.coef_size)
                     .map(|_| normal_dist.sample(&mut randomness) as f32)
                     .collect();
                 Spline::new(
-                    k,
+                    options.degree,
                     coefficients,
                     generate_uniform_knots(-1.0, 1.0, num_knots),
                 )
@@ -81,8 +84,8 @@ impl KanLayer {
 
         KanLayer {
             splines,
-            input_dimension,
-            output_dimension,
+            input_dimension: options.input_dimension,
+            output_dimension: options.output_dimension,
             samples: Vec::new(),
         }
     }
@@ -325,7 +328,12 @@ mod test {
         let output_dimension = 4;
         let k = 5;
         let coef_size = 6;
-        let my_layer = KanLayer::new(input_dimension, output_dimension, k, coef_size);
+        let my_layer = KanLayer::new(KanLayerOptions {
+            input_dimension,
+            output_dimension,
+            degree: k,
+            coef_size,
+        });
         assert_eq!(my_layer.output_dimension, output_dimension);
         assert_eq!(my_layer.input_dimension, input_dimension);
         assert_eq!(my_layer.splines.len(), input_dimension * output_dimension);
