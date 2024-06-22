@@ -15,3 +15,7 @@ statrs = "0.16.0"
 
 [profile.release]
 debug = true
+
+[dev-dependencies]
+ciborium = "0.2.2"
+tempfile = "3.10.1"
