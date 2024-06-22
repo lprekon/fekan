@@ -210,15 +210,13 @@ impl KanLayer {
     }
 
     /// return the total number of parameters in this layer
-    pub fn get_parameter_count(&self) -> usize {
-        self.input_dimension * self.output_dimension * self.splines[0].get_parameter_count()
+    pub fn parameter_count(&self) -> usize {
+        self.input_dimension * self.output_dimension * self.splines[0].parameter_count()
     }
 
     /// returns the total number of trainable parameters in this layer
-    pub fn get_trainable_parameter_count(&self) -> usize {
-        self.input_dimension
-            * self.output_dimension
-            * self.splines[0].get_trainable_parameter_count()
+    pub fn trainable_parameter_count(&self) -> usize {
+        self.input_dimension * self.output_dimension * self.splines[0].trainable_parameter_count()
     }
 
     /// return the number of incoming edges to nodes in this layer

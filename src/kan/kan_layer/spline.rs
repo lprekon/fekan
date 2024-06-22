@@ -120,7 +120,7 @@ impl Spline {
 
     #[allow(dead_code)]
     // used in tests for parent module
-    pub(super) fn knots(&self) -> Iter<'_, f32> {
+    pub(super) fn knots<'a>(&'a self) -> Iter<'a, f32> {
         self.knots.iter()
     }
 
@@ -174,12 +174,12 @@ impl Spline {
     }
 
     /// return the number of control points and knots in the spline
-    pub(super) fn get_parameter_count(&self) -> usize {
+    pub(super) fn parameter_count(&self) -> usize {
         self.control_points.len() + self.knots.len()
     }
 
     /// return the number of control points in the spline
-    pub(super) fn get_trainable_parameter_count(&self) -> usize {
+    pub(super) fn trainable_parameter_count(&self) -> usize {
         self.control_points.len()
     }
 }

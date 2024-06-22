@@ -106,18 +106,18 @@ impl Kan {
     }
 
     /// returns the total number of parameters in the model, inlcuding untrained parameters
-    pub fn get_parameter_count(&self) -> usize {
+    pub fn parameter_count(&self) -> usize {
         self.layers
             .iter()
-            .map(|layer| layer.get_parameter_count())
+            .map(|layer| layer.parameter_count())
             .sum()
     }
 
     /// returns the total number of trainable parameters in the model
-    pub fn get_trainable_parameter_count(&self) -> usize {
+    pub fn trainable_parameter_count(&self) -> usize {
         self.layers
             .iter()
-            .map(|layer| layer.get_trainable_parameter_count())
+            .map(|layer| layer.trainable_parameter_count())
             .sum()
     }
 
