@@ -419,4 +419,16 @@ mod tests {
             .collect();
         assert_eq!(rounded_knots, expected_knots);
     }
+
+    #[test]
+    fn test_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<Spline>();
+    }
+
+    #[test]
+    fn test_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<Spline>();
+    }
 }

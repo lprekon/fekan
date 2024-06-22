@@ -408,12 +408,15 @@ mod test {
         assert!(input_error.is_err());
     }
 
-    // it doesn't make sense to have this test anymore
-    // #[test]
-    // fn test_update_samples_bad_sample_length() {
-    //     let mut layer = build_test_layer();
-    //     let samples = vec![vec![0.0, 0.5, 0.5], vec![0.0, 0.5, 0.5]];
-    //     let update = layer.update_knots_from_samples(&samples);
-    //     assert!(update.is_err());
-    // }
+    #[test]
+    fn test_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<KanLayer>();
+    }
+
+    #[test]
+    fn test_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<KanLayer>();
+    }
 }

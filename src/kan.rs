@@ -210,4 +210,16 @@ mod test {
         let result = first_kan.backward(error).unwrap();
         assert_eq!(result.len(), options.input_size);
     }
+
+    #[test]
+    fn test_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<Kan>();
+    }
+
+    #[test]
+    fn test_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<Kan>();
+    }
 }
