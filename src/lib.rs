@@ -48,7 +48,7 @@
 //! # let sample_2 = Sample{features: vec![-1.0, 1.0], label: 0.0};
 //! # let training_data = vec![sample_1, sample_2];
 //!
-//! let trained_model = fekan::train_model(untrained_model, training_data, None, &fekan::EmptyObserver::new(), TrainingOptions::default())?;
+//! let trained_model = fekan::train_model(untrained_model, &training_data, None, &fekan::EmptyObserver::new(), TrainingOptions::default())?;
 //!
 //! // save the model
 //! // both Kan and KanLayer implement the serde Serialize trait, so they can be saved to a file using any serde-compatible format
@@ -131,7 +131,7 @@ impl Default for TrainingOptions {
 ///
 /// let trained_model = train_model(
 ///     untrained_model,
-///     training_data,
+///     &training_data,
 ///     None,
 ///     &EmptyObserver::new(),
 ///     TrainingOptions::default())?;
@@ -165,7 +165,7 @@ impl Default for TrainingOptions {
 ///
 /// let trained_model = train_model(
 ///     untrained_model,
-///     training_data,
+///     &training_data,
 ///     Some(&validation_data),
 ///     &my_observer,
 ///     TrainingOptions::default())?;
@@ -173,7 +173,7 @@ impl Default for TrainingOptions {
 /// ```
 pub fn train_model<T: TrainingObserver>(
     mut model: Kan,
-    training_data: Vec<Sample>,
+    training_data: &Vec<Sample>,
     validation_data: Option<&Vec<Sample>>,
     training_observer: &T,
     options: TrainingOptions,
@@ -182,7 +182,7 @@ pub fn train_model<T: TrainingObserver>(
     for epoch in 0..options.num_epochs {
         let mut epoch_loss = 0.0;
         let mut samples_seen = 0;
-        for sample in &training_data {
+        for sample in training_data {
             samples_seen += 1;
             // run over each sample in the training data for each epoch
             let output = model

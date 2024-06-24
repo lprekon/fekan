@@ -226,7 +226,7 @@ impl std::error::Error for SplineError {}
 /// Passing the cache into the function rather than having the caller cache the result allows caching the results of recursive calls, which is useful during backproopagation
 // since this function neither takes nor returns a Spline struct, it doesn't make sense to have it as a method on the struct, so I'm moving it outside the impl block
 fn b(
-    cache: &mut FxHashMap<(usize, usize, u32), f32>, // TODO look into using ahash instead of fxhash
+    cache: &mut FxHashMap<(usize, usize, u32), f32>,
     i: usize,
     k: usize,
     knots: &Vec<f32>,

@@ -11,7 +11,7 @@ const DEGREE: usize = 5;
 const COEF_SIZE: usize = 10;
 
 fn build_test_layer() -> KanLayer {
-    KanLayer::new(KanLayerOptions {
+    KanLayer::new(&KanLayerOptions {
         input_dimension: INPUT_DIMENSION,
         output_dimension: OUTPUT_DIMENSION,
         degree: DEGREE,

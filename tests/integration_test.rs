@@ -51,7 +51,7 @@ mod classification {
         );
         let mut trained_model = train_model(
             untrained_model,
-            training_data,
+            &training_data,
             Some(&validation_data),
             &EmptyObserver::new(),
             TrainingOptions {
@@ -109,7 +109,7 @@ mod regression {
         );
         let training_result = train_model(
             untrained_model,
-            training_data,
+            &training_data,
             Some(&validation_data), // this way if the test fails, we can see the validation loss over time
             &EmptyObserver::new(),
             TrainingOptions {
@@ -171,7 +171,7 @@ mod regression {
         );
         let mut trained_model = train_model(
             untrained_model,
-            training_data,
+            &training_data,
             Some(&validation_data),
             &EmptyObserver::new(),
             TrainingOptions {

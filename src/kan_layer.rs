@@ -66,10 +66,10 @@ impl KanLayer {
     ///     degree: 5,
     ///     coef_size: 6,
     /// };
-    /// let my_layer = KanLayer::new(layer_options);
+    /// let my_layer = KanLayer::new(&layer_options);
     /// assert_eq!(my_layer.total_edges(), output_dimension * input_dimension);
     /// ```
-    pub fn new(options: KanLayerOptions) -> Self {
+    pub fn new(options: &KanLayerOptions) -> Self {
         let num_edges = options.input_dimension * options.output_dimension;
         let num_knots = options.coef_size + options.degree + 1;
         let normal_dist = Normal::new(0.0, 1.0).expect("unable to create normal distribution");
@@ -123,7 +123,7 @@ impl KanLayer {
     ///     degree: 5,
     ///     coef_size: 6,
     /// };
-    /// let mut my_layer = KanLayer::new(layer_options);
+    /// let mut my_layer = KanLayer::new(&layer_options);
     /// let preacts = vec![0.0, 0.5, 0.5];
     /// let acts = my_layer.forward(&preacts)?;
     /// assert_eq!(acts.len(), output_dimension);
@@ -172,7 +172,7 @@ impl KanLayer {
     /// ```
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
     /// # let some_layer_options = KanLayerOptions {input_dimension: 2,output_dimension: 4,degree: 5, coef_size: 6};
-    /// let mut my_layer = KanLayer::new(some_layer_options);
+    /// let mut my_layer = KanLayer::new(&some_layer_options);
     /// let sample1 = vec![100f32, -100f32];
     /// let sample2 = vec![-100f32, 100f32];
     ///
@@ -222,7 +222,7 @@ impl KanLayer {
     /// ```
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
     /// # let some_layer_options = KanLayerOptions {input_dimension: 2,output_dimension: 4,degree: 5, coef_size: 6};
-    /// let mut my_layer = KanLayer::new(some_layer_options);
+    /// let mut my_layer = KanLayer::new(&some_layer_options);
     /// /* Run several forward passes */
     /// # let sample1 = vec![100f32, -100f32];
     /// # let sample2 = vec![-100f32, 100f32];
@@ -254,8 +254,8 @@ impl KanLayer {
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
     /// let first_layer_options = KanLayerOptions { input_dimension: 2, output_dimension: 4, degree: 5, coef_size: 6 };
     /// let second_layer_options = KanLayerOptions { input_dimension: 4, output_dimension: 3, degree: 5, coef_size: 6 };
-    /// let mut first_layer = KanLayer::new(first_layer_options);
-    /// let mut second_layer = KanLayer::new(second_layer_options);
+    /// let mut first_layer = KanLayer::new(&first_layer_options);
+    /// let mut second_layer = KanLayer::new(&second_layer_options);
     /// /* forward pass */
     /// let preacts = vec![0.0, 0.5];
     /// let acts = first_layer.forward(&preacts)?;
@@ -331,7 +331,7 @@ impl KanLayer {
     ///     degree: 5,
     ///     coef_size: 6
     /// };
-    /// let my_layer = KanLayer::new(layer_options);
+    /// let my_layer = KanLayer::new(&layer_options);
     /// assert_eq!(my_layer.parameter_count(), 2 * 4 * (6 + (5 + 6 + 1)));
     ///```
     pub fn parameter_count(&self) -> usize {
@@ -349,7 +349,7 @@ impl KanLayer {
     ///     degree: 5,
     ///     coef_size: 6
     /// };
-    /// let my_layer = KanLayer::new(layer_options);
+    /// let my_layer = KanLayer::new(&layer_options);
     /// assert_eq!(my_layer.trainable_parameter_count(), 2 * 4 * 6);
     ///```
     pub fn trainable_parameter_count(&self) -> usize {
@@ -468,7 +468,7 @@ mod test {
         let output_dimension = 4;
         let k = 5;
         let coef_size = 6;
-        let my_layer = KanLayer::new(KanLayerOptions {
+        let my_layer = KanLayer::new(&KanLayerOptions {
             input_dimension,
             output_dimension,
             degree: k,

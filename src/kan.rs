@@ -61,7 +61,7 @@ impl Kan {
         let mut layers = Vec::with_capacity(options.layer_sizes.len());
         let mut prev_size = options.input_size;
         for &size in options.layer_sizes.iter() {
-            layers.push(KanLayer::new(KanLayerOptions {
+            layers.push(KanLayer::new(&KanLayerOptions {
                 input_dimension: prev_size,
                 output_dimension: size,
                 degree: options.degree,
@@ -104,7 +104,7 @@ impl Kan {
     /// # Ok::<(), fekan::kan::KanError>(())
     /// ```
     pub fn forward(&mut self, input: Vec<f32>) -> Result<Vec<f32>, KanError> {
-        let mut preacts = input.clone();
+        let mut preacts = input;
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             let result = layer.forward(&preacts);
             if let Err(e) = result {

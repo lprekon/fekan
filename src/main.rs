@@ -219,7 +219,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // run the training loop on the model
                 let trained_model = train_model(
                     untrained_model,
-                    training_data,
+                    &training_data,
                     passed_validation_data,
                     &training_observer,
                     training_options,
