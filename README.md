@@ -52,6 +52,17 @@ A library to build and train Kolmogorov-Arnold neural networks.
  # Ok::<(), Box<dyn std::error::Error>>(())
  ```
 
+# To-Do list
+`fekan` is fully functional, but there are a number of improvements to make
+- Parity with [Liu et. al](https://arxiv.org/abs/2404.19756)
+    - [ ] grid extension
+    - [ ] pruning un-needed nodes
+    - [ ] smybolification
+    - [ ] visualization
+- Speed
+    - [ ] support multi-threading
+    - [ ] support SIMD/parallel computation
+
 ## License
 
 Licensed under either of
