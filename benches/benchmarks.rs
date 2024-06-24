@@ -22,7 +22,7 @@ fn build_test_layer() -> KanLayer {
 #[bench]
 fn bench_forward(b: &mut Bencher) {
     let mut layer = build_test_layer();
-    let input = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
+    let input: Vec<f32> = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
     b.iter(|| {
         // run multiple times per iteration so cache improvements will show.
         for _ in 0..2 {
@@ -34,9 +34,9 @@ fn bench_forward(b: &mut Bencher) {
 #[bench]
 fn bench_backward(b: &mut Bencher) {
     let mut layer = build_test_layer();
-    let input = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
+    let input: Vec<f32> = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
     let _ = layer.forward(&input);
-    let error = (0..OUTPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
+    let error: Vec<f32> = (0..OUTPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
     b.iter(|| {
         // run multiple times per iteration so cache improvements will show
         for _ in 0..2 {
@@ -48,9 +48,9 @@ fn bench_backward(b: &mut Bencher) {
 #[bench]
 fn bench_update(b: &mut Bencher) {
     let mut layer = build_test_layer();
-    let input = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
+    let input: Vec<f32> = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
     let _ = layer.forward(&input);
-    let error = (0..OUTPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
+    let error: Vec<f32> = (0..OUTPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
     let _ = layer.backward(&error);
     b.iter(|| layer.update(0.1));
 }
@@ -59,7 +59,7 @@ fn bench_update(b: &mut Bencher) {
 fn bench_update_knots_from_samples(b: &mut Bencher) {
     let mut layer = build_test_layer();
     for _ in 0..100 {
-        let input = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
+        let input: Vec<f32> = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
         let _ = layer.forward(&input);
     }
 
@@ -69,7 +69,7 @@ fn bench_update_knots_from_samples(b: &mut Bencher) {
 #[bench]
 fn bench_forward_then_backward(b: &mut Bencher) {
     let mut layer = build_test_layer();
-    let input = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
+    let input: Vec<f32> = (0..INPUT_DIMENSION).map(|_| thread_rng().gen()).collect();
     b.iter(|| {
         // no need for a loop - cached values from the forward pass should show up in the backward pass
         let output = layer.forward(&input).unwrap();

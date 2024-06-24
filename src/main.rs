@@ -16,7 +16,7 @@ use fekan::{
     kan::{Kan, KanOptions, ModelType},
     train_model,
     training_observer::TrainingObserver,
-    Sample, TrainingOptions,
+    EachEpoch, Sample, TrainingOptions,
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
@@ -212,9 +212,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .training_parameters
                     .validate_each_epoch
                 {
-                    Some(&validation_data)
+                    EachEpoch::ValidateModel(&validation_data)
                 } else {
-                    None
+                    EachEpoch::DoNotValidateModel
                 };
                 // run the training loop on the model
                 let trained_model = train_model(

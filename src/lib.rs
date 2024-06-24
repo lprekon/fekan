@@ -174,7 +174,7 @@ impl Default for TrainingOptions {
 pub fn train_model<T: TrainingObserver>(
     mut model: Kan,
     training_data: &Vec<Sample>,
-    validation_data: Option<&Vec<Sample>>,
+    validate: EachEpoch,
     training_observer: &T,
     options: TrainingOptions,
 ) -> Result<Kan, TrainingError> {
@@ -233,11 +233,11 @@ pub fn train_model<T: TrainingObserver>(
         }
         epoch_loss /= training_data.len() as f32;
 
-        let validation_loss = match validation_data {
-            Some(validation_data) => {
-                validate_model(&validation_data, &mut model, training_observer)
+        let validation_loss = match validate {
+            EachEpoch::ValidateModel(validation_data) => {
+                validate_model(validation_data, &mut model, training_observer)
             }
-            None => f32::NAN,
+            EachEpoch::DoNotValidateModel => f32::NAN,
         };
 
         training_observer.on_epoch_end(epoch, epoch_loss, validation_loss);
@@ -251,7 +251,7 @@ pub fn train_model<T: TrainingObserver>(
 ///
 /// Calls the [`TrainingObserver::on_sample_end`] method of the provided observer after each sample is processed.
 pub fn validate_model<T: TrainingObserver>(
-    validation_data: &Vec<Sample>,
+    validation_data: &[Sample],
     model: &mut Kan,
     observer: &T,
 ) -> f32 {
@@ -337,6 +337,14 @@ fn calculate_mse_and_gradient(actual: f32, expected: f32) -> (f32, f32) {
     let loss = (actual - expected).powi(2);
     let gradient = 2.0 * (actual - expected);
     (loss, gradient)
+}
+
+/// Indicates whether the model should be tested against the validation data set after each epoch
+pub enum EachEpoch<'a> {
+    /// Test the model against the validation data set after each epoch, and report the validation loss through the [TrainingObserver]
+    ValidateModel(&'a [Sample]),
+    /// Do not test the model against the validation data set after each epoch
+    DoNotValidateModel,
 }
 
 // EmptyObserver is basically a singleton, so there's no point in implementing any other common traits
