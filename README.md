@@ -1,12 +1,9 @@
 # fekan
 A library to build and train Kolmogorov-Arnold neural networks.
 
- The `fekan` crate contains utilities to build and train Kolmogorov-Arnold Networks (KANs) in Rust.
+ The `fekan` crate contains utilities to build and train Kolmogorov-Arnold Networks (KANs) in Rust, including both a struct to represent a full model; and a struct to represant an individual KAN layer, for use on its own or in other models.
 
- The [kan_layer] module contains the [`kan_layer::KanLayer`] struct, representing a single layer of a KAN,
- which can be used to build full KANs or as a layer in other models.
-
- The crate also contains the [`Kan`] struct, which represents a full KAN model.
+ Issues and pull requests are welcome!
 
  ## What is a Kolmogorov-Arnold Network?
  Rather than perform a weighted sum of the activations of the previous layer and passing the sum through a fixed non-linear function,
