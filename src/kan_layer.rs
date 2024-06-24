@@ -129,7 +129,7 @@ impl KanLayer {
     /// assert_eq!(acts.len(), output_dimension);
     /// # Ok::<(), fekan::kan_layer::LayerError>(())
     /// ```
-    pub fn forward(&mut self, preactivation: &Vec<f32>) -> Result<Vec<f32>, LayerError> {
+    pub fn forward(&mut self, preactivation: &[f32]) -> Result<Vec<f32>, LayerError> {
         //  check the length here since it's the same check for the entire layer, even though the "node" is technically the part that cares
         if preactivation.len() != self.input_dimension {
             return Err(LayerError::MissizedPreactsError {
@@ -137,7 +137,7 @@ impl KanLayer {
                 expected: self.input_dimension,
             });
         }
-        self.samples.push(preactivation.clone()); // save a copy of the preactivation for updating the knot vectors later
+        self.samples.push(preactivation.into()); // save a copy of the preactivation for updating the knot vectors later
 
         // it probably makes sense to move straight down the list of splines, since that theoretically should have better cache performance
         // also, I guess I haven't decided (in code) how the splines are ordered, so there's no reason I can't say the first n splines all belong to the first node, etc.
@@ -277,7 +277,7 @@ impl KanLayer {
     /// second_layer.zero_gradients();
     /// # Ok::<(), fekan::kan_layer::LayerError>(())
     /// ```
-    pub fn backward(&mut self, error: &Vec<f32>) -> Result<Vec<f32>, LayerError> {
+    pub fn backward(&mut self, error: &[f32]) -> Result<Vec<f32>, LayerError> {
         if error.len() != self.output_dimension {
             return Err(LayerError::MissizedGradientError {
                 actual: error.len(),
