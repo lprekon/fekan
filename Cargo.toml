@@ -6,13 +6,7 @@ authors = ["John Farmer."]
 license = "MIT OR Apache-2.0"
 description = "A library for building and training Kolmogorov-Arnold neural networks."
 repository = "https://github.com/lprekon/fekan"
-keywords = [
-    "neural-networks",
-    "kolmogorov-arnold",
-    "machine-learning",
-    "ai",
-    "artificial-intelligence",
-]
+keywords = ["neural-networks", "kolmogorov-arnold", "machine-learning", "ai"]
 categories = ["science", "mathematics"]
 
 [dependencies]
