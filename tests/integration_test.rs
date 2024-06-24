@@ -17,11 +17,8 @@ mod classification {
                 let x = thread_rng().gen_range(-1000.0..1000.0);
                 let y = thread_rng().gen_range(-1000.0..1000.0);
                 let z = thread_rng().gen_range(-1000.0..1000.0);
-                let label = (x + y + z) > 0.0;
-                Sample {
-                    features: vec![x, y, z],
-                    label: label as u32 as f32,
-                }
+                let label = ((x + y + z) > 0.0) as u32;
+                Sample::new(vec![x, y, z], label as f32)
             })
             .collect::<Vec<Sample>>();
         let validation_data = (0..100)
@@ -29,11 +26,8 @@ mod classification {
                 let x = thread_rng().gen_range(-1000.0..1000.0);
                 let y = thread_rng().gen_range(-1000.0..1000.0);
                 let z = thread_rng().gen_range(-1000.0..1000.0);
-                let label = (x + y + z) > 0.0;
-                Sample {
-                    features: vec![x, y, z],
-                    label: label as u32 as f32,
-                }
+                let label = ((x + y + z) > 0.0) as u32;
+                Sample::new(vec![x, y, z], label as f32)
             })
             .collect::<Vec<Sample>>();
 
@@ -82,18 +76,12 @@ mod regression {
         for _ in 0..1000 {
             let x = rand.gen_range(-1000.0..1000.0);
             let y = rand.gen_range(-1000.0..1000.0);
-            training_data.push(Sample {
-                features: vec![x, y],
-                label: x * y,
-            });
+            training_data.push(Sample::new(vec![x, y], x * y));
         }
         for _ in 0..100 {
             let x = rand.gen_range(-1000.0..1000.0);
             let y = rand.gen_range(-1000.0..1000.0);
-            validation_data.push(Sample {
-                features: vec![x, y],
-                label: x * y,
-            });
+            validation_data.push(Sample::new(vec![x, y], x * y));
         }
         let mut untrained_model = Kan::new(&KanOptions {
             input_size: 2,
@@ -139,10 +127,7 @@ mod regression {
                 let x = thread_rng().gen_range(-1.0..1.0);
                 let y = thread_rng().gen_range(-1.0..1.0);
                 let label = ((std::f32::consts::PI * x).sin() * (y * y)).exp();
-                Sample {
-                    features: vec![x, y],
-                    label,
-                }
+                Sample::new(vec![x, y], label)
             })
             .collect::<Vec<Sample>>();
         let validation_data = (0..100)
@@ -150,10 +135,7 @@ mod regression {
                 let x = thread_rng().gen_range(-1.0..1.0);
                 let y = thread_rng().gen_range(-1.0..1.0);
                 let label = ((std::f32::consts::PI * x).sin() * (y * y)).exp();
-                Sample {
-                    features: vec![x, y],
-                    label,
-                }
+                Sample::new(vec![x, y], label)
             })
             .collect::<Vec<Sample>>();
         let mut untrained_model = Kan::new(&KanOptions {

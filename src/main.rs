@@ -188,7 +188,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
                 // build the model
                 let untrained_model = Kan::new(&KanOptions {
-                    input_size: training_data[0].features.len() as usize,
+                    input_size: training_data[0].features().len() as usize,
                     layer_sizes: layers,
                     degree: classifier_args.params.degree,
                     coef_size: classifier_args.params.num_coefficients,
@@ -319,10 +319,7 @@ pub fn load_classification_data(
         }
         let label = class_map[&raw_sample.label];
         let features: Vec<f32> = raw_sample.features.iter().map(|&f| f as f32).collect();
-        data.push(Sample {
-            features,
-            label: label as f32,
-        });
+        data.push(Sample::new(features, label as f32));
     }
 
     // separate the data into training and validation sets

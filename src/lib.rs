@@ -1,5 +1,4 @@
 #![warn(missing_docs)]
-#![warn(missing_doc_code_examples)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
 //! A library to build and train Kolmogorov-Arnold neural networks.
@@ -44,8 +43,8 @@
 //! // train the model
 //! let training_data: Vec<Sample> = Vec::new();
 //! /* Load training data */
-//! # let sample_1 = Sample{features: vec![1.0, 2.0], label: 3.0};
-//! # let sample_2 = Sample{features: vec![-1.0, 1.0], label: 0.0};
+//! # let sample_1 = Sample::new(vec![1.0, 2.0], 3.0);
+//! # let sample_2 = Sample::new(vec![-1.0, 1.0], 0.0);
 //! # let training_data = vec![sample_1, sample_2];
 //!
 //! let trained_model = fekan::train_model(untrained_model, &training_data, EachEpoch::DoNotValidateModel, &fekan::EmptyObserver::new(), TrainingOptions::default())?;
@@ -74,9 +73,25 @@ use training_observer::TrainingObserver;
 #[derive(Clone, PartialEq, Debug)]
 pub struct Sample {
     /// The input data for the model
-    pub features: Vec<f32>,
+    features: Vec<f32>,
     /// The expected output of the model
-    pub label: f32, // use a f32 so the size doesn't change between platforms
+    label: f32, // use a f32 so the size doesn't change between platforms
+}
+
+impl Sample {
+    /// Create a new Sample
+    pub fn new(features: Vec<f32>, label: f32) -> Self {
+        Sample { features, label }
+    }
+
+    /// Get the features of the sample
+    pub fn features(&self) -> &Vec<f32> {
+        &self.features
+    }
+    /// Get the label of the sample
+    pub fn label(&self) -> f32 {
+        self.label
+    }
 }
 
 /// Used by the [`train_model`] function to determine how the model should be trained.
