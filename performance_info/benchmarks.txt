@@ -1,25 +1,39 @@
 
-running 18 tests
-test kan::kan_layer::spline::tests::test_b ... ignored
-test kan::kan_layer::spline::tests::test_b_2 ... ignored
-test kan::kan_layer::spline::tests::test_backward_before_forward ... ignored
-test kan::kan_layer::spline::tests::test_forward ... ignored
-test kan::kan_layer::spline::tests::test_forward_2 ... ignored
-test kan::kan_layer::spline::tests::test_forward_then_backward ... ignored
-test kan::kan_layer::spline::tests::test_forward_then_backward_2 ... ignored
-test kan::kan_layer::spline::tests::test_new_spline_with_too_few_knots ... ignored
-test kan::kan_layer::spline::tests::test_update_knots ... ignored
-test kan::kan_layer::test::test_backward_bad_error_length ... ignored
-test kan::kan_layer::test::test_backward_before_forward ... ignored
-test kan::kan_layer::test::test_forward ... ignored
-test kan::kan_layer::test::test_forward_bad_activations ... ignored
-test kan::kan_layer::test::test_forward_then_backward ... ignored
-test kan::kan_layer::test::test_new ... ignored
+running 32 tests
+test kan::test::test_error_send ... ignored
+test kan::test::test_error_sync ... ignored
 test kan::test::test_forward ... ignored
 test kan::test::test_forward_then_backward ... ignored
+test kan::test::test_model_send ... ignored
+test kan::test::test_model_sync ... ignored
+test kan_layer::spline::tests::test_b ... ignored
+test kan_layer::spline::tests::test_b_2 ... ignored
+test kan_layer::spline::tests::test_backward_before_forward ... ignored
+test kan_layer::spline::tests::test_error_send ... ignored
+test kan_layer::spline::tests::test_error_sync ... ignored
+test kan_layer::spline::tests::test_forward ... ignored
+test kan_layer::spline::tests::test_forward_2 ... ignored
+test kan_layer::spline::tests::test_forward_then_backward ... ignored
+test kan_layer::spline::tests::test_forward_then_backward_2 ... ignored
+test kan_layer::spline::tests::test_new_spline_with_too_few_knots ... ignored
+test kan_layer::spline::tests::test_spline_send ... ignored
+test kan_layer::spline::tests::test_spline_sync ... ignored
+test kan_layer::spline::tests::test_update_knots ... ignored
+test kan_layer::test::test_backward_bad_error_length ... ignored
+test kan_layer::test::test_backward_before_forward ... ignored
+test kan_layer::test::test_error_send ... ignored
+test kan_layer::test::test_error_sync ... ignored
+test kan_layer::test::test_forward ... ignored
+test kan_layer::test::test_forward_bad_activations ... ignored
+test kan_layer::test::test_forward_then_backward ... ignored
+test kan_layer::test::test_layer_send ... ignored
+test kan_layer::test::test_layer_sync ... ignored
+test kan_layer::test::test_new ... ignored
+test test::test_error_send ... ignored
+test test::test_error_sync ... ignored
 test test::test_nll_loss_and_gradient ... ignored
 
-test result: ok. 0 passed; 0 failed; 18 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 32 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 running 0 tests
@@ -28,11 +42,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 
 running 5 tests
-test bench_backward                  ... bench:     563,191.70 ns/iter (+/- 20,004.81)
-test bench_forward                   ... bench:     380,681.25 ns/iter (+/- 6,703.34)
-test bench_forward_then_backward     ... bench:     469,925.00 ns/iter (+/- 7,334.51)
-test bench_update                    ... bench:      13,533.22 ns/iter (+/- 258.55)
-test bench_update_knots_from_samples ... bench:     695,090.62 ns/iter (+/- 4,372.40)
+test bench_backward                  ... bench:     327,097.91 ns/iter (+/- 21,761.14)
+test bench_forward                   ... bench:     219,359.90 ns/iter (+/- 15,153.91)
+test bench_forward_then_backward     ... bench:     272,427.10 ns/iter (+/- 3,048.12)
+test bench_update                    ... bench:       7,818.20 ns/iter (+/- 90.55)
+test bench_update_knots_from_samples ... bench:     406,041.65 ns/iter (+/- 3,280.02)
 
-test result: ok. 0 passed; 0 failed; 0 ignored; 5 measured; 0 filtered out; finished in 3.48s
+test result: ok. 0 passed; 0 failed; 0 ignored; 5 measured; 0 filtered out; finished in 3.75s
 
