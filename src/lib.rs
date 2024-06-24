@@ -28,7 +28,7 @@
 //! where each layer uses degree-4 [B-splines](https://en.wikipedia.org/wiki/B-spline) with 5 coefficients (AKA control points):
 //! ```
 //! use fekan::kan::{Kan, KanOptions, ModelType};
-//! use fekan::{Sample, TrainingOptions};
+//! use fekan::{Sample, TrainingOptions, EachEpoch};
 //! use tempfile::tempfile;
 //!
 //!
@@ -48,7 +48,7 @@
 //! # let sample_2 = Sample{features: vec![-1.0, 1.0], label: 0.0};
 //! # let training_data = vec![sample_1, sample_2];
 //!
-//! let trained_model = fekan::train_model(untrained_model, &training_data, None, &fekan::EmptyObserver::new(), TrainingOptions::default())?;
+//! let trained_model = fekan::train_model(untrained_model, &training_data, EachEpoch::DoNotValidateModel, &fekan::EmptyObserver::new(), TrainingOptions::default())?;
 //!
 //! // save the model
 //! // both Kan and KanLayer implement the serde Serialize trait, so they can be saved to a file using any serde-compatible format
@@ -119,7 +119,7 @@ impl Default for TrainingOptions {
 /// # Example
 /// train a model, using the provided [EmptyObserver] to ignore all training events:
 /// ```
-/// use fekan::{train_model, Sample, TrainingOptions, EmptyObserver};
+/// use fekan::{train_model, Sample, TrainingOptions, EmptyObserver, EachEpoch};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
 /// # use fekan::TrainingError;
 ///
@@ -132,7 +132,7 @@ impl Default for TrainingOptions {
 /// let trained_model = train_model(
 ///     untrained_model,
 ///     &training_data,
-///     None,
+///     EachEpoch::DoNotValidateModel,
 ///     &EmptyObserver::new(),
 ///     TrainingOptions::default())?;
 /// # Ok::<(), TrainingError>(())
@@ -140,7 +140,7 @@ impl Default for TrainingOptions {
 ///
 /// Train a model, testing it against the validation data after each epoch, and catching the results with a custom struct that implements [TrainingObserver]:
 /// ```
-/// use fekan::{train_model, Sample, TrainingOptions};
+/// use fekan::{train_model, Sample, TrainingOptions, EachEpoch};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
 /// # use fekan::TrainingError;
 /// # use fekan::training_observer::TrainingObserver;
@@ -166,7 +166,7 @@ impl Default for TrainingOptions {
 /// let trained_model = train_model(
 ///     untrained_model,
 ///     &training_data,
-///     Some(&validation_data),
+///     EachEpoch::ValidateModel(&validation_data),
 ///     &my_observer,
 ///     TrainingOptions::default())?;
 /// # Ok::<(), TrainingError>(())
@@ -349,6 +349,7 @@ pub enum EachEpoch<'a> {
 
 // EmptyObserver is basically a singleton, so there's no point in implementing any other common traits
 /// An observer that does nothing when called.
+/// Used for ignoring training events in the [train_model] function.
 #[derive(Default)]
 pub struct EmptyObserver {}
 impl EmptyObserver {
