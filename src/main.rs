@@ -25,9 +25,10 @@ use serde::Deserialize;
 struct Cli {
     #[command(subcommand)]
     command: WhereCommands,
-    /// path to the file containing the data. currently only supports pickle files
-    #[arg(short = 'd', long = "data", required = true)]
-    data_file: PathBuf,
+
+    /// log model output to stdout in addition to drawing on the terminal, allowing output to be piped
+    #[arg(long, default_value = "false", global = true)]
+    log_output: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -95,7 +96,17 @@ struct GenericBuildParams {
 #[derive(Args, Clone, Debug)]
 #[command(group(ArgGroup::new("output").required(true).multiple(false)))]
 struct TrainArgs {
-    #[arg(short = 'e', long, default_value = "100", global = true)]
+    /// path to the file containing the training data. currently only supports pickle files
+    #[arg(short = 'd', long = "data")]
+    data_file: PathBuf,
+
+    #[arg(
+        short = 'e',
+        long,
+        visible_alias = "epochs",
+        default_value = "100",
+        global = true
+    )]
     /// number of epochs to train the model for
     num_epochs: usize,
 
@@ -147,6 +158,9 @@ enum WhyCommands {
     Infer {
         /// an ordered list of human-readable labels for the output nodes of the model
         class_map: Vec<String>,
+        /// path to the file containing the data. currently only supports pickle files
+        #[arg(short = 'd', long = "data", required = true)]
+        data_file: PathBuf,
     },
 }
 
@@ -157,7 +171,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         WhereCommands::Build(build_args) => match build_args.model_type {
             CliModelType::Classifier(classifier_args) => {
                 let (training_data, validation_data) = load_classification_data(
-                    &cli.data_file,
+                    &classifier_args.params.training_parameters.data_file,
                     classifier_args.params.training_parameters.validation_split,
                     &classifier_args.classes,
                 )?;
@@ -174,7 +188,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     training_data.len() * classifier_args.params.training_parameters.num_epochs
                         + validation_data.len()
                 };
-                let training_observer = TrainingProgress::new(observer_ticks as u64);
+                let training_observer =
+                    TrainingProgress::new(observer_ticks as u64, cli.log_output);
 
                 // build our list of layer sizes, which should equal all the hidden layers specified by the user, plus the output layer
                 // `layers` only needs to be mutable while we build it, then should be immutable after that. Using a closure to build it accomplishes this nicely
@@ -249,10 +264,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 struct TrainingProgress {
     pb: ProgressBar,
+    should_log: bool,
 }
 
 impl TrainingProgress {
-    fn new(total: u64) -> Self {
+    fn new(total: u64, should_log: bool) -> Self {
         let pb = ProgressBar::new(total);
         pb.set_style(
             ProgressStyle::default_bar()
@@ -261,7 +277,7 @@ impl TrainingProgress {
                 )
                 .unwrap(),
         );
-        TrainingProgress { pb }
+        TrainingProgress { pb, should_log }
     }
 
     fn into_inner(self) -> ProgressBar {
@@ -281,6 +297,15 @@ impl TrainingObserver for TrainingProgress {
             epoch_loss,
             validation_loss
         ));
+        if self.should_log {
+            println!(
+                "{} Epoch {}: Training Loss: {}, Validation Loss: {}",
+                chrono::Local::now(),
+                epoch,
+                epoch_loss,
+                validation_loss
+            );
+        }
     }
 }
 
