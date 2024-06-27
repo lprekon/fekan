@@ -21,6 +21,7 @@ use fekan::{
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 
+/// A simple CLI for training and using Kolmogorov-Arnold neural networks. Only appropriate for datasets that can be loaded into memory.
 #[derive(Parser, Debug, Clone)]
 struct Cli {
     #[command(subcommand)]
@@ -68,9 +69,10 @@ struct ClassifierArgs {
 
 #[derive(Args, Clone, Debug)]
 struct RegressorArgs {
-    #[arg(long = "output-nodes", default_value = "1")]
+    // #[arg(long = "output-nodes", default_value = "1")]
     /// The number of output nodes in the model. If > 1, the model will be a multi-output regression model
-    num_output_nodes: usize,
+    // num_output_nodes: usize, not currently implemented
+
     #[command(flatten)]
     params: GenericBuildParams,
 }
@@ -170,23 +172,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     match cli.command {
         WhereCommands::Build(build_args) => match build_args.model_type {
             CliModelType::Classifier(classifier_args) => {
+                let train_args = classifier_args.params.training_parameters;
                 let (training_data, validation_data) = load_classification_data(
-                    &classifier_args.params.training_parameters.data_file,
-                    classifier_args.params.training_parameters.validation_split,
+                    &train_args.data_file,
+                    train_args.validation_split,
                     &classifier_args.classes,
                 )?;
 
-                let observer_ticks = if classifier_args
-                    .params
-                    .training_parameters
-                    .validate_each_epoch
-                {
-                    (training_data.len() + validation_data.len())
-                        * classifier_args.params.training_parameters.num_epochs
+                let observer_ticks = if train_args.validate_each_epoch {
+                    (training_data.len() + validation_data.len()) * train_args.num_epochs
                         + validation_data.len()
                 } else {
-                    training_data.len() * classifier_args.params.training_parameters.num_epochs
-                        + validation_data.len()
+                    training_data.len() * train_args.num_epochs + validation_data.len()
                 };
                 let training_observer =
                     TrainingProgress::new(observer_ticks as u64, cli.log_output);
@@ -211,22 +208,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 });
 
                 let training_options = TrainingOptions {
-                    num_epochs: classifier_args.params.training_parameters.num_epochs,
-                    knot_update_interval: classifier_args
-                        .params
-                        .training_parameters
-                        .knot_update_interval,
-                    knot_adaptivity: classifier_args.params.training_parameters.knot_adaptivity,
-                    learning_rate: classifier_args.params.training_parameters.learning_rate,
+                    // we can't use the From<T> pattern here because some of the fields are not directly copyable
+                    num_epochs: train_args.num_epochs,
+                    knot_update_interval: train_args.knot_update_interval,
+                    knot_adaptivity: train_args.knot_adaptivity,
+                    learning_rate: train_args.learning_rate,
                 };
 
                 // if the user wants the model validated each epoch, pass the validation data to the training function.
                 // Otherwise, pass None
-                let passed_validation_data = if classifier_args
-                    .params
-                    .training_parameters
-                    .validate_each_epoch
-                {
+                let passed_validation_data = if train_args.validate_each_epoch {
                     EachEpoch::ValidateModel(&validation_data)
                 } else {
                     EachEpoch::DoNotValidateModel
@@ -243,17 +234,76 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .into_inner()
                     .finish_with_message("Training complete");
                 // save the model to a file
-                if let Some(model_output_file) =
-                    &classifier_args.params.training_parameters.model_output_file
-                {
+                if let Some(model_output_file) = &train_args.model_output_file {
                     println!("Saving model to file: {:?}", model_output_file);
                     let mut out_file = File::create(model_output_file)?;
                     serde_pickle::to_writer(&mut out_file, &trained_model, Default::default())?;
                 }
                 Ok(())
             }
-            CliModelType::Regressor(_regressor_args) => {
-                todo!("Reimplement the regressor model building")
+            CliModelType::Regressor(regressor_args) => {
+                let train_args = regressor_args.params.training_parameters;
+                let (training_data, validation_data) =
+                    load_regression_data(&train_args.data_file, train_args.validation_split)?;
+
+                let observer_ticks = if train_args.validate_each_epoch {
+                    (training_data.len() + validation_data.len()) * train_args.num_epochs
+                        + validation_data.len()
+                } else {
+                    training_data.len() * train_args.num_epochs + validation_data.len()
+                };
+                let training_observer =
+                    TrainingProgress::new(observer_ticks as u64, cli.log_output);
+
+                // build our list of layer sizes, which should equal all the hidden layers specified by the user, plus the output layer
+                let layers = {
+                    let mut layers = regressor_args.params.hidden_layer_sizes.unwrap_or_default();
+                    layers.push(1);
+                    layers
+                };
+                // build the model
+                let untrained_model = Kan::new(&KanOptions {
+                    input_size: training_data[0].features().len() as usize,
+                    layer_sizes: layers,
+                    degree: regressor_args.params.degree,
+                    coef_size: regressor_args.params.num_coefficients,
+                    model_type: ModelType::Regression,
+                });
+
+                let training_options = TrainingOptions {
+                    // we can't use the From<T> pattern here because some of the fields are not directly copyable
+                    num_epochs: train_args.num_epochs,
+                    knot_update_interval: train_args.knot_update_interval,
+                    knot_adaptivity: train_args.knot_adaptivity,
+                    learning_rate: train_args.learning_rate,
+                };
+
+                // if the user wants the model validated each epoch, pass the validation data to the training function.
+                // Otherwise, pass None
+                let passed_validation_data = if train_args.validate_each_epoch {
+                    EachEpoch::ValidateModel(&validation_data)
+                } else {
+                    EachEpoch::DoNotValidateModel
+                };
+
+                // run the training loop on the model
+                let trained_model = train_model(
+                    untrained_model,
+                    &training_data,
+                    passed_validation_data,
+                    &training_observer,
+                    training_options,
+                )?;
+                training_observer
+                    .into_inner()
+                    .finish_with_message("Training complete");
+
+                if let Some(model_output_file) = &train_args.model_output_file {
+                    println!("Saving model to file: {:?}", model_output_file);
+                    let mut out_file = File::create(model_output_file)?;
+                    serde_pickle::to_writer(&mut out_file, &trained_model, Default::default())?;
+                }
+                Ok(())
             }
         },
         WhereCommands::Load(_load_args) => {
@@ -310,9 +360,15 @@ impl TrainingObserver for TrainingProgress {
 }
 
 #[derive(Deserialize, Debug)]
-struct RawSample {
-    features: Vec<u8>,
+struct ClassificationSample {
+    features: Vec<f32>,
     label: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct RegressionSample {
+    features: Vec<f32>,
+    label: f32,
 }
 
 pub fn load_classification_data(
@@ -321,7 +377,7 @@ pub fn load_classification_data(
     classes: &Vec<String>,
 ) -> Result<(Vec<Sample>, Vec<Sample>), Box<dyn Error>> {
     let file = File::open(data_file_path)?;
-    let raw_data: Vec<RawSample> = serde_pickle::from_reader(file, Default::default())?;
+    let raw_data: Vec<ClassificationSample> = serde_pickle::from_reader(file, Default::default())?;
     let rows_loaded = raw_data.len();
 
     // parse the data, maping the label string to a u8
@@ -360,6 +416,45 @@ pub fn load_classification_data(
             validation_data.push(sample);
         } else {
             training_data.push(sample);
+        }
+    }
+    assert!(
+        training_data.len() + validation_data.len() == rows_loaded,
+        "Data split error. Training: {}, Validation: {}, Total: {}",
+        training_data.len(),
+        validation_data.len(),
+        rows_loaded
+    );
+    println!(
+        "Data loaded. Training: {}, Validation: {}",
+        training_data.len(),
+        validation_data.len()
+    );
+    Ok((training_data, validation_data))
+}
+
+fn load_regression_data(
+    data_file_path: &PathBuf,
+    validation_split: f32,
+) -> Result<(Vec<Sample>, Vec<Sample>), Box<dyn Error>> {
+    println!("Loading regression data from file: {:?}", data_file_path);
+    let file = File::open(data_file_path)?;
+    let data: Vec<RegressionSample> = serde_pickle::from_reader(file, Default::default())?;
+    let rows_loaded = data.len();
+    println!("creating validation set");
+    // separate the data into training and validation sets
+    let mut validation_indecies: HashSet<usize> = HashSet::new();
+    while validation_indecies.len() < (validation_split * data.len() as f32) as usize {
+        let index = rand::random::<usize>() % data.len();
+        validation_indecies.insert(index);
+    }
+    let mut training_data: Vec<Sample> = Vec::with_capacity(data.len() - validation_indecies.len());
+    let mut validation_data: Vec<Sample> = Vec::with_capacity(validation_indecies.len());
+    for (i, reg_sample) in data.into_iter().enumerate() {
+        if validation_indecies.contains(&i) {
+            validation_data.push(Sample::new(reg_sample.features, reg_sample.label));
+        } else {
+            training_data.push(Sample::new(reg_sample.features, reg_sample.label));
         }
     }
     assert!(
