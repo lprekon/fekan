@@ -37,7 +37,8 @@
 //!     layer_sizes: vec![3, 1],
 //!     degree: 4,
 //!     coef_size: 5,
-//!     model_type: ModelType::Regression,};
+//!     model_type: ModelType::Regression,
+//!     class_map: None};
 //! let mut untrained_model = Kan::new(&model_options);
 //!
 //! // train the model
@@ -138,7 +139,7 @@ impl Default for TrainingOptions {
 /// use fekan::kan::{Kan, KanOptions, ModelType};
 /// # use fekan::TrainingError;
 ///
-/// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression};
+/// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression, class_map: None};
 /// let untrained_model = Kan::new(&some_model_options);
 /// let training_data: Vec<Sample> = Vec::new();
 ///
@@ -159,7 +160,7 @@ impl Default for TrainingOptions {
 /// use fekan::kan::{Kan, KanOptions, ModelType};
 /// # use fekan::TrainingError;
 /// # use fekan::training_observer::TrainingObserver;
-/// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression};
+/// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression, class_map: None};
 /// # struct MyCustomObserver {}
 /// # impl MyCustomObserver {
 /// #     fn new() -> Self { MyCustomObserver{} }
@@ -186,6 +187,8 @@ impl Default for TrainingOptions {
 ///     TrainingOptions::default())?;
 /// # Ok::<(), TrainingError>(())
 /// ```
+// TODO implement training multi-variate regression models. I'll need to calculate the loss w.r.t each output node and run backward on each,
+// then call update after all those gradients have been accumulated
 pub fn train_model<T: TrainingObserver>(
     mut model: Kan,
     training_data: &Vec<Sample>,
@@ -207,7 +210,7 @@ pub fn train_model<T: TrainingObserver>(
                     epoch,
                     sample: samples_seen,
                 })?;
-            match model.model_type {
+            match model.model_type() {
                 ModelType::Classification => {
                     // calculate classification probability from logits
                     let (loss, dlogits) =
@@ -276,7 +279,7 @@ pub fn validate_model<T: TrainingObserver>(
         let output = model
             .forward(sample.features.iter().map(|&x| x as f32).collect())
             .unwrap();
-        let loss = match model.model_type {
+        let loss = match model.model_type() {
             ModelType::Classification => {
                 let (loss, _) = calculate_nll_loss_and_gradient(&output, sample.label as usize);
                 loss

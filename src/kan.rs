@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Kan {
     /// the layers of the model
-    pub layers: Vec<KanLayer>,
+    layers: Vec<KanLayer>,
     /// the type of model. This field is metadata and does not affect the operation of the model, though it is used elsewhere in the crate. See [`fekan::train_model()`](crate::train_model) for an example
-    pub model_type: ModelType, // determined how the output is interpreted, and what the loss function ought to be
+    model_type: ModelType, // determined how the output is interpreted, and what the loss function ought to be
+    /// A map of class names to node indices. Only used if the model is a classification model or multi-output regression model.
+    class_map: Option<Vec<String>>,
 }
 
 /// Hyperparameters for a Kan model
@@ -27,6 +29,9 @@ pub struct KanOptions {
     pub coef_size: usize,
     /// the type of model to create. This field is metadata and does not affect the operation of the model, though it is used elsewhere in the crate. See [`fekan::train_model()`](crate::train_model) for an example
     pub model_type: ModelType,
+    /// A list of human-readable names for the output nodes.
+    /// The length of this vector should be equal to the number of output nodes in the model, or behavior is undefined
+    pub class_map: Option<Vec<String>>,
 }
 
 /// Metadata suggesting how the model's output ought to be interpreted
@@ -54,6 +59,7 @@ impl Kan {
     ///     degree: 3,
     ///     coef_size: 6,
     ///     model_type: ModelType::Regression,
+    ///     class_map: None,
     /// };
     /// let mut model = Kan::new(&options);
     ///```
@@ -72,6 +78,76 @@ impl Kan {
         Kan {
             layers,
             model_type: options.model_type,
+            class_map: options.class_map.clone(),
+        }
+    }
+
+    /// returns the type of the model
+    pub fn model_type(&self) -> ModelType {
+        self.model_type
+    }
+
+    /// returns the class map of the model, if it has one
+    pub fn class_map(&self) -> Option<&Vec<String>> {
+        self.class_map.as_ref()
+    }
+
+    /// Returns the index of the output node that corresponds to the given label.
+    ///
+    /// Returns None if the label is not found in the model's class map, or if the model does not have a class map
+    ///
+    /// # Example
+    /// ```
+    /// use fekan::kan::{Kan, KanOptions, ModelType};
+    /// let class_map = vec!["cat".to_string(), "dog".to_string()];
+    /// let options = KanOptions {
+    ///     input_size: 5,
+    ///     layer_sizes: vec![4, 2],
+    ///     degree: 3,
+    ///     coef_size: 6,
+    ///     model_type: ModelType::Regression,
+    ///     class_map: Some(class_map),
+    /// };
+    /// let model = Kan::new(&options);
+    /// assert_eq!(model.label_to_node("cat"), Some(0));
+    /// assert_eq!(model.label_to_node("dog"), Some(1));
+    /// assert_eq!(model.label_to_node("fish"), None);
+    /// ```
+    pub fn label_to_node(&self, label: &str) -> Option<usize> {
+        if let Some(class_map) = &self.class_map {
+            class_map.iter().position(|x| x == label)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the label of the output node that corresponds to the given index.
+    ///
+    /// Returns None if the index is out of bounds, or if the model does not have a class map
+    ///
+    /// # Example
+    /// ```
+    /// use fekan::kan::{Kan, KanOptions, ModelType};
+    /// let class_map = vec!["cat".to_string(), "dog".to_string()];
+    /// let options = KanOptions {
+    ///     input_size: 5,
+    ///     layer_sizes: vec![4, 2],
+    ///     degree: 3,
+    ///     coef_size: 6,
+    ///     model_type: ModelType::Regression,
+    ///     class_map: Some(class_map),
+    /// };
+    /// let model = Kan::new(&options);
+    /// assert_eq!(model.node_to_label(0), Some("cat"));
+    /// assert_eq!(model.node_to_label(1), Some("dog"));
+    /// assert_eq!(model.node_to_label(2), None);
+    /// ```
+    ///
+    pub fn node_to_label(&self, node: usize) -> Option<&str> {
+        if let Some(class_map) = &self.class_map {
+            class_map.get(node).map(|x| x.as_str())
+        } else {
+            None
         }
     }
 
@@ -94,6 +170,7 @@ impl Kan {
     ///     degree: 3,
     ///     coef_size: 6,
     ///     model_type: ModelType::Classification,
+    ///     class_map: None,
     /// };
     /// let mut model = Kan::new(&options);
     /// let input = vec![0.5, 0.4, 0.5, 0.5, 0.4];
@@ -137,6 +214,7 @@ impl Kan {
     ///     degree: 3,
     ///     coef_size: 6,
     ///     model_type: ModelType::Regression,
+    ///     class_map: None,
     /// };
     /// let mut model = Kan::new(&options);
     ///
@@ -266,6 +344,7 @@ mod test {
             degree: 3,
             coef_size: 4,
             model_type: ModelType::Classification,
+            class_map: None,
         };
         let mut first_kan = Kan::new(&kan_config);
         let second_kan_config = KanOptions {
@@ -288,6 +367,7 @@ mod test {
             degree: 3,
             coef_size: 4,
             model_type: ModelType::Classification,
+            class_map: None,
         };
         let mut first_kan = Kan::new(options);
         let input = vec![0.5, 0.4, 0.5, 0.5, 0.4];

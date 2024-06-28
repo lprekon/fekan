@@ -37,6 +37,7 @@ mod classification {
             degree: 3,
             coef_size: 4,
             model_type: ModelType::Classification,
+            class_map: None,
         });
         let untrained_validation_loss = validate_model(
             &validation_data,
@@ -89,6 +90,7 @@ mod regression {
             degree: 3,
             coef_size: 4,
             model_type: ModelType::Regression,
+            class_map: None,
         });
         let untrained_validation_loss = validate_model(
             &validation_data,
@@ -144,6 +146,7 @@ mod regression {
             degree: 3,
             coef_size: 5,
             model_type: ModelType::Regression,
+            class_map: None,
         });
 
         let untrained_validation_loss = validate_model(
