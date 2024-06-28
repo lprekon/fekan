@@ -12,6 +12,7 @@ categories = ["science", "mathematics"]
 [dependencies]
 apache-avro = { version = "0.16.0", optional = true }
 chrono = "0.4.38"
+ciborium = { version = "0.2.2", optional = true }
 clap = { version = "4.5.6", features = ["derive"] }
 indicatif = "0.17.8"
 rand = "0.8.5"
@@ -29,8 +30,8 @@ ciborium = "0.2.2"
 tempfile = "3.10.1"
 
 [features]
-deserialize-data = ["serde_json", "serde-pickle", "apache-avro"]
+serialization = ["serde_json", "serde-pickle", "apache-avro", "ciborium"]
 
 [[bin]]
 name = "fekan"
-required-features = ["deserialize-data"]
+required-features = ["serialization"]
