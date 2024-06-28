@@ -1,6 +1,6 @@
-sudo cargo flamegraph -- \
---data data/clipped_data.pkl \
+sudo cargo flamegraph --features="serialization" -- \
 build classifier \
+--data data/clipped_data.pkl \
 --no-save \
 --hidden-layer-sizes 24 \
 --classes $(cat data/classes.txt) \
