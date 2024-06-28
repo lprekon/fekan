@@ -68,6 +68,11 @@ struct RegressorArgs {
     /// The number of output nodes in the model. If > 1, the model will be a multi-output regression model
     // num_output_nodes: usize, not currently implemented
 
+    /// a comma-separated list of human-readable labels for the output nodes of the model.
+    /// the model will have ||labels|| output nodes, or 1 output node if no labels are provided
+    #[arg(long, value_delimiter = ',')]
+    labels: Option<Vec<String>>,
+
     #[command(flatten)]
     params: GenericBuildParams,
 }
@@ -145,24 +150,34 @@ struct TrainArgs {
 struct LoadArgs {
     /// path to the model weights file.
     model_input_file: PathBuf,
+
+    /// A list of comma-separated human-readable labels for the output nodes of the model. Required for training classification models, not used for regression models.
+    /// NOTE: make sure the order of the labels matches the order of the classes used to train the model and that none are missing
+    #[arg(long, value_delimiter = ',', global = true)]
+    classes: Option<Vec<String>>,
+
     #[command(subcommand)]
     command: WhyCommands,
 }
 
 #[derive(Subcommand, Debug, Clone)]
 enum WhyCommands {
-    /// Further train models weights loaded from a file
+    /// Further train the model weights loaded from a file
     Train(TrainArgs),
     /// Use a loaded model to make predictions on new data
     Infer {
-        /// an ordered list of human-readable labels for the output nodes of the model
-        class_map: Vec<String>,
+        /// an ordered list of human-readable labels for the output nodes of the model. Ignored for regression models
+        #[arg(long, value_delimiter = ',')]
+        class_map: Option<Vec<String>>,
         /// path to the file containing the data. currently only supports pickle files
         #[arg(short = 'd', long = "data", required = true)]
-        data_file: PathBuf,
+        data_file: PathBuf, // needed because the data file is stored in train args everywhere else
     },
 }
 
+// when designing this program, I had 3 things for which I could optimize - a helpful and intutive CLI,
+// consistent and deduplicated definitions for the arguments, and a clean main function - and I could pick two.
+// Please forgive the messy code below :)
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     println!("Using arguments {cli:?}");
@@ -202,6 +217,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     degree: classifier_args.params.degree,
                     coef_size: classifier_args.params.num_coefficients,
                     model_type: ModelType::Classification,
+                    class_map: Some(classifier_args.classes),
                 });
 
                 let training_options = TrainingOptions {
@@ -255,7 +271,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // build our list of layer sizes, which should equal all the hidden layers specified by the user, plus the output layer
                 let layers = {
                     let mut layers = regressor_args.params.hidden_layer_sizes.unwrap_or_default();
-                    layers.push(1);
+                    let output_size = regressor_args
+                        .labels
+                        .as_ref()
+                        .map_or(1, |labels| labels.len());
+                    layers.push(output_size);
                     layers
                 };
                 // build the model
@@ -265,6 +285,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     degree: regressor_args.params.degree,
                     coef_size: regressor_args.params.num_coefficients,
                     model_type: ModelType::Regression,
+                    class_map: regressor_args.labels,
                 });
 
                 let training_options = TrainingOptions {
@@ -303,9 +324,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Ok(())
             }
         },
-        WhereCommands::Load(_load_args) => {
-            todo!("Reimplement the load command")
-        }
+        WhereCommands::Load(load_args) => match load_args.command {
+            WhyCommands::Train(train_args) => {
+                todo!("implement training from file")
+            }
+            WhyCommands::Infer {
+                class_map: _,
+                data_file: _,
+            } => {
+                todo!("implement inference")
+            }
+        },
     }
 }
 
