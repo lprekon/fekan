@@ -15,7 +15,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
 
-/// A simple CLI for training and using Kolmogorov-Arnold neural networks. Only appropriate for datasets that can be loaded into memory.
+/// A simple CLI for training and using Kolmogorov-Arnold neural networks. Appropriate for datasets that can be loaded into memory.
 #[derive(Parser, Debug, Clone)]
 struct Cli {
     #[command(subcommand)]
@@ -137,7 +137,7 @@ struct TrainArgs {
     /// the fraction of the training data to use as validation data
     validation_split: f32,
 
-    /// path to the output file for the model weights.
+    /// path to the output file for the model weights. Supported file extensions are .pkl, .json, and .cbor
     #[arg(short = 'o', long = "model-out", group = "output")]
     model_output_file: Option<PathBuf>,
 
@@ -185,18 +185,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         WhereCommands::Build(build_args) => match build_args.model_type {
             CliModelType::Classifier(classifier_args) => {
                 let train_args = classifier_args.params.training_parameters;
+
+                // check the output file extension to make sure we can save it later. If not, better to fail now than after training
+                if let Some(output_file_path) = &train_args.model_output_file {
+                    validate_output_file_extension(output_file_path);
+                }
+
                 let (training_data, validation_data) = load_classification_data(
                     &train_args.data_file,
                     train_args.validation_split,
                     &classifier_args.classes,
                 )?;
 
-                let observer_ticks = if train_args.validate_each_epoch {
-                    (training_data.len() + validation_data.len()) * train_args.num_epochs
-                        + validation_data.len()
-                } else {
-                    training_data.len() * train_args.num_epochs + validation_data.len()
-                };
+                let (passed_validation_data, observer_ticks) = determine_validation_data_and_ticks(
+                    &train_args,
+                    &validation_data,
+                    &training_data,
+                );
                 let training_observer =
                     TrainingProgress::new(observer_ticks as u64, cli.log_output);
 
@@ -228,13 +233,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     learning_rate: train_args.learning_rate,
                 };
 
-                // if the user wants the model validated each epoch, pass the validation data to the training function.
-                // Otherwise, pass None
-                let passed_validation_data = if train_args.validate_each_epoch {
-                    EachEpoch::ValidateModel(&validation_data)
-                } else {
-                    EachEpoch::DoNotValidateModel
-                };
                 // run the training loop on the model
                 let trained_model = train_model(
                     untrained_model,
@@ -248,23 +246,26 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .finish_with_message("Training complete");
                 // save the model to a file
                 if let Some(model_output_file) = &train_args.model_output_file {
-                    println!("Saving model to file: {:?}", model_output_file);
-                    let mut out_file = File::create(model_output_file)?;
-                    serde_pickle::to_writer(&mut out_file, &trained_model, Default::default())?;
+                    serialize_model(model_output_file, &trained_model)?;
                 }
                 Ok(())
             }
             CliModelType::Regressor(regressor_args) => {
                 let train_args = regressor_args.params.training_parameters;
+
+                // check the output file extension to make sure we can save it later. If not, better to fail now than after training
+                if let Some(output_file_path) = &train_args.model_output_file {
+                    validate_output_file_extension(output_file_path);
+                }
+
                 let (training_data, validation_data) =
                     load_regression_data(&train_args.data_file, train_args.validation_split)?;
 
-                let observer_ticks = if train_args.validate_each_epoch {
-                    (training_data.len() + validation_data.len()) * train_args.num_epochs
-                        + validation_data.len()
-                } else {
-                    training_data.len() * train_args.num_epochs + validation_data.len()
-                };
+                let (passed_validation_data, observer_ticks) = determine_validation_data_and_ticks(
+                    &train_args,
+                    &validation_data,
+                    &training_data,
+                );
                 let training_observer =
                     TrainingProgress::new(observer_ticks as u64, cli.log_output);
 
@@ -296,14 +297,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     learning_rate: train_args.learning_rate,
                 };
 
-                // if the user wants the model validated each epoch, pass the validation data to the training function.
-                // Otherwise, pass None
-                let passed_validation_data = if train_args.validate_each_epoch {
-                    EachEpoch::ValidateModel(&validation_data)
-                } else {
-                    EachEpoch::DoNotValidateModel
-                };
-
                 // run the training loop on the model
                 let trained_model = train_model(
                     untrained_model,
@@ -317,25 +310,145 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .finish_with_message("Training complete");
 
                 if let Some(model_output_file) = &train_args.model_output_file {
-                    println!("Saving model to file: {:?}", model_output_file);
-                    let mut out_file = File::create(model_output_file)?;
-                    serde_pickle::to_writer(&mut out_file, &trained_model, Default::default())?;
+                    serialize_model(model_output_file, &trained_model)?;
                 }
                 Ok(())
             }
         },
-        WhereCommands::Load(load_args) => match load_args.command {
-            WhyCommands::Train(train_args) => {
-                todo!("implement training from file")
+        WhereCommands::Load(load_args) => {
+            let loaded_model = deserialize_model(&load_args.model_input_file)?;
+
+            match load_args.command {
+                WhyCommands::Train(train_args) => {
+                    let training_options = TrainingOptions {
+                        // we can't use the From<T> pattern here because some of the fields are not directly copyable
+                        num_epochs: train_args.num_epochs,
+                        knot_update_interval: train_args.knot_update_interval,
+                        knot_adaptivity: train_args.knot_adaptivity,
+                        learning_rate: train_args.learning_rate,
+                    };
+
+                    let load_result = match loaded_model.model_type() {
+                        ModelType::Classification => load_classification_data(
+                            &train_args.data_file,
+                            train_args.validation_split,
+                            loaded_model
+                                .class_map()
+                                .expect("Classification model has no class map"),
+                        ),
+
+                        ModelType::Regression => {
+                            load_regression_data(&train_args.data_file, train_args.validation_split)
+                        }
+                    };
+                    let (training_data, validation_data) = load_result?;
+
+                    // if the user wants the model validated each epoch, pass the validation data to the training function and included the counts in the training observer.
+                    let (passed_validation_data, observer_ticks) =
+                        determine_validation_data_and_ticks(
+                            &train_args,
+                            &validation_data,
+                            &training_data,
+                        );
+                    let training_observer =
+                        TrainingProgress::new(observer_ticks as u64, cli.log_output);
+
+                    // run the training loop on the model
+                    let trained_model = train_model(
+                        loaded_model,
+                        &training_data,
+                        passed_validation_data,
+                        &training_observer,
+                        training_options,
+                    )?;
+                    training_observer
+                        .into_inner()
+                        .finish_with_message("Training complete");
+                    // save the model to a file
+                    if let Some(model_output_file) = &train_args.model_output_file {
+                        serialize_model(model_output_file, &trained_model)?;
+                    }
+                    Ok(())
+                }
+                WhyCommands::Infer {
+                    class_map: _,
+                    data_file: _,
+                } => {
+                    todo!("implement inference")
+                }
             }
-            WhyCommands::Infer {
-                class_map: _,
-                data_file: _,
-            } => {
-                todo!("implement inference")
-            }
-        },
+        }
     }
+}
+
+fn determine_validation_data_and_ticks<'a>(
+    train_args: &TrainArgs,
+    validation_data: &'a [Sample],
+    training_data: &[Sample],
+) -> (EachEpoch<'a>, usize) {
+    let (passed_validation_data, observer_ticks) = if train_args.validate_each_epoch {
+        (
+            EachEpoch::ValidateModel(&validation_data),
+            (training_data.len() + validation_data.len()) * train_args.num_epochs
+                + validation_data.len(),
+        )
+    } else {
+        (
+            EachEpoch::DoNotValidateModel,
+            training_data.len() * train_args.num_epochs + validation_data.len(),
+        )
+    };
+    (passed_validation_data, observer_ticks)
+}
+
+fn serialize_model(
+    model_output_file: &PathBuf,
+    trained_model: &Kan,
+) -> Result<File, Box<dyn Error>> {
+    println!("Saving model to file: {:?}", model_output_file);
+    let mut out_file = File::create(model_output_file)?;
+    let file_extension = model_output_file
+        .extension()
+        .expect("No file extension found for output file - unable to determine output format")
+        .to_str()
+        .expect("Error converting file extension to string");
+    match file_extension {
+        "pkl" => serde_pickle::to_writer(&mut out_file, trained_model, Default::default())?,
+        "json" => serde_json::to_writer(&mut out_file, trained_model)?,
+        "cbor" => ciborium::into_writer(trained_model, &mut out_file)?,
+        _ => panic!("Unsupported file extension: {}", file_extension),
+    }
+    Ok(out_file)
+}
+
+fn validate_output_file_extension(output_file_path: &PathBuf) {
+    let file_extension = output_file_path
+        .extension()
+        .expect("No file extension found for output file - unable to determine output format")
+        .to_str()
+        .expect("Error converting file extension to string");
+    match file_extension {
+        "pkl" | "json" | "cbor" => (),
+        _ => panic!("Unsupported file extension: {}", file_extension),
+    }
+}
+
+/// panic if the file extension is not supported or the model can't be loaded
+fn deserialize_model(model_input_file: &PathBuf) -> Result<Kan, Box<dyn Error>> {
+    println!("Loading model from file: {:?}", model_input_file);
+    let file = File::open(model_input_file)?;
+    let file_extension = model_input_file
+        .extension()
+        .expect("No file extension found for input file - unable to determine input format")
+        .to_str()
+        .expect("Error converting file extension to string");
+    let model: Kan = match file_extension {
+        "pkl" => serde_pickle::from_reader(file, Default::default())?,
+        "json" => serde_json::from_reader(file)?,
+        "cbor" => ciborium::from_reader(file)?,
+        _ => panic!("Unsupported file extension"),
+    };
+    Ok(model)
 }
 
 struct TrainingProgress {
