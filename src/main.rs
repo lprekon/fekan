@@ -87,7 +87,7 @@ struct GenericBuildParams {
     /// The number of coefficients/control points in the spline basis functions
     num_coefficients: usize,
 
-    #[arg(long, alias = "hl", global = true)]
+    #[arg(long, alias = "hl", global = true, value_delimiter = ',')]
     /// a comma-separated list of hidden layer sizes. If empty, the model will only have the output layer
     hidden_layer_sizes: Option<Vec<usize>>,
     // #[command(flatten)]
