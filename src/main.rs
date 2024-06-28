@@ -166,9 +166,6 @@ enum WhyCommands {
     Train(TrainArgs),
     /// Use a loaded model to make predictions on new data
     Infer {
-        /// an ordered list of human-readable labels for the output nodes of the model. Ignored for regression models
-        #[arg(long, value_delimiter = ',')]
-        class_map: Option<Vec<String>>,
         /// path to the file containing the data. currently only supports pickle files
         #[arg(short = 'd', long = "data", required = true)]
         data_file: PathBuf, // needed because the data file is stored in train args everywhere else
@@ -339,7 +336,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         },
         WhereCommands::Load(load_args) => {
-            let loaded_model = deserialize_model(&load_args.model_input_file)?;
+            let mut loaded_model = deserialize_model(&load_args.model_input_file)?;
 
             match load_args.command {
                 WhyCommands::Train(train_args) => {
@@ -407,11 +404,29 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     Ok(())
                 }
-                WhyCommands::Infer {
-                    class_map: _,
-                    data_file: _,
-                } => {
-                    todo!("implement inference")
+                WhyCommands::Infer { data_file } => {
+                    let data = load_inference_data(&data_file)?;
+                    for sample in data.iter() {
+                        let activation = loaded_model.forward(sample.features().clone())?;
+                        let output_string = "[".to_string()
+                            + &activation
+                                .iter()
+                                .enumerate()
+                                .map(|(idx, a)| {
+                                    format!(
+                                        "{}: {}",
+                                        loaded_model
+                                            .node_to_label(idx)
+                                            .unwrap_or("[IDX OUT OF BOUNDS]"),
+                                        a
+                                    )
+                                })
+                                .collect::<Vec<String>>()
+                                .join(", ")
+                            + "]";
+                        println!("{}", output_string);
+                    }
+                    Ok(())
                 }
             }
         }
@@ -645,6 +660,43 @@ fn load_regression_data(
     println!("creating validation set");
     // separate the data into training and validation sets
     split_data(validation_split, data, rows_loaded)
+}
+
+fn load_inference_data(data_file_path: &PathBuf) -> Result<Vec<Sample>, Box<dyn Error>> {
+    #[derive(Deserialize, Debug)]
+    struct InferenceSample {
+        features: Vec<f32>,
+    }
+
+    let file = File::open(data_file_path)?;
+    let file_extension = data_file_path
+        .extension()
+        .expect("UNABLE TO LOAD DATA: no file extension found")
+        .to_str()
+        .expect("UNABLE TO LOAD DATA: unable to convert file extension to string");
+    let raw_data: Vec<InferenceSample> = match file_extension {
+        "pkl" => serde_pickle::from_reader(file, Default::default())?,
+        "json" => serde_json::from_reader(file)?,
+        "avro" => {
+            let mut data: Vec<InferenceSample> = vec![];
+            let avro_reader = apache_avro::Reader::new(file)?;
+            for value in avro_reader {
+                data.push(apache_avro::from_value(&value.expect("Bad avro value"))?);
+            }
+            data
+        }
+        _ => panic!(
+            "UNABLE TO LOAD DATA: unsupported file extension: {}. Supported extensions are: {}",
+            file_extension,
+            SUPPORTED_EXTENSIONS.join(", ")
+        ),
+    };
+
+    // turn the raw data into a vector of Samples
+    Ok(raw_data
+        .into_iter()
+        .map(|raw_sample| Sample::new(raw_sample.features, 0.0))
+        .collect())
 }
 
 fn split_data(
