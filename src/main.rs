@@ -9,7 +9,7 @@ use fekan::{
     kan::{Kan, KanOptions, ModelType},
     train_model,
     training_observer::TrainingObserver,
-    EachEpoch, Sample, TrainingOptions,
+    validate_model, EachEpoch, Sample, TrainingOptions,
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -234,16 +234,27 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
 
                 // run the training loop on the model
-                let trained_model = train_model(
+                let mut trained_model = train_model(
                     untrained_model,
                     &training_data,
                     passed_validation_data,
                     &training_observer,
                     training_options,
                 )?;
-                training_observer
-                    .into_inner()
-                    .finish_with_message("Training complete");
+                if !train_args.validate_each_epoch {
+                    // we didn't validate each epoch, so we need to validate the model now
+                    let validation_loss =
+                        validate_model(&validation_data, &mut trained_model, &training_observer);
+                    training_observer.into_inner().println(format!(
+                        "{} Final validation Loss: {}",
+                        chrono::Local::now(),
+                        validation_loss
+                    ));
+                } else {
+                    training_observer
+                        .into_inner()
+                        .finish_with_message("Training complete");
+                }
                 // save the model to a file
                 if let Some(model_output_file) = &train_args.model_output_file {
                     serialize_model(model_output_file, &trained_model)?;
@@ -298,16 +309,28 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
 
                 // run the training loop on the model
-                let trained_model = train_model(
+                let mut trained_model = train_model(
                     untrained_model,
                     &training_data,
                     passed_validation_data,
                     &training_observer,
                     training_options,
                 )?;
-                training_observer
-                    .into_inner()
-                    .finish_with_message("Training complete");
+
+                if !train_args.validate_each_epoch {
+                    // we didn't validate each epoch, so we need to validate the model now
+                    let validation_loss =
+                        validate_model(&validation_data, &mut trained_model, &training_observer);
+                    training_observer.into_inner().println(format!(
+                        "{} Final validation Loss: {}",
+                        chrono::Local::now(),
+                        validation_loss
+                    ));
+                } else {
+                    training_observer
+                        .into_inner()
+                        .finish_with_message("Training complete");
+                }
 
                 if let Some(model_output_file) = &train_args.model_output_file {
                     serialize_model(model_output_file, &trained_model)?;
@@ -354,16 +377,30 @@ fn main() -> Result<(), Box<dyn Error>> {
                         TrainingProgress::new(observer_ticks as u64, cli.log_output);
 
                     // run the training loop on the model
-                    let trained_model = train_model(
+                    let mut trained_model = train_model(
                         loaded_model,
                         &training_data,
                         passed_validation_data,
                         &training_observer,
                         training_options,
                     )?;
-                    training_observer
-                        .into_inner()
-                        .finish_with_message("Training complete");
+                    if !train_args.validate_each_epoch {
+                        // we didn't validate each epoch, so we need to validate the model now
+                        let validation_loss = validate_model(
+                            &validation_data,
+                            &mut trained_model,
+                            &training_observer,
+                        );
+                        training_observer.into_inner().println(format!(
+                            "{} Final validation Loss: {}",
+                            chrono::Local::now(),
+                            validation_loss
+                        ));
+                    } else {
+                        training_observer
+                            .into_inner()
+                            .finish_with_message("Training complete");
+                    }
                     // save the model to a file
                     if let Some(model_output_file) = &train_args.model_output_file {
                         serialize_model(model_output_file, &trained_model)?;
