@@ -1,15 +1,8 @@
 // use std::fs::File;
 
 //! Does this show up anywhere
-use std::{
-    collections::{HashMap, HashSet},
-    error::Error,
-    fs::File,
-    path::PathBuf,
-};
+use std::{error::Error, fs::File, path::PathBuf};
 
-// // use fekan::kan_layer::spline::Spline;
-// // use fekan::kan_layer::KanLayer;
 use clap::{ArgGroup, Args, Parser, Subcommand};
 
 use fekan::{
@@ -19,6 +12,7 @@ use fekan::{
     EachEpoch, Sample, TrainingOptions,
 };
 use indicatif::{ProgressBar, ProgressStyle};
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
 
 /// A simple CLI for training and using Kolmogorov-Arnold neural networks. Only appropriate for datasets that can be loaded into memory.
@@ -59,7 +53,8 @@ enum CliModelType {
 
 #[derive(Args, Clone, Debug)]
 struct ClassifierArgs {
-    /// A comma-separated list of classes which the model will be trained to predict. The model will have ||classes|| output nodes
+    /// A comma-separated list of classes which the model will be trained to predict. The model will have ||classes|| output nodes.
+    /// Any data points with labels not in this list will be ignored
     #[arg(short, long, required = true, value_delimiter = ',')]
     classes: Vec<String>,
 
@@ -98,7 +93,9 @@ struct GenericBuildParams {
 #[derive(Args, Clone, Debug)]
 #[command(group(ArgGroup::new("output").required(true).multiple(false)))]
 struct TrainArgs {
-    /// path to the file containing the training data. currently only supports pickle files
+    /// path to the file containing the training data.
+    /// The file format is determined by the file extension. Supported formats are: pickle, json, avro
+    /// Features should be in an ordered list in single column/field named 'features', and labels should be in a single column/field named 'label'
     #[arg(short = 'd', long = "data")]
     data_file: PathBuf,
 
@@ -360,51 +357,124 @@ impl TrainingObserver for TrainingProgress {
 }
 
 #[derive(Deserialize, Debug)]
+#[cfg_attr(test, derive(serde::Serialize, PartialEq))]
 struct ClassificationSample {
     features: Vec<f32>,
     label: String,
 }
 
 #[derive(Deserialize, Debug)]
+#[cfg_attr(test, derive(serde::Serialize, PartialEq))]
 struct RegressionSample {
     features: Vec<f32>,
     label: f32,
 }
 
-pub fn load_classification_data(
+const SUPPORTED_EXTENSIONS: [&str; 3] = ["pkl", "json", "avro"];
+
+fn load_classification_data(
     data_file_path: &PathBuf,
     validation_split: f32,
     classes: &Vec<String>,
 ) -> Result<(Vec<Sample>, Vec<Sample>), Box<dyn Error>> {
     let file = File::open(data_file_path)?;
-    let raw_data: Vec<ClassificationSample> = serde_pickle::from_reader(file, Default::default())?;
+    let file_extension = data_file_path
+        .extension()
+        .expect("UNABLE TO LOAD DATA: no file extension found")
+        .to_str()
+        .expect("UNABLE TO LOAD DATA: unable to convert file extension to string");
+    // load the raw data with string labels
+    let raw_data: Vec<ClassificationSample> = match file_extension {
+        "pkl" => serde_pickle::from_reader(file, Default::default())?,
+        "json" => serde_json::from_reader(file)?,
+        "avro" => {
+            let mut data: Vec<ClassificationSample> = vec![];
+            let avro_reader = apache_avro::Reader::new(file)?;
+            for value in avro_reader {
+                data.push(apache_avro::from_value(&value.expect("Bad avro value"))?);
+            }
+            data
+        }
+
+        _ => panic!(
+            "UNABLE TO LOAD DATA: unsupported file extension: {}. Supported extensions are: {}",
+            file_extension,
+            SUPPORTED_EXTENSIONS.join(", ")
+        ),
+    };
     let rows_loaded = raw_data.len();
 
-    // parse the data, maping the label string to a u8
-    let class_map: HashMap<String, u32> = HashMap::from_iter(
+    // parse the data, maping the label string to a u32
+    let class_map: FxHashMap<String, u32> = FxHashMap::from_iter(
         classes
             .iter()
             .enumerate()
             .map(|(i, c)| (c.clone(), i as u32)),
     );
-    println!("Class map: {:?}", class_map);
-    // let data: Vec<Sample> = raw_data.iter().filter(|raw_sample| class_map.contains_key(&raw_sample.label)).map(|raw_sample| {
-    //     let label = class_map[&raw_sample.label];
-    //     let features: Vec<f32> = raw_sample.features.iter().map(|&f| f as f32).collect();
-    //     Sample { features, label }
-    // }).collect();
+    println!("Using class map: {:?}", class_map);
+
+    // turn the raw data into a vector of Samples (with the labels mapped to u32s (with the u32s  as f32s))
     let mut data = Vec::with_capacity(raw_data.len());
     for raw_sample in raw_data {
         if !class_map.contains_key(&raw_sample.label) {
             continue; // ignore data points with labels not in the provided class list
         }
         let label = class_map[&raw_sample.label];
-        let features: Vec<f32> = raw_sample.features.iter().map(|&f| f as f32).collect();
+        let features: Vec<f32> = raw_sample.features;
         data.push(Sample::new(features, label as f32));
     }
 
+    split_data(validation_split, data, rows_loaded)
+}
+
+fn load_regression_data(
+    data_file_path: &PathBuf,
+    validation_split: f32,
+) -> Result<(Vec<Sample>, Vec<Sample>), Box<dyn Error>> {
+    println!("Loading regression data from file: {:?}", data_file_path);
+    let file = File::open(data_file_path)?;
+    let file_extension = data_file_path
+        .extension()
+        .expect("UNABLE TO LOAD DATA: no file extension found")
+        .to_str()
+        .expect("UNABLE TO LOAD DATA: unable to convert file extension to string");
+    let data: Vec<RegressionSample> = match file_extension {
+        "pkl" => serde_pickle::from_reader(file, Default::default())?,
+        "json" => serde_json::from_reader(file)?,
+        "avro" => {
+            let mut data: Vec<RegressionSample> = vec![];
+            let avro_reader = apache_avro::Reader::new(file)?;
+            for value in avro_reader {
+                data.push(apache_avro::from_value(&value.expect("Bad avro value"))?);
+            }
+            data
+        }
+        _ => panic!(
+            "UNABLE TO LOAD DATA: unsupported file extension: {}. Supported extensions are: {}",
+            file_extension,
+            SUPPORTED_EXTENSIONS.join(", ")
+        ),
+    };
+    let rows_loaded = data.len();
+
+    // turn the raw data into a vector of Samples
+    let data: Vec<Sample> = data
+        .into_iter()
+        .map(|raw_sample| Sample::new(raw_sample.features, raw_sample.label))
+        .collect();
+
+    println!("creating validation set");
     // separate the data into training and validation sets
-    let mut validation_indecies: HashSet<usize> = HashSet::new();
+    split_data(validation_split, data, rows_loaded)
+}
+
+fn split_data(
+    validation_split: f32,
+    data: Vec<Sample>,
+    rows_loaded: usize,
+) -> Result<(Vec<Sample>, Vec<Sample>), Box<dyn Error>> {
+    // separate the data into training and validation sets
+    let mut validation_indecies: FxHashSet<usize> = FxHashSet::default();
     while validation_indecies.len() < (validation_split * data.len() as f32) as usize {
         let index = rand::random::<usize>() % data.len();
         validation_indecies.insert(index);
@@ -433,41 +503,167 @@ pub fn load_classification_data(
     Ok((training_data, validation_data))
 }
 
-fn load_regression_data(
-    data_file_path: &PathBuf,
-    validation_split: f32,
-) -> Result<(Vec<Sample>, Vec<Sample>), Box<dyn Error>> {
-    println!("Loading regression data from file: {:?}", data_file_path);
-    let file = File::open(data_file_path)?;
-    let data: Vec<RegressionSample> = serde_pickle::from_reader(file, Default::default())?;
-    let rows_loaded = data.len();
-    println!("creating validation set");
-    // separate the data into training and validation sets
-    let mut validation_indecies: HashSet<usize> = HashSet::new();
-    while validation_indecies.len() < (validation_split * data.len() as f32) as usize {
-        let index = rand::random::<usize>() % data.len();
-        validation_indecies.insert(index);
+#[cfg(test)]
+mod test_main {
+    use super::*;
+
+    use std::{io::Seek, vec};
+    use tempfile::tempdir;
+
+    use crate::{ClassificationSample, RegressionSample};
+
+    fn classification_data() -> (Vec<ClassificationSample>, Vec<String>) {
+        let classes = vec![
+            "a".to_string(),
+            "0123456789".to_string(),
+            "!@#$%^&*()~<>?:\"{}\\|'éñ漢字".to_string(),
+        ];
+        (
+            vec![
+                ClassificationSample {
+                    features: vec![1.0, 2.0, 3.0],
+                    label: classes[0].clone(),
+                },
+                ClassificationSample {
+                    features: vec![f32::MIN, 0.0, f32::MAX],
+                    label: classes[1].clone(),
+                },
+                ClassificationSample {
+                    features: vec![-1.1, -2.5, 9.7],
+                    label: classes[2].clone(),
+                },
+            ],
+            classes,
+        )
     }
-    let mut training_data: Vec<Sample> = Vec::with_capacity(data.len() - validation_indecies.len());
-    let mut validation_data: Vec<Sample> = Vec::with_capacity(validation_indecies.len());
-    for (i, reg_sample) in data.into_iter().enumerate() {
-        if validation_indecies.contains(&i) {
-            validation_data.push(Sample::new(reg_sample.features, reg_sample.label));
-        } else {
-            training_data.push(Sample::new(reg_sample.features, reg_sample.label));
+
+    fn regression_data() -> Vec<RegressionSample> {
+        vec![
+            RegressionSample {
+                features: vec![1.0, 2.0, 3.0],
+                label: -1.0,
+            },
+            RegressionSample {
+                features: vec![f32::MIN, 0.0, f32::MAX],
+                label: 0.001,
+            },
+            RegressionSample {
+                features: vec![-1.1, -2.5, 9.7],
+                label: 3.14,
+            },
+        ]
+    }
+
+    #[test]
+    fn read_pickle_classification_data() {
+        let tmp_dir = tempdir().unwrap();
+        let file_path = tmp_dir.path().join("test.pkl");
+        let mut file = File::create(&file_path).unwrap();
+        let (test_data, class_list) = classification_data();
+        serde_pickle::to_writer(&mut file, &test_data, Default::default()).unwrap();
+        file.seek(std::io::SeekFrom::Start(0)).unwrap();
+        let (loaded_data, _) = load_classification_data(&file_path, 0.0, &class_list).unwrap();
+        let expected_data: Vec<Sample> = test_data
+            .iter()
+            .enumerate()
+            .map(|(i, sample)| Sample::new(sample.features.clone(), i as f32))
+            .collect();
+        assert_eq!(expected_data, loaded_data);
+    }
+
+    #[test]
+    fn read_json_classifcation_data() {
+        let tmp_dir = tempdir().unwrap();
+        let file_path = tmp_dir.path().join("test.json");
+        let mut file = File::create(&file_path).unwrap();
+        let (test_data, class_list) = classification_data();
+        serde_json::to_writer(&mut file, &test_data).unwrap();
+        file.seek(std::io::SeekFrom::Start(0)).unwrap();
+        let (loaded_data, _) = load_classification_data(&file_path, 0.0, &class_list).unwrap();
+        let expected_data: Vec<Sample> = test_data
+            .iter()
+            .enumerate()
+            .map(|(i, sample)| Sample::new(sample.features.clone(), i as f32))
+            .collect();
+        assert_eq!(expected_data, loaded_data);
+    }
+
+    #[test]
+    fn read_avro_classifcation_data() {
+        let tmp_dir = tempdir().unwrap();
+        let file_path = tmp_dir.path().join("test.avro");
+        let mut file = File::create(&file_path).unwrap();
+        let (test_data, class_list) = classification_data();
+        let schema = apache_avro::Schema::parse_str(r#"{"type": "record", "name": "test", "fields": [{"name": "features", "type": {"type": "array", "items": "float"}}, {"name": "label", "type": "string"}]}"#).unwrap();
+        let mut writer = apache_avro::Writer::new(&schema, &mut file);
+        for sample in &test_data {
+            writer
+                .append(apache_avro::to_value(sample).unwrap())
+                .unwrap();
         }
+        writer.flush().unwrap();
+        file.seek(std::io::SeekFrom::Start(0)).unwrap();
+        let (loaded_data, _) = load_classification_data(&file_path, 0.0, &class_list).unwrap();
+        let expected_data: Vec<Sample> = test_data
+            .iter()
+            .enumerate()
+            .map(|(i, sample)| Sample::new(sample.features.clone(), i as f32))
+            .collect();
+        assert_eq!(expected_data, loaded_data);
     }
-    assert!(
-        training_data.len() + validation_data.len() == rows_loaded,
-        "Data split error. Training: {}, Validation: {}, Total: {}",
-        training_data.len(),
-        validation_data.len(),
-        rows_loaded
-    );
-    println!(
-        "Data loaded. Training: {}, Validation: {}",
-        training_data.len(),
-        validation_data.len()
-    );
-    Ok((training_data, validation_data))
+
+    #[test]
+    fn read_pickle_regression_data() {
+        let tmp_dir = tempdir().unwrap();
+        let file_path = tmp_dir.path().join("test.pkl");
+        let mut file = File::create(&file_path).unwrap();
+        let test_data = regression_data();
+        serde_pickle::to_writer(&mut file, &test_data, Default::default()).unwrap();
+        file.seek(std::io::SeekFrom::Start(0)).unwrap();
+        let (loaded_data, _) = load_regression_data(&file_path, 0.0).unwrap();
+        let expected_data: Vec<Sample> = test_data
+            .iter()
+            .map(|sample| Sample::new(sample.features.clone(), sample.label))
+            .collect();
+        assert_eq!(expected_data, loaded_data);
+    }
+
+    #[test]
+    fn read_json_regression_data() {
+        let tmp_dir = tempdir().unwrap();
+        let file_path = tmp_dir.path().join("test.json");
+        let mut file = File::create(&file_path).unwrap();
+        let test_data = regression_data();
+        serde_json::to_writer(&mut file, &test_data).unwrap();
+        file.seek(std::io::SeekFrom::Start(0)).unwrap();
+        let (loaded_data, _) = load_regression_data(&file_path, 0.0).unwrap();
+        let expected_data: Vec<Sample> = test_data
+            .iter()
+            .map(|sample| Sample::new(sample.features.clone(), sample.label))
+            .collect();
+        assert_eq!(expected_data, loaded_data);
+    }
+
+    #[test]
+    fn read_avro_regression_data() {
+        let tmp_dir = tempdir().unwrap();
+        let file_path = tmp_dir.path().join("test.avro");
+        let mut file = File::create(&file_path).unwrap();
+        let test_data = regression_data();
+        let schema = apache_avro::Schema::parse_str(r#"{"type": "record", "name": "test", "fields": [{"name": "features", "type": {"type": "array", "items": "float"}}, {"name": "label", "type": "float"}]}"#).unwrap();
+        let mut writer = apache_avro::Writer::new(&schema, &mut file);
+        for sample in &test_data {
+            writer
+                .append(apache_avro::to_value(sample).unwrap())
+                .unwrap();
+        }
+        writer.flush().unwrap();
+        file.seek(std::io::SeekFrom::Start(0)).unwrap();
+        let (loaded_data, _) = load_regression_data(&file_path, 0.0).unwrap();
+        let expected_data: Vec<Sample> = test_data
+            .iter()
+            .map(|sample| Sample::new(sample.features.clone(), sample.label))
+            .collect();
+        assert_eq!(expected_data, loaded_data);
+    }
 }

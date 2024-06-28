@@ -10,13 +10,15 @@ keywords = ["neural-networks", "kolmogorov-arnold", "machine-learning", "ai"]
 categories = ["science", "mathematics"]
 
 [dependencies]
+apache-avro = { version = "0.16.0", optional = true }
 chrono = "0.4.38"
 clap = { version = "4.5.6", features = ["derive"] }
 indicatif = "0.17.8"
 rand = "0.8.5"
 rustc-hash = "2.0.0"
 serde = { version = "1.0.203", features = ["derive"] }
-serde-pickle = "1.1.1"
+serde-pickle = { version = "1.1.1", optional = true }
+serde_json = { version = "1.0.118", optional = true }
 statrs = "0.16.0"
 
 [profile.release]
@@ -25,3 +27,10 @@ debug = true
 [dev-dependencies]
 ciborium = "0.2.2"
 tempfile = "3.10.1"
+
+[features]
+deserialize-data = ["serde_json", "serde-pickle", "apache-avro"]
+
+[[bin]]
+name = "fekan"
+required-features = ["deserialize-data"]
