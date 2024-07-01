@@ -441,8 +441,7 @@ fn determine_validation_data_and_ticks<'a>(
     let (passed_validation_data, observer_ticks) = if train_args.validate_each_epoch {
         (
             EachEpoch::ValidateModel(&validation_data),
-            (training_data.len() + validation_data.len()) * train_args.num_epochs
-                + validation_data.len(),
+            (training_data.len() + validation_data.len()) * train_args.num_epochs,
         )
     } else {
         (
