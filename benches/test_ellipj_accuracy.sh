@@ -4,7 +4,8 @@ LOG_FILE="ellipj_regression_accuracy.log"
 DATA_FILE=$(mktemp)+".json"
 trap "rm -f $DATA_FILE" EXIT
 
-which python3
+echo $(git rev-parse HEAD) > $LOG_FILE
+
 python3 generate_ellipj_data.py 1000000 > $DATA_FILE
 
 fekan build regressor --data $DATA_FILE \
