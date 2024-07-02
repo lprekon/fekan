@@ -19,7 +19,7 @@ The `test_*_accuracy.sh` scripts generate a sample dataset using the python scri
 
 Finally, the included dockerfile can be used to create a docker image with `fekan` and the necessary python dependencies to run the above scripts installed. This is mostly for benchmarking the models on shared-compute resources (e.g AWS Batch or your friend's supercomputer), not intended for any "production" use cases. The image is not currently available on any repositories. To build it, run 
 ```
-docker build -t fekan-benchmark https://github.com/lprekon/fekan -f https://github.com/lprekon/fekan/benches/dockerfile"
+docker build -t fekan-benchmark https://github.com/lprekon/fekan.git -f benches/dockerfile
 ```
 
 Example benchmark invocation:
