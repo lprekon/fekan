@@ -1,5 +1,16 @@
 #!/bin/bash
 
+# this script is going to be psuedo-recursive. 
+#It lives in the fekan repo, but it also clones the fekan repo
+# to make sure it has the most updated context whereever it runs.
+# Yay, portability!
+
+set -e # exit on error
+
+git clone git@github.com:lprekon/fekan.git
+cd fekan
+cargo install fekan --path . --features "serialization"
+
 LOG_FILE="ellipj_regression_accuracy.log"
 DATA_FILE=$(mktemp)+".json"
 trap "rm -f $DATA_FILE" EXIT

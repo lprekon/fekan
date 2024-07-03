@@ -15,14 +15,6 @@ While the rust ecosystem comes with excellent support for measure the speed of c
 
 The `generate_*_data.py` scripts generate random inputs and the outputs from a particular function, and are used to create datasets for benchmarking. `requirements.txt` has all the dependencies for the python scripts
 
-The `test_*_accuracy.sh` scripts generate a sample dataset using the python scripts with a matching name, then build and train a KAN over the data. The results are stored in the `*.log` files and are checked in to the repo alongside the tested code.
+The `test_*_accuracy.sh` scripts clones this repo and installs fekan, pip install requirements.txt, generate a sample dataset using the python scripts with a matching name, then build and train a KAN over the data. The results are stored in the `*.log` files and are eventually checked in to the repo alongside the tested code.
 
-Finally, the included dockerfile can be used to create a docker image with `fekan` and the necessary python dependencies to run the above scripts installed. This is mostly for benchmarking the models on shared-compute resources (e.g AWS Batch or your friend's supercomputer), not intended for any "production" use cases. The image is not currently available on any repositories. To build it, run 
-```
-docker build -t fekan-benchmark https://github.com/lprekon/fekan.git -f benches/dockerfile
-```
-
-Example benchmark invocation:
-```
-docker run fekan-benchmark test_ellipj_accruacy.sh
-```
+The docker image just sets up an environment with rust and python in which the accuracy check scripts can be run
