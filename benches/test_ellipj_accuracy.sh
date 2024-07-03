@@ -11,11 +11,13 @@ git clone https://github.com/lprekon/fekan.git
 cd fekan
 cargo install fekan --path . --features "serialization"
 
+cd benches
+
 LOG_FILE="ellipj_regression_accuracy.log"
 DATA_FILE=$(mktemp)+".json"
 trap "rm -f $DATA_FILE" EXIT
 
-if [-n $S3_BUCKET]; then
+if [ -n $S3_BUCKET]; then
     echo "S3 target detected. Checking connection..."
     aws s3 ls s3://$S3_BUCKET
     if [$? -ne 0]; then
