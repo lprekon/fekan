@@ -7,7 +7,7 @@
 
 set -e # exit on error
 
-git clone git@github.com:lprekon/fekan.git
+git clone https://github.com/lprekon/fekan.git
 cd fekan
 cargo install fekan --path . --features "serialization"
 
