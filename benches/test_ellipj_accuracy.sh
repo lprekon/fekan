@@ -15,7 +15,7 @@ cd benches
 
 LOG_FILE="ellipj_regression_accuracy.log"
 touch $LOG_FILE
-DATA_FILE=$(mktemp)+".json"
+DATA_FILE=$(mktemp)".json"
 trap "rm -f $DATA_FILE" EXIT
 
 if [ -n $S3_BUCKET ]; then
