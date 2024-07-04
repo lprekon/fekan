@@ -8,6 +8,7 @@ cargo install fekan --path . --features "serialization"
 cd benches
 
 LOG_FILE = "feynman_regression_accuracy.log"
+touch $LOG_FILE
 DATA_FILE = $(mktemp)+".json"
 trap "rm -f $DATA_FILE" EXIT
 
