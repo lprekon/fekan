@@ -44,7 +44,7 @@ fekan build regressor --data $DATA_FILE \
    --validate-each-epoch \
    --log-output \
    --no-save \
-   > $LOG_FILE
+   >> $LOG_FILE
 echo "regression complete"
 
 if [ -n $S3_BUCKET ]; then
