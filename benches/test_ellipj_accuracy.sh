@@ -18,7 +18,7 @@ touch $LOG_FILE
 DATA_FILE=$(mktemp)+".json"
 trap "rm -f $DATA_FILE" EXIT
 
-if [ -n $S3_BUCKET]; then
+if [ -n $S3_BUCKET ]; then
     echo "S3 target detected. Checking connection..."
     aws s3 ls s3://$S3_BUCKET
     if [$? -ne 0]; then
@@ -34,8 +34,8 @@ echo $(git rev-parse HEAD) > $LOG_FILE
 echo "ensuring python packages are installed"
 pip3 install -r requirements.txt
 
-echo "generating data"
-python3 generate_ellipj_data.py 1000000 > $DATA_FILE
+#echo "generating data"
+#python3 generate_ellipj_data.py 1000000 > $DATA_FILE
 
 #echo "running regression"
 #fekan build regressor --data $DATA_FILE \
@@ -47,7 +47,7 @@ python3 generate_ellipj_data.py 1000000 > $DATA_FILE
 #    > $LOG_FILE
 #echo "regression complete"
 
-if [ -n $S3_BUCKET]; then
+if [ -n $S3_BUCKET ]; then
     echo "uploading log file to s3"
     aws s3 cp $LOG_FILE s3://$S3_BUCKET
 fi
