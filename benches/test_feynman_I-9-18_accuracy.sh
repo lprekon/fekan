@@ -11,7 +11,7 @@ LOG_FILE = "feynman_regression_accuracy.log"
 DATA_FILE = $(mktemp)+".json"
 trap "rm -f $DATA_FILE" EXIT
 
-if [ -n $S3_BUCKET]; then
+if [ -n $S3_BUCKET ]; then
     echo "S3 target detected. Checking connection..."
     aws s3 ls s3://$S3_BUCKET
     if [$? -ne 0]; then
@@ -40,7 +40,7 @@ fekan build regressor --data $DATA_FILE \
     > $LOG_FILE
 echo "regression complete"
 
-if [ -n $S3_BUCKET]; then
+if [ -n $S3_BUCKET ]; then
     echo "uploading log file to s3"
     aws s3 cp $LOG_FILE s3://$S3_BUCKET
 fi
