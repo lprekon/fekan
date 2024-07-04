@@ -276,7 +276,7 @@ pub fn validate_model<T: TrainingObserver>(
     let mut validation_loss = 0.0;
 
     for sample in validation_data {
-        let output = model.forward(sample.features().clone()).unwrap();
+        let output = model.infer(sample.features().clone()).unwrap();
         let loss = match model.model_type() {
             ModelType::Classification => {
                 let (loss, _) = calculate_nll_loss_and_gradient(&output, sample.label as usize);

@@ -153,7 +153,9 @@ impl Kan {
 
     /// passes the input to the [`crate::kan_layer::KanLayer::forward`] method of the first layer,
     /// then calls the `forward` method of each subsequent layer with the output of the previous layer,
-    /// returning the output of the final layer
+    /// returning the output of the final layer.
+    ///
+    /// For inference or validation, use [`Kan::infer`] instead, as it's more efficient
     ///
     /// # Errors
     /// returns a [KanError] if any layer returns an error.
@@ -184,6 +186,28 @@ impl Kan {
         let mut preacts = input;
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             let result = layer.forward(&preacts);
+            if let Err(e) = result {
+                return Err(KanError {
+                    source: e,
+                    index: idx,
+                });
+            }
+            let output = result.unwrap();
+            preacts = output;
+        }
+        Ok(preacts)
+    }
+
+    /// as [Kan::forward], but does not accumulate any internal state
+    ///
+    /// This method should be used during inference or validation, when the model is not being trained
+    ///
+    /// # Errors
+    /// returns a [KanError] if any layer returns an error.
+    pub fn infer(&self, input: Vec<f32>) -> Result<Vec<f32>, KanError> {
+        let mut preacts = input;
+        for (idx, layer) in self.layers.iter().enumerate() {
+            let result = layer.infer(&preacts);
             if let Err(e) = result {
                 return Err(KanError {
                     source: e,

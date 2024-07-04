@@ -154,6 +154,33 @@ impl KanLayer {
         Ok(activations)
     }
 
+    /// as [KanLayer::forward], but does not accumulate any internal state
+    ///
+    /// This method should be used during inference or validation, when the model is not being trained
+    ///
+    /// # Errors
+    /// Returns an [`LayerError`] if the length of `preactivation` is not equal to the input_dimension this layer, or if the activations contain NaNs.
+
+    pub fn infer(&self, preactivation: &[f32]) -> Result<Vec<f32>, LayerError> {
+        if preactivation.len() != self.input_dimension {
+            return Err(LayerError::MissizedPreactsError {
+                actual: preactivation.len(),
+                expected: self.input_dimension,
+            });
+        }
+
+        let mut activations: Vec<f32> = vec![0.0; self.output_dimension];
+        for (idx, spline) in self.splines.iter().enumerate() {
+            let act = spline.infer(preactivation[idx % self.input_dimension]);
+            activations[(idx / self.input_dimension) as usize] += act;
+        }
+
+        if activations.iter().any(|x| x.is_nan()) {
+            return Err(LayerError::NaNsError);
+        }
+        Ok(activations)
+    }
+
     /// Using samples memoized by [`KanLayer::forward`], update the knot vectors for each incoming edge in this layer.
     ///
     /// When `knot_adaptivity` is 0, the new knot vectors will be uniformly distributed over the range spanned by the samples;

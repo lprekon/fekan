@@ -68,6 +68,16 @@ impl Spline {
             .sum()
     }
 
+    pub fn infer(&self, t: f32) -> f32 {
+        self.control_points
+            .iter()
+            .enumerate()
+            .map(|(idx, coef)| {
+                *coef * b(&mut FxHashMap::default(), idx, self.degree, &self.knots, t)
+            })
+            .sum()
+    }
+
     /// compute the gradients for each control point  on the spline and accumulate them internally.
     ///
     /// returns the gradient of the input used in the forward pass,to be accumulated by the caller and passed back to the pervious layer as its error
