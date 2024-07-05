@@ -61,20 +61,26 @@ impl Spline {
     /// accumulate the activations of the spline at each interval in the internal `activations` field
     pub fn forward(&mut self, t: f32) -> f32 {
         self.last_t = Some(t); // store the most recent input for use in the backward pass
-        self.control_points
-            .iter()
-            .enumerate()
-            .map(|(idx, coef)| *coef * b(&mut self.activations, idx, self.degree, &self.knots, t))
-            .sum()
+        let mut sum = 0.0;
+        for (idx, coef) in self.control_points.iter().enumerate() {
+            let basis_activation = basis_cached(
+                idx,
+                self.degree,
+                t,
+                &self.knots,
+                &mut self.activations,
+                self.degree,
+            );
+            sum += *coef * basis_activation;
+        }
+        sum
     }
 
     pub fn infer(&self, t: f32) -> f32 {
         self.control_points
             .iter()
             .enumerate()
-            .map(|(idx, coef)| {
-                *coef * b(&mut FxHashMap::default(), idx, self.degree, &self.knots, t)
-            })
+            .map(|(idx, coef)| *coef * basis_no_cache(idx, self.degree, t, &self.knots))
             .sum()
     }
 
@@ -108,8 +114,22 @@ impl Spline {
             // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
             let left = (k as f32 - 1.0) / (self.knots[i + k - 1] - self.knots[i]);
             let right = (k as f32 - 1.0) / (self.knots[i + k] - self.knots[i + 1]);
-            let left_recurse = b(&mut self.activations, i, k - 1, &self.knots, last_t);
-            let right_recurse = b(&mut self.activations, i + 1, k - 1, &self.knots, last_t);
+            let left_recurse = basis_cached(
+                i,
+                k - 1,
+                last_t,
+                &self.knots,
+                &mut self.activations,
+                self.degree,
+            );
+            let right_recurse = basis_cached(
+                i + 1,
+                k - 1,
+                last_t,
+                &self.knots,
+                &mut self.activations,
+                self.degree,
+            );
             // println!(
             //     "i: {} left: {}, right: {}, left_recurse: {}, right_recurse: {}",
             //     i, left, right, left_recurse, right_recurse
@@ -235,12 +255,44 @@ impl std::error::Error for SplineError {}
 ///
 /// Passing the cache into the function rather than having the caller cache the result allows caching the results of recursive calls, which is useful during backproopagation
 // since this function neither takes nor returns a Spline struct, it doesn't make sense to have it as a method on the struct, so I'm moving it outside the impl block
-fn b(
-    cache: &mut FxHashMap<(usize, usize, u32), f32>,
+// TODO fix caching to not cache past first recursion and to add a no-cache option
+// fn b(
+//     cache: &mut FxHashMap<(usize, usize, u32), f32>,
+//     i: usize,
+//     k: usize,
+//     knots: &Vec<f32>,
+//     t: f32,
+// ) -> f32 {
+//     if k == 0 {
+//         if knots[i] <= t && t < knots[i + 1] {
+//             return 1.0;
+//         } else {
+//             return 0.0;
+//         }
+//     } else {
+//         if let Some(cached_result) = cache.get(&(i, k, t.to_bits())) {
+//             return *cached_result;
+//         }
+//         let left = (t - knots[i]) / (knots[i + k] - knots[i]);
+//         let right = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
+//         let result = left * b(cache, i, k - 1, knots, t) + right * b(cache, i + 1, k - 1, knots, t);
+//         cache.insert((i, k, t.to_bits()), result);
+//         return result;
+//     }
+// }
+
+/// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
+/// checks the provided cache for a memoized result before computing it. If the result is not found, it is computed and stored in the cache before being returned.
+/// Only the initial call and the first recursion are cached. Any further recursions are not cached, and basis_no_cache is called instead.
+///
+/// These functions need to be outside the impl block because they need to borrow the cache mutably, which would conflict with the borrow of self used to iterate over the coefficients
+fn basis_cached(
     i: usize,
     k: usize,
-    knots: &Vec<f32>,
     t: f32,
+    knots: &[f32],
+    cache: &mut FxHashMap<(usize, usize, u32), f32>,
+    degree: usize,
 ) -> f32 {
     if k == 0 {
         if knots[i] <= t && t < knots[i + 1] {
@@ -248,16 +300,42 @@ fn b(
         } else {
             return 0.0;
         }
-    } else {
+    }
+    // only cache the resuts of the initial call and the first recursion
+    if k > degree - 2 {
         if let Some(cached_result) = cache.get(&(i, k, t.to_bits())) {
             return *cached_result;
         }
-        let left = (t - knots[i]) / (knots[i + k] - knots[i]);
-        let right = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
-        let result = left * b(cache, i, k - 1, knots, t) + right * b(cache, i + 1, k - 1, knots, t);
+        let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
+        let right_coefficient = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
+        let left_val = basis_cached(i, k - 1, t, knots, cache, degree);
+        let right_val = basis_cached(i + 1, k - 1, t, knots, cache, degree);
+        let result = left_coefficient * left_val + right_coefficient * right_val;
         cache.insert((i, k, t.to_bits()), result);
         return result;
     }
+    let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
+    let right_coefficient = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
+    let result = left_coefficient * basis_no_cache(i, k - 1, t, knots)
+        + right_coefficient * basis_no_cache(i + 1, k - 1, t, knots);
+    return result;
+}
+
+/// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
+/// These functions need to be outside the impl block because they need to borrow the cache mutably, which would conflict with the borrow of self used to iterate over the coefficients
+fn basis_no_cache(i: usize, k: usize, t: f32, knots: &[f32]) -> f32 {
+    if k == 0 {
+        if knots[i] <= t && t < knots[i + 1] {
+            return 1.0;
+        } else {
+            return 0.0;
+        }
+    }
+    let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
+    let right_coefficient = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
+    let result = left_coefficient * basis_no_cache(i, k - 1, t, knots)
+        + right_coefficient * basis_no_cache(i + 1, k - 1, t, knots);
+    return result;
 }
 
 /// generate a uniform distribution of `num_knots` values spanning the range from `min` to `max` inclusive
@@ -285,14 +363,21 @@ mod tests {
     }
 
     #[test]
-    fn test_b() {
+    fn test_basis_cached() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let expected_results = vec![0.0513, 0.5782, 0.3648, 0.0057];
         let k = 3;
         let t = 0.95;
         for i in 0..4 {
-            let result = b(&mut FxHashMap::default(), i, k, &knots, t);
-            let rounded_result = (result * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
+            let result_from_caching_function =
+                basis_cached(i, k, t, &knots, &mut FxHashMap::default(), k);
+            let result_from_non_caching_function = basis_no_cache(i, k, t, &knots);
+            assert_eq!(
+                result_from_caching_function, result_from_non_caching_function,
+                "idx {}, caching and non-caching functions should return the same result",
+                i
+            );
+            let rounded_result = (result_from_caching_function * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
             assert_eq!(rounded_result, expected_results[i], "i = {}", i);
         }
     }
@@ -304,9 +389,16 @@ mod tests {
         let k = 3;
         let t = 0.0;
         for i in 0..4 {
-            let result = b(&mut FxHashMap::default(), i, k, &knots, t);
-            let rounded_result = (result * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
-            assert_eq!(rounded_result, expected_results[i]);
+            let result_from_caching_function =
+                basis_cached(i, k, t, &knots, &mut FxHashMap::default(), k);
+            let result_from_non_caching_function = basis_no_cache(i, k, t, &knots);
+            assert_eq!(
+                result_from_caching_function, result_from_non_caching_function,
+                "idx {}, caching and non-caching functions should return the same result",
+                i
+            );
+            let rounded_result = (result_from_caching_function * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
+            assert_eq!(rounded_result, expected_results[i], "i = {}", i);
         }
     }
 
@@ -318,6 +410,11 @@ mod tests {
         let t = 0.95;
         //0.02535 + 0.5316 + 0.67664 - 0.0117 = 1.22189
         let result = spline.forward(t);
+        let infer_result = spline.infer(t);
+        assert_eq!(
+            result, infer_result,
+            "forward and infer should return the same result"
+        );
         let rounded_result = (result * 10000.0).round() / 10000.0;
         assert_eq!(rounded_result, 1.1946);
     }
@@ -334,9 +431,15 @@ mod tests {
         }
         let mut spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
         println!("{:#?}", spline1);
-        let activation = spline1.forward(0.0);
+        let t: f32 = 0.0;
+        let result = spline1.forward(t);
+        let infer_result = spline1.infer(t);
+        assert_eq!(
+            result, infer_result,
+            "forward and infer should return the same result"
+        );
         println!("{:#?}", spline1);
-        let rounded_activation = (activation * 10000.0).round() / 10000.0;
+        let rounded_activation = (result * 10000.0).round() / 10000.0;
         assert_eq!(rounded_activation, 1.0);
     }
 
@@ -398,6 +501,17 @@ mod tests {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
         let mut spline = Spline::new(3, control_points, knots).unwrap();
+        let error = -0.6;
+        let result = spline.backward(error);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn backward_after_infer() {
+        let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+        let control_points = vec![0.75, 1.0, 1.6, -1.0];
+        let mut spline = Spline::new(3, control_points, knots).unwrap();
+        let _ = spline.infer(0.95);
         let error = -0.6;
         let result = spline.backward(error);
         assert!(result.is_err());
