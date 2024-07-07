@@ -1,6 +1,9 @@
 use core::fmt;
+use lstsq::lstsq;
+use nalgebra::{Dyn, OMatrix, OVector};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
+use statrs::distribution::Uniform;
 use std::slice::Iter;
 
 /// margin to add to the beginning and end of the knot vector when updating it from samples
@@ -59,6 +62,11 @@ impl Spline {
     /// compute the point on the spline at the given parameter `t`
     ///
     /// accumulate the activations of the spline at each interval in the internal `activations` field
+    ///
+    /// ## Usage
+    /// Use this method when you plan to call [`backward`](#method.backward) on the spline.
+    ///
+    /// Use [`infer`](#method.infer) when you don't plan to call [`backward`](#method.backward)
     pub fn forward(&mut self, t: f32) -> f32 {
         self.last_t = Some(t); // store the most recent input for use in the backward pass
         let mut sum = 0.0;
@@ -76,6 +84,12 @@ impl Spline {
         sum
     }
 
+    /// as [`forward`](#method.forward), but does not accumulate the activations in the internal `activations` field
+    ///
+    /// ## Usage
+    /// Use this method when you don't plan to call [`backward`](#method.backward) on the spline.
+    ///
+    /// Use [`forward`](#method.forward) when you do plan to call [`backward`](#method.backward)
     pub fn infer(&self, t: f32) -> f32 {
         self.control_points
             .iter()
@@ -171,6 +185,13 @@ impl Spline {
     pub(super) fn update_knots_from_samples(&mut self, samples: &[f32], knot_adaptivity: f32) {
         self.activations.clear(); // clear the memoized activations. They're no longer valid, now that the knots are changing
 
+        // generate a set of random numbers to use as inputs to the spline
+        // let noise = rand::distributions::Uniform::new(0.0, 0.01);
+        // we're going to use the samples as our "noise" inputs
+
+        // get our expected outputs based on the current knots and coefficients
+        let y_eval: Vec<f32> = samples.iter().map(|x| self.infer(*x)).collect();
+
         let knot_size = self.knots.len();
         let mut adaptive_knots: Vec<f32> = Vec::with_capacity(knot_size);
         let num_intervals = self.knots.len() - 1;
@@ -205,6 +226,9 @@ impl Spline {
 
         new_knots[0] -= KNOT_MARGIN;
         new_knots[knot_size - 1] += KNOT_MARGIN;
+        let new_coefficients = curve_to_coefficients(&samples, &y_eval, &new_knots, self.degree)
+            .expect("error updating coefficients");
+        self.control_points = new_coefficients;
         self.knots = new_knots;
     }
 
@@ -338,6 +362,31 @@ fn basis_no_cache(i: usize, k: usize, t: f32, knots: &[f32]) -> f32 {
     return result;
 }
 
+/// given a set of inputs (values of `t` passed to the spline), expected outputs (the values of the spline at those inputs given the 'old' knots and coefficients),
+/// compute the coefficients of the spline that result in the same input->output mapping given a 'new' set of knots
+// uses a static str for the error type because that's what lstsq returns
+fn curve_to_coefficients(
+    input_vals: &[f32],
+    expected_outputs: &[f32],
+    knots: &[f32],
+    degree: usize,
+) -> Result<Vec<f32>, &'static str> {
+    let num_coefficients = knots.len() - degree - 1;
+
+    // create a matrix of the basis functions evaluated at each input
+    // each row is a different input, and each column is a different basis function on that input
+    let regressors: OMatrix<f32, Dyn, Dyn> =
+        OMatrix::<f32, Dyn, Dyn>::from_fn(input_vals.len(), num_coefficients, |n, i| {
+            basis_no_cache(i, degree, input_vals[n], knots)
+        });
+    let spline_outputs: OVector<f32, Dyn> = OVector::<f32, Dyn>::from_row_slice(expected_outputs);
+    let epsilon = 1e-8;
+    let new_coefficients = lstsq(&regressors, &spline_outputs, epsilon)?
+        .solution
+        .as_slice()
+        .to_vec();
+    return Ok(new_coefficients);
+}
 
 /// generate `num` values evenly spaced between `min` and `max` inclusive
 pub(crate) fn linspace(min: f32, max: f32, num: usize) -> Vec<f32> {
@@ -353,6 +402,8 @@ pub(crate) fn linspace(min: f32, max: f32, num: usize) -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
+    use statrs::assert_almost_eq;
+
     use super::*;
 
     #[test]
@@ -533,8 +584,8 @@ mod tests {
         }
         samples.sort_by(|a, b| a.partial_cmp(b).unwrap()); // this is annoying, but f32 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp // this is annoying, but f32 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp)
         println!("{:?}", samples);
-        spline.update_knots_from_samples(samples.as_slice(), 1.0);
-        let mut expected_knots = vec![-3.0, -1.74, -0.48, 0.78, 2.04, 3.0, 3.0, 3.0];
+        spline.update_knots_from_samples(samples.as_slice(), 0.50); // should never call with knot_adaptivity ~ 1.0
+        let mut expected_knots = vec![-3.0, -1.9414, -0.8829, 0.1757, 1.2343, 2.1429, 2.5714, 3.0];
         expected_knots[0] -= KNOT_MARGIN;
         expected_knots[7] += KNOT_MARGIN;
         let rounded_knots: Vec<f32> = spline
@@ -543,6 +594,60 @@ mod tests {
             .map(|k| (k * 10000.0).round() / 10000.0)
             .collect();
         assert_eq!(rounded_knots, expected_knots);
+    }
+
+    #[test]
+    // this test might not fully test what I mean to test, but I'm going to leave it here for now
+    fn test_curve_to_coefficients() {
+        // generate spline with known coefficients and knots
+        // run random inputs through the spline to get expected outputs
+        // create new set of knots
+        // use curve_to_coefficients to get new coefficients with new knots
+        // create new spline with new coefficients and knots
+        // run the same inputs through the new spline and compare to expected outputs
+        let knots = linspace(0., 2., 8);
+        let control_points = linspace(1., 4., 4);
+        let spline = Spline::new(3, control_points.clone(), knots.clone()).unwrap();
+        let inputs = linspace(-0.5, 2.5, 100);
+        let expected_outputs: Vec<f32> = inputs.iter().map(|x| spline.infer(*x)).collect();
+
+        let new_knots = linspace(-1.0, 3.0, 8);
+        let new_control_points =
+            curve_to_coefficients(&inputs, &expected_outputs, &new_knots, 3).unwrap();
+
+        assert_ne!(control_points, new_control_points);
+
+        let new_spline = Spline::new(3, new_control_points, new_knots).unwrap();
+        let new_outputs: Vec<f32> = inputs.iter().map(|x| new_spline.infer(*x)).collect();
+        let rmse = expected_outputs
+            .iter()
+            .zip(new_outputs.iter())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f32>()
+            / expected_outputs.len() as f32;
+        assert_almost_eq!(rmse as f64, 0., 1e-1);
+    }
+
+    #[test]
+    fn test_update_knots_before_and_after() {
+        // create a spline with some knots and coefficients
+        // run some inputs through the spline to get expected outputs
+        // update the spline knots
+        // run the same inputs through the spline and compare to expected outputs
+        let knots = linspace(0., 2., 8);
+        let control_points = linspace(1., 4., 4);
+        let mut spline = Spline::new(3, control_points.clone(), knots.clone()).unwrap();
+        let inputs = linspace(-0.5, 2.5, 100);
+        let expected_outputs: Vec<f32> = inputs.iter().map(|x| spline.infer(*x)).collect();
+        spline.update_knots_from_samples(&inputs, 0.1);
+        let new_outputs: Vec<f32> = inputs.iter().map(|x| spline.infer(*x)).collect();
+        let rmse = expected_outputs
+            .iter()
+            .zip(new_outputs.iter())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f32>()
+            / expected_outputs.len() as f32;
+        assert_almost_eq!(rmse as f64, 0., 1e-1);
     }
 
     #[test]

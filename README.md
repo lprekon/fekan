@@ -124,7 +124,7 @@ Load and use a trained classification model
 `fekan` is fully functional, but there are a number of improvements to make
 - Parity with [Liu et. al](https://arxiv.org/abs/2404.19756)
     - [ ] grid extension
-    - [ ] Adjust coefficients on grid update to match previous function
+    - [X] Adjust coefficients on grid update to match previous function
     - [ ] pruning un-needed nodes
     - [ ] smybolification
     - [ ] visualization
