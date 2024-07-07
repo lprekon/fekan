@@ -4,7 +4,7 @@ mod spline;
 use rand::distributions::Distribution;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use spline::{generate_uniform_knots, Spline};
+use spline::{linspace, Spline};
 use statrs::distribution::Normal; // apparently the statrs distributions use the rand Distribution trait
 
 use std::{
@@ -79,12 +79,8 @@ impl KanLayer {
                 let coefficients: Vec<f32> = (0..options.coef_size)
                     .map(|_| normal_dist.sample(&mut randomness) as f32)
                     .collect();
-                Spline::new(
-                    options.degree,
-                    coefficients,
-                    generate_uniform_knots(-1.0, 1.0, num_knots),
-                )
-                .expect("spline creation error")
+                Spline::new(options.degree, coefficients, linspace(-1.0, 1.0, num_knots))
+                    .expect("spline creation error")
             })
             .collect();
 

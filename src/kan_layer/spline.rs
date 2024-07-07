@@ -182,7 +182,7 @@ impl Spline {
 
         let span_min = samples[0];
         let span_max = samples[samples.len() - 1];
-        let uniform_knots = generate_uniform_knots(span_min, span_max, self.knots.len());
+        let uniform_knots = linspace(span_min, span_max, self.knots.len());
 
         let mut new_knots: Vec<f32> = adaptive_knots
             .iter()
@@ -338,10 +338,11 @@ fn basis_no_cache(i: usize, k: usize, t: f32, knots: &[f32]) -> f32 {
     return result;
 }
 
-/// generate a uniform distribution of `num_knots` values spanning the range from `min` to `max` inclusive
-pub(crate) fn generate_uniform_knots(min: f32, max: f32, num_knots: usize) -> Vec<f32> {
-    let mut knots = Vec::with_capacity(num_knots);
-    let num_intervals = num_knots - 1;
+
+/// generate `num` values evenly spaced between `min` and `max` inclusive
+pub(crate) fn linspace(min: f32, max: f32, num: usize) -> Vec<f32> {
+    let mut knots = Vec::with_capacity(num);
+    let num_intervals = num - 1;
     let step_size = (max - min) / (num_intervals) as f32;
     for i in 0..num_intervals {
         knots.push(min + i as f32 * step_size);
