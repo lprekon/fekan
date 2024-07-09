@@ -1,13 +1,18 @@
 #!/bin/bash
 set -e # exit on error
 
+if [ -z $BRANCH ]; then
+    BRANCH="master"
+fi
+
 git clone https://github.com/lprekon/fekan.git
 cd fekan
+echo "checking out branch $BRANCH"
 cargo install fekan --path . --features "serialization"
 
 cd benches
 
-LOG_FILE="feynman_regression_accuracy.log"
+LOG_FILE="feynman_regression_accuracy_$BRANCH.log"
 touch $LOG_FILE
 DATA_FILE=$(mktemp)".json"
 trap "rm -f $DATA_FILE" EXIT
