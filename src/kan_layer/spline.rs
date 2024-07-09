@@ -1,4 +1,5 @@
 use core::fmt;
+use nalgebra::{Dyn, OMatrix, U1};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::slice::Iter;
@@ -338,7 +339,6 @@ fn basis_no_cache(i: usize, k: usize, t: f32, knots: &[f32]) -> f32 {
     return result;
 }
 
-
 /// generate `num` values evenly spaced between `min` and `max` inclusive
 pub(crate) fn linspace(min: f32, max: f32, num: usize) -> Vec<f32> {
     let mut knots = Vec::with_capacity(num);
@@ -351,8 +351,82 @@ pub(crate) fn linspace(min: f32, max: f32, num: usize) -> Vec<f32> {
     knots
 }
 
+/// Find a set of control points that will map `samples` to `target_outputs` for a spline with the given `degree` and `knots`
+///
+/// Uses the least squares method provided by [`lstsq`](https://crates.io/crates/lstsq) and [`nalgebra`](https://crates.io/crates/nalgebra) crates
+// The ability of lstsq to match the curve seems to scale inversly with the number of knots.
+// Therefore, this function should probbaly be called less frequently for splines with more knots, so that the splines have more time to adapt their new control points
+fn curve2coef(
+    samples: &[f32],
+    target_outputs: &[f32],
+    knots: &[f32],
+    degree: usize,
+) -> Result<Vec<f32>, Curve2coefError> {
+    if samples.len() != target_outputs.len() {
+        return Err(Curve2coefError::MismatchedLengthsError {
+            samples: samples.len(),
+            target_outputs: target_outputs.len(),
+        });
+    }
+    let num_coefficients = knots.len() - degree - 1;
+    /* regressor_matrix = [
+       [B_0(t_0), B_1(t_0), ..., B_{num_coefficients-1}(t_0)],
+       [B_0(t_1), B_1(t_1), ..., B_{num_coefficients-1}(t_1)],
+       ...
+       [B_0(t_n), B_1(t_n), ..., B_{num_coefficients-1}(t_n)]
+       ]
+    */
+    let regressor_matrix: OMatrix<f32, Dyn, Dyn> =
+        OMatrix::<f32, Dyn, Dyn>::from_fn(samples.len(), num_coefficients, |j, i| {
+            basis_no_cache(i, degree, samples[j], knots)
+        });
+    /*  target_matrix = [
+            target_outputs_0,
+            target_outputs_1,
+            ...,
+            target_outputs_n
+        ]
+    */
+    let target_matrix = OMatrix::<f32, Dyn, U1>::from_column_slice(target_outputs);
+
+    let epsilon = 1e-6;
+    let results = lstsq::lstsq(&regressor_matrix, &target_matrix, epsilon)
+        .map_err(|e| Curve2coefError::LeastSquaresError(e))?;
+    assert_eq!(results.solution.nrows(), num_coefficients);
+    let coefficients: Vec<f32> = results.solution.iter().map(|v| *v).collect();
+    Ok(coefficients)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Curve2coefError {
+    MismatchedLengthsError {
+        samples: usize,
+        target_outputs: usize,
+    },
+    LeastSquaresError(&'static str),
+}
+
+impl fmt::Display for Curve2coefError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Curve2coefError::MismatchedLengthsError {
+                samples,
+                target_outputs,
+            } => write!(
+                f,
+                "samples and target_outputs have different lengths: {} and {}",
+                samples, target_outputs
+            ),
+            Curve2coefError::LeastSquaresError(e) => write!(f, "least squares error: {}", e),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use rand::distributions::Distribution;
+    use statrs::{assert_almost_eq, distribution::Uniform};
+
     use super::*;
 
     #[test]
@@ -543,6 +617,77 @@ mod tests {
             .map(|k| (k * 10000.0).round() / 10000.0)
             .collect();
         assert_eq!(rounded_knots, expected_knots);
+    }
+
+    #[test]
+    fn test_curve2coefficients_sliding_range() {
+        // create a spline with arbitrary knots and control points
+        // create random noise - roughly over the same range as the knots - to serve as our inputs
+        // calculate the expected outputs of the first spline on the inputs
+        // create a second set of knots different from the first set
+        // using the inputs, expected outputs, and new knots, calculate the control points of a new spline
+        // create a new spline using the new knots and the calculated control points
+        // test that the new spline has the same outputs as the first spline on the inputs, within some tolerance
+        let samples_to_test = 20;
+        let knots = linspace(-1., 1., 5); // it appears that the error is proportional to the number of knots
+        let degree = 3;
+        let control_points = linspace(-2., 5., knots.len() - degree - 1); // arbitrary
+        let original_spline = Spline::new(degree, control_points.clone(), knots.clone()).unwrap();
+        let mut rng = rand::thread_rng();
+        let dist = Uniform::new(-1.1, 0.9).unwrap();
+        let inputs: Vec<f32> = (0..samples_to_test)
+            .map(|_| dist.sample(&mut rng) as f32)
+            .collect();
+        let expected_outputs: Vec<f32> = inputs.iter().map(|i| original_spline.infer(*i)).collect();
+
+        let new_knots = linspace(-1.1, 0.9, 8);
+        let new_control_points =
+            curve2coef(&inputs, &expected_outputs, &new_knots, degree).unwrap();
+        let new_spline = Spline::new(degree, new_control_points, new_knots).unwrap();
+        let test_outputs: Vec<f32> = inputs.iter().map(|i| new_spline.infer(*i)).collect();
+        println!("    {: <15}{}", "expected", "actual");
+        for (idx, (expected, test)) in expected_outputs.iter().zip(test_outputs.iter()).enumerate()
+        {
+            println!("{idx: <4}{expected: <+15.8}{test:+.8}");
+            assert_almost_eq!((expected - test).powi(2) as f64, 0., 1e-1);
+        }
+    }
+
+    #[test]
+    fn test_curve2cofficients_enhancing_range() {
+        // create a spline with arbitrary knots and control points
+        // create random noise - roughly over the same range as the knots - to serve as our inputs
+        // calculate the expected outputs of the first spline on the inputs
+        // create a second set of knots over the same range as the first set, but with more knots
+        // using the inputs, expected outputs, and new knots, calculate the control points of a new spline
+        // create a new spline using the new knots and the calculated control points
+        // test that the new spline has the same outputs as the first spline on the inputs, within some tolerance
+
+        let samples_to_test = 20;
+        let starting_knots = 10;
+        let knots = linspace(-1., 1., starting_knots); // it appears that the error is proportional to the number of knots
+        let degree = 3;
+        let control_points = linspace(-2., 5., knots.len() - degree - 1); // arbitrary
+        let original_spline = Spline::new(degree, control_points.clone(), knots.clone()).unwrap();
+        let mut rng = rand::thread_rng();
+        let dist = Uniform::new(-1.1, 0.9).unwrap();
+        let inputs: Vec<f32> = (0..samples_to_test)
+            .map(|_| dist.sample(&mut rng) as f32)
+            .collect();
+        let expected_outputs: Vec<f32> = inputs.iter().map(|i| original_spline.infer(*i)).collect();
+
+        let new_knots = linspace(-1., 1., starting_knots * 2);
+        let new_control_points =
+            curve2coef(&inputs, &expected_outputs, &new_knots, degree).unwrap();
+        assert_ne!(new_control_points, control_points);
+        let new_spline = Spline::new(degree, new_control_points, new_knots).unwrap();
+        let test_outputs: Vec<f32> = inputs.iter().map(|i| new_spline.infer(*i)).collect();
+        println!("    {: <15}{}", "expected", "actual");
+        for (idx, (expected, test)) in expected_outputs.iter().zip(test_outputs.iter()).enumerate()
+        {
+            println!("{idx: <4}{expected: <+15.8}{test:+.8}");
+            assert_almost_eq!((expected - test).powi(2) as f64, 0., 1e-3);
+        }
     }
 
     #[test]
