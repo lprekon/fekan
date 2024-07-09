@@ -2,7 +2,7 @@ use fekan::{
     kan::{Kan, KanOptions, ModelType},
     train_model,
     training_observer::TrainingObserver,
-    validate_model, EmptyObserver, Sample, TrainingOptions,
+    validate_model, Sample, TrainingOptions,
 };
 use rand::{thread_rng, Rng};
 
@@ -39,16 +39,13 @@ mod classification {
             model_type: ModelType::Classification,
             class_map: None,
         });
-        let untrained_validation_loss = validate_model(
-            &validation_data,
-            &mut untrained_model,
-            &EmptyObserver::new(),
-        );
+        let untrained_validation_loss =
+            validate_model(&validation_data, &mut untrained_model, &TestObserver::new());
         let mut trained_model = train_model(
             untrained_model,
             &training_data,
             fekan::EachEpoch::ValidateModel(&validation_data),
-            &EmptyObserver::new(),
+            &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 50,
                 ..TrainingOptions::default()
@@ -56,7 +53,7 @@ mod classification {
         )
         .unwrap();
         let validation_loss =
-            validate_model(&validation_data, &mut trained_model, &EmptyObserver::new());
+            validate_model(&validation_data, &mut trained_model, &TestObserver::new());
         assert!(
         validation_loss < untrained_validation_loss,
         "Validation loss did not decrease after training. Before training: {}, After training: {}",
@@ -92,16 +89,13 @@ mod regression {
             model_type: ModelType::Regression,
             class_map: None,
         });
-        let untrained_validation_loss = validate_model(
-            &validation_data,
-            &mut untrained_model,
-            &EmptyObserver::new(),
-        );
+        let untrained_validation_loss =
+            validate_model(&validation_data, &mut untrained_model, &TestObserver::new());
         let training_result = train_model(
             untrained_model,
             &training_data,
             fekan::EachEpoch::ValidateModel(&validation_data), // this way if the test fails, we can see the validation loss over time
-            &EmptyObserver::new(),
+            &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 50,
                 ..TrainingOptions::default()
@@ -112,7 +106,7 @@ mod regression {
         }
         let mut trained_model = training_result.unwrap();
         let validation_loss =
-            validate_model(&validation_data, &mut trained_model, &EmptyObserver::new());
+            validate_model(&validation_data, &mut trained_model, &TestObserver::new());
         assert!(
         validation_loss < untrained_validation_loss,
         "Validation loss did not decrease after training. Before training: {}, After training: {}",
@@ -149,16 +143,13 @@ mod regression {
             class_map: None,
         });
 
-        let untrained_validation_loss = validate_model(
-            &validation_data,
-            &mut untrained_model,
-            &EmptyObserver::new(),
-        );
+        let untrained_validation_loss =
+            validate_model(&validation_data, &mut untrained_model, &TestObserver::new());
         let mut trained_model = train_model(
             untrained_model,
             &training_data,
             fekan::EachEpoch::ValidateModel(&validation_data),
-            &EmptyObserver::new(),
+            &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 50,
                 ..TrainingOptions::default()
@@ -166,7 +157,7 @@ mod regression {
         )
         .unwrap();
         let validation_loss =
-            validate_model(&validation_data, &mut trained_model, &EmptyObserver::new());
+            validate_model(&validation_data, &mut trained_model, &TestObserver::new());
         assert!(
         validation_loss < untrained_validation_loss,
         "Validation loss did not decrease after training. Before training: {}, After training: {}",
@@ -174,25 +165,24 @@ mod regression {
         validation_loss
     );
     }
+}
+struct TestObserver {}
 
-    struct TestObserver {}
+impl TestObserver {
+    pub fn new() -> Self {
+        TestObserver {}
+    }
+}
 
-    impl TestObserver {
-        pub fn new() -> Self {
-            TestObserver {}
-        }
+impl TrainingObserver for TestObserver {
+    fn on_epoch_end(&self, epoch: usize, epoch_loss: f32, validation_loss: f32) {
+        println!(
+            "Epoch: {}, Epoch Loss: {}, Validation Loss: {}",
+            epoch, epoch_loss, validation_loss
+        );
     }
 
-    impl TrainingObserver for TestObserver {
-        fn on_epoch_end(&self, epoch: usize, epoch_loss: f32, validation_loss: f32) {
-            println!(
-                "Epoch: {}, Epoch Loss: {}, Validation Loss: {}",
-                epoch, epoch_loss, validation_loss
-            );
-        }
-
-        fn on_sample_end(&self) {
-            // do nothing
-        }
+    fn on_sample_end(&self) {
+        // do nothing
     }
 }
