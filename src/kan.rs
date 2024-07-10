@@ -1,4 +1,6 @@
-use crate::kan_layer::{KanLayer, KanLayerOptions, LayerError};
+use crate::kan_layer::{
+    BackwardLayerError, ForwardLayerError, KanLayer, KanLayerOptions, UpdateLayerKnotsError,
+};
 use serde::{Deserialize, Serialize};
 
 /// A full neural network model, consisting of multiple Kolmogorov-Arnold layers
@@ -188,7 +190,7 @@ impl Kan {
             let result = layer.forward(&preacts);
             if let Err(e) = result {
                 return Err(KanError {
-                    source: e,
+                    source: ErrorOperation::Forward(e),
                     index: idx,
                 });
             }
@@ -210,7 +212,7 @@ impl Kan {
             let result = layer.infer(&preacts);
             if let Err(e) = result {
                 return Err(KanError {
-                    source: e,
+                    source: ErrorOperation::Forward(e),
                     index: idx,
                 });
             }
@@ -257,7 +259,7 @@ impl Kan {
                 }
                 Err(e) => {
                     return Err(KanError {
-                        source: e,
+                        source: ErrorOperation::Backward(e),
                         index: idx,
                     });
                 }
@@ -309,7 +311,7 @@ impl Kan {
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             if let Err(e) = layer.update_knots_from_samples(knot_adaptivity) {
                 return Err(KanError {
-                    source: e,
+                    source: ErrorOperation::UpdateKnots(e),
                     index: idx,
                 });
             }
@@ -328,10 +330,16 @@ impl Kan {
 
     /// Set the size of the knot vector used in all splines in this model
     /// see [KanLayer::set_knot_length](crate::kan_layer::KanLayer::set_knot_length) for more information
-    pub fn set_knot_length(&mut self, knot_length: usize) {
-        for layer in self.layers.iter_mut() {
-            layer.set_knot_length(knot_length);
+    pub fn set_knot_length(&mut self, knot_length: usize) -> Result<(), KanError> {
+        for (idx, layer) in self.layers.iter_mut().enumerate() {
+            if let Err(e) = layer.set_knot_length(knot_length) {
+                return Err(KanError {
+                    source: ErrorOperation::UpdateKnots(e),
+                    index: idx,
+                });
         }
+        }
+        Ok(())
     }
 
     /// Get the size of the knot vector used in all splines in this model
@@ -355,9 +363,37 @@ impl PartialEq for Kan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KanError {
     /// the error that occurred
-    source: LayerError,
+    source: ErrorOperation,
     /// the index of the layer that encountered the error
     index: usize,
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ErrorOperation {
+    Forward(ForwardLayerError),
+    Backward(BackwardLayerError),
+    UpdateKnots(UpdateLayerKnotsError),
+}
+
+impl std::fmt::Display for ErrorOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ErrorOperation::Forward(e) => e.fmt(f),
+            ErrorOperation::Backward(e) => e.fmt(f),
+            ErrorOperation::UpdateKnots(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for ErrorOperation {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ErrorOperation::Forward(e) => Some(e),
+            ErrorOperation::Backward(e) => Some(e),
+            ErrorOperation::UpdateKnots(e) => Some(e),
+        }
+    }
 }
 
 impl std::fmt::Display for KanError {

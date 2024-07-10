@@ -4,7 +4,7 @@ mod spline;
 use rand::distributions::Distribution;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use spline::{linspace, Spline};
+use spline::{linspace, BackwardSplineError, Spline, UpdateSplineKnotsError};
 use statrs::distribution::Normal; // apparently the statrs distributions use the rand Distribution trait
 
 use std::{
@@ -125,10 +125,10 @@ impl KanLayer {
     /// assert_eq!(acts.len(), output_dimension);
     /// # Ok::<(), fekan::kan_layer::LayerError>(())
     /// ```
-    pub fn forward(&mut self, preactivation: &[f32]) -> Result<Vec<f32>, LayerError> {
+    pub fn forward(&mut self, preactivation: &[f32]) -> Result<Vec<f32>, ForwardLayerError> {
         //  check the length here since it's the same check for the entire layer, even though the "node" is technically the part that cares
         if preactivation.len() != self.input_dimension {
-            return Err(LayerError::MissizedPreactsError {
+            return Err(ForwardLayerError::MissizedPreactsError {
                 actual: preactivation.len(),
                 expected: self.input_dimension,
             });
@@ -141,12 +141,15 @@ impl KanLayer {
         let mut activations: Vec<f32> = vec![0.0; self.output_dimension];
         for (idx, spline) in self.splines.iter_mut().enumerate() {
             let act = spline.forward(preactivation[idx % self.input_dimension]); // the first `input_dimension` splines belong to the first "node", the second `input_dimension` splines belong to the second node, etc.
+            if act.is_nan() {
+                return Err(ForwardLayerError::NaNsError);
+            }
             activations[(idx / self.input_dimension) as usize] += act; // every `input_dimension` splines, we move to the next node
         }
 
-        if activations.iter().any(|x| x.is_nan()) {
-            return Err(LayerError::NaNsError);
-        }
+        // if activations.iter().any(|x| x.is_nan()) {
+        //     return Err(ForwardLayerError::NaNsError);
+        // }
         Ok(activations)
     }
 
@@ -157,9 +160,9 @@ impl KanLayer {
     /// # Errors
     /// Returns an [`LayerError`] if the length of `preactivation` is not equal to the input_dimension this layer, or if the activations contain NaNs.
 
-    pub fn infer(&self, preactivation: &[f32]) -> Result<Vec<f32>, LayerError> {
+    pub fn infer(&self, preactivation: &[f32]) -> Result<Vec<f32>, ForwardLayerError> {
         if preactivation.len() != self.input_dimension {
-            return Err(LayerError::MissizedPreactsError {
+            return Err(ForwardLayerError::MissizedPreactsError {
                 actual: preactivation.len(),
                 expected: self.input_dimension,
             });
@@ -172,7 +175,7 @@ impl KanLayer {
         }
 
         if activations.iter().any(|x| x.is_nan()) {
-            return Err(LayerError::NaNsError);
+            return Err(ForwardLayerError::NaNsError);
         }
         Ok(activations)
     }
@@ -208,9 +211,12 @@ impl KanLayer {
     /// assert!(new_acts.iter().all(|x| *x != 0.0)); // the knot range now covers the samples, so the activations should be non-zero
     /// # Ok::<(), fekan::kan_layer::LayerError>(())
     /// ```
-    pub fn update_knots_from_samples(&mut self, knot_adaptivity: f32) -> Result<(), LayerError> {
+    pub fn update_knots_from_samples(
+        &mut self,
+        knot_adaptivity: f32,
+    ) -> Result<(), UpdateLayerKnotsError> {
         if self.samples.is_empty() {
-            return Err(LayerError::NoSamplesError);
+            return Err(UpdateLayerKnotsError::NoSamplesError);
         }
 
         // lets construct a sorted vector of the samples for each incoming value
@@ -300,12 +306,15 @@ impl KanLayer {
     /// second_layer.zero_gradients();
     /// # Ok::<(), fekan::kan_layer::LayerError>(())
     /// ```
-    pub fn backward(&mut self, error: &[f32]) -> Result<Vec<f32>, LayerError> {
+    pub fn backward(&mut self, error: &[f32]) -> Result<Vec<f32>, BackwardLayerError> {
         if error.len() != self.output_dimension {
-            return Err(LayerError::MissizedGradientError {
+            return Err(BackwardLayerError::MissizedGradientError {
                 actual: error.len(),
                 expected: self.output_dimension,
             });
+        }
+        if error.iter().any(|f| f.is_nan()) {
+            return Err(BackwardLayerError::ReceivedNanError);
         }
 
         let mut input_error = vec![0.0; self.input_dimension];
@@ -345,10 +354,11 @@ impl KanLayer {
     /// ```
     /// # Panics
     /// Panics if the Singular Value Decomposition (SVD) used to calculate the control points fails. This should never happen, but if it does, it's a bug
-    pub fn set_knot_length(&mut self, knot_length: usize) {
+    pub fn set_knot_length(&mut self, knot_length: usize) -> Result<(), UpdateLayerKnotsError> {
         for spline in self.splines.iter_mut() {
-            spline.set_knot_length(knot_length);
+            spline.set_knot_length(knot_length)?;
         }
+        Ok(())
     }
 
     /// return the length of the knot vectors for each incoming edge in this layer
@@ -441,69 +451,118 @@ impl PartialEq for KanLayer {
             && self.output_dimension == other.output_dimension
     }
 }
+
 #[allow(missing_docs)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum LayerError {
+pub enum ForwardLayerError {
     /// the length of the preactivation vector passed to [`KanLayer::forward`] was not equal to the input dimension of the layer
     MissizedPreactsError { actual: usize, expected: usize },
     /// the call to [`KanLayer::forward`] resulted in NaNs in the function's output. This is usually caused by too many duplicate knots in the spline.
     /// Internal controls should prevent this situation from occuring, but this error check and type are left in for safety. If this error occurs,
     /// the only course of action is to reinitalize the layer and, as a precaution, increase the number of forward-passes between calls to [`KanLayer::update_knots_from_samples`]
     NaNsError,
-    /// the layer has no samples to update the knot vectors with. This error is usually caused by calling [`KanLayer::update_knots_from_samples`] before calling [`KanLayer::forward`]
-    NoSamplesError,
-    /// the length of the error vector passed to [`KanLayer::backward`] was not equal to the output dimension of the layer
-    MissizedGradientError { actual: usize, expected: usize },
-    /// [`KanLayer::backward`] was called before [`KanLayer::forward`]. The backward pass relies on internal state set by the forward pass, so the forward pass must be called first
-    BackwardBeforeForwardError,
 }
 
-impl std::fmt::Display for LayerError {
+impl std::fmt::Display for ForwardLayerError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            LayerError::MissizedPreactsError { actual, expected } => {
+            ForwardLayerError::MissizedPreactsError { actual, expected } => {
                 write!(
                     f,
                     "Bad preactivation length. Expected {}, got {}",
                     expected, actual
                 )
             }
-            LayerError::NaNsError => {
+            ForwardLayerError::NaNsError => {
                 write!(f, "NaNs in activations")
             }
-            LayerError::NoSamplesError => {
-                write!(f, "No samples to update knot vectors")
+        }
+    }
+}
+
+impl std::error::Error for ForwardLayerError {}
+
+#[allow(missing_docs)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum BackwardLayerError {
+    /// the length of the error vector passed to [`KanLayer::backward`] was not equal to the output dimension of the layer
+    MissizedGradientError {
+        actual: usize,
+        expected: usize,
+    },
+    /// [`KanLayer::backward`] was called before [`KanLayer::forward`]. The backward pass relies on internal state set by the forward pass, so the forward pass must be called first
+    BackwardBeforeForwardError,
+    ReceivedNanError,
+}
+
+impl From<BackwardSplineError> for BackwardLayerError {
+    fn from(e: BackwardSplineError) -> Self {
+        match e {
+            BackwardSplineError::BackwardBeforeForwardError => {
+                BackwardLayerError::BackwardBeforeForwardError
             }
-            LayerError::MissizedGradientError { actual, expected } => {
+            _ => panic!(
+                "KanLayer::backward received an unexpected error from a spline: {:?}",
+                e
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for BackwardLayerError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            BackwardLayerError::MissizedGradientError { actual, expected } => {
                 write!(
                     f,
                     "received error vector of length {} but required vector of length {}",
                     actual, expected
                 )
             }
-            LayerError::BackwardBeforeForwardError => {
+            BackwardLayerError::BackwardBeforeForwardError => {
                 write!(f, "backward called before forward")
             }
-        }
-    }
-}
-
-impl From<spline::SplineError> for LayerError {
-    fn from(value: spline::SplineError) -> Self {
-        match value {
-            spline::SplineError::BackwardBeforeForwardError => {
-                LayerError::BackwardBeforeForwardError
-            }
-            _ => {
-                panic!(
-                    "attempted to convert a non-BackwardBeforeForward SplineError to LayerError"
-                ); // panic because this should never happen
+            BackwardLayerError::ReceivedNanError => {
+                write!(f, "received NaNs in error vector")
             }
         }
     }
 }
 
-impl std::error::Error for LayerError {}
+impl std::error::Error for BackwardLayerError {}
+
+#[allow(missing_docs)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum UpdateLayerKnotsError {
+    /// the layer has no samples to update the knot vectors with. This error is usually caused by calling [`KanLayer::update_knots_from_samples`] or [`KanLayer::set_knot_length`] - which both consume and clear the internal cache - before calling [`KanLayer::forward`] - which populates the internal cache
+    NoSamplesError,
+}
+
+impl From<UpdateSplineKnotsError> for UpdateLayerKnotsError {
+    fn from(e: UpdateSplineKnotsError) -> Self {
+        match e {
+            UpdateSplineKnotsError::ActivationsEmptyError => {
+                UpdateLayerKnotsError::NoSamplesError
+            }
+            _ => panic!(
+                "KanLayer::update_knots_from_samples received an unexpected error from a spline: {:?}",
+                e
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for UpdateLayerKnotsError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            UpdateLayerKnotsError::NoSamplesError => {
+                write!(f, "called an internal-cache-consuming function without first populating the cache with calls to `forward()`")
+            }
+        }
+    }
+}
+
+impl std::error::Error for UpdateLayerKnotsError {}
 
 #[cfg(test)]
 mod test {
@@ -571,7 +630,7 @@ mod test {
         assert!(acts.is_err());
         assert_eq!(
             acts.err().unwrap(),
-            LayerError::MissizedPreactsError {
+            ForwardLayerError::MissizedPreactsError {
                 actual: 3,
                 expected: 2
             }
@@ -631,14 +690,38 @@ mod test {
     }
 
     #[test]
-    fn test_error_send() {
+    fn test_forward_error_send() {
         fn assert_send<T: Send>() {}
-        assert_send::<LayerError>();
+        assert_send::<ForwardLayerError>();
     }
 
     #[test]
-    fn test_error_sync() {
+    fn test_forward_error_sync() {
         fn assert_sync<T: Sync>() {}
-        assert_sync::<LayerError>();
+        assert_sync::<ForwardLayerError>();
+    }
+
+    #[test]
+    fn test_backward_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<BackwardLayerError>();
+    }
+
+    #[test]
+    fn test_backward_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<BackwardLayerError>();
+    }
+
+    #[test]
+    fn test_knot_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<UpdateLayerKnotsError>();
+    }
+
+    #[test]
+    fn test_knot_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<UpdateLayerKnotsError>();
     }
 }

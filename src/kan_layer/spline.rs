@@ -38,11 +38,11 @@ impl Spline {
         degree: usize,
         control_points: Vec<f32>,
         knots: Vec<f32>,
-    ) -> Result<Self, SplineError> {
+    ) -> Result<Self, CreateSplineError> {
         let size = control_points.len();
         let min_required_knots = size + degree + 1;
         if knots.len() < min_required_knots {
-            return Err(SplineError::TooFewKnotsError {
+            return Err(CreateSplineError::TooFewKnotsError {
                 expected: min_required_knots,
                 actual: knots.len(),
             });
@@ -96,9 +96,12 @@ impl Spline {
     ///
     /// # Errors
     /// returns an error if `backward` is called before `forward`
-    pub(super) fn backward(&mut self, error: f32) -> Result<f32, SplineError> {
+    pub(super) fn backward(&mut self, error: f32) -> Result<f32, BackwardSplineError> {
         if let None = self.last_t {
-            return Err(SplineError::BackwardBeforeForwardError);
+            return Err(BackwardSplineError::BackwardBeforeForwardError);
+        }
+        if error.is_nan() {
+            return Err(BackwardSplineError::ReceivedNanError);
         }
         let last_t = self.last_t.unwrap();
 
@@ -112,7 +115,11 @@ impl Spline {
             // dC_i = B_ik(t) * adjusted_error
             let basis_activation = self.activations.get(&(i, k, last_t.to_bits())).unwrap();
             // gradients aka drt_output_wrt_control_point * error
-            self.gradients[i] += adjusted_error * basis_activation;
+            let gradient_update = adjusted_error * basis_activation;
+            if gradient_update.is_nan() {
+                return Err(BackwardSplineError::GradientIsNanError);
+            }
+            self.gradients[i] += gradient_update;
 
             // calculate the derivative of the spline output with respect to the input (as opposed to wrt the control points)
             // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
@@ -214,7 +221,12 @@ impl Spline {
 
     /// set the length of the knot vector to `knot_length` by linearly interpolating between the first and last knot.
     /// calculates a new set of control points using least squares regression over any and all cached activations. Clears the cache after use.
-    pub(super) fn set_knot_length(&mut self, knot_length: usize) {
+    /// # Errors
+    /// returns an error if the activations cache is empty. The most likely cause of this is calling `set_knot_length`  after initializing the spline or calling `update_knots_from_samples`, without first calling `forward` at least once.
+    pub(super) fn set_knot_length(
+        &mut self,
+        knot_length: usize,
+    ) -> Result<(), UpdateSplineKnotsError> {
         let new_knots = linspace(self.knots[0], self.knots[self.knots.len() - 1], knot_length);
         // build regressor matrix
         let mut something = self
@@ -223,6 +235,9 @@ impl Spline {
             .filter(|((_i, k, _t), _b)| *k == self.degree)
             .map(|((i, _k, t), b)| (*i, f32::from_bits(*t), *b))
             .collect::<Vec<_>>();
+        if something.is_empty() {
+            return Err(UpdateSplineKnotsError::ActivationsEmptyError);
+        }
         // put the activations in the correct order. We want each row of the final matrix to be all the basis functions for a single value of t, but since the nalgebra constructors take
         // inputs in column major order, we build the transpose of the matrix we actually want, and sort by 't' first, then 'i'.
         something.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
@@ -262,9 +277,14 @@ impl Spline {
         let xty = regressor_matrix.tr_mul(&target_matrix);
         let svd = SVD::new(xtx, true, true);
         let solution = svd.solve(&xty, 1e-6).expect("SVD solve failed");
+        // update parameters
         self.control_points = solution.iter().map(|v| *v).collect();
+        if self.control_points.iter().any(|c| c.is_nan()) {
+            return Err(UpdateSplineKnotsError::NansInControlPointsError);
+        }
         self.knots = new_knots;
         self.activations.clear();
+        Ok(())
     }
 
     /// return the number of control points and knots in the spline
@@ -289,25 +309,67 @@ impl PartialEq for Spline {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum SplineError {
+pub(crate) enum CreateSplineError {
     TooFewKnotsError { expected: usize, actual: usize },
-    BackwardBeforeForwardError,
 }
 
-impl fmt::Display for SplineError {
+impl fmt::Display for CreateSplineError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            SplineError::BackwardBeforeForwardError => write!(f, "backward called before forward"),
-            SplineError::TooFewKnotsError { expected, actual } => write!(
+            CreateSplineError::TooFewKnotsError { expected, actual } => {
+                write!(
                 f,
                 "knot vector has length {}, but expected length at least {}",
                 actual, expected
-            ),
+                )
+            }
         }
     }
 }
 
-impl std::error::Error for SplineError {}
+impl std::error::Error for CreateSplineError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum BackwardSplineError {
+    BackwardBeforeForwardError,
+    ReceivedNanError,
+    GradientIsNanError,
+}
+
+impl fmt::Display for BackwardSplineError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BackwardSplineError::BackwardBeforeForwardError => {
+                write!(f, "backward called before forward")
+            }
+            BackwardSplineError::ReceivedNanError => write!(f, "received `NaN` as error value"),
+            BackwardSplineError::GradientIsNanError => write!(f, "calculated gradient is NaN"),
+        }
+    }
+}
+
+impl std::error::Error for BackwardSplineError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum UpdateSplineKnotsError {
+    ActivationsEmptyError,
+    NansInControlPointsError,
+}
+
+impl fmt::Display for UpdateSplineKnotsError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            UpdateSplineKnotsError::ActivationsEmptyError => {
+                write!(f, "activations cache is empty")
+            }
+            UpdateSplineKnotsError::NansInControlPointsError => {
+                write!(f, "control points contain NaN values")
+            }
+        }
+    }
+}
+
+impl std::error::Error for UpdateSplineKnotsError {}
 
 /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
 /// checks the provided cache for a memoized result before computing it. If the result is not found, it is computed and stored in the cache before being returned.
@@ -622,7 +684,7 @@ mod tests {
             .collect::<Vec<f32>>(); // use forward because we want the activations to be memoized
 
         let new_knot_length = knot_length * 2 - 1; // increase knot length
-        spline.set_knot_length(new_knot_length);
+        spline.set_knot_length(new_knot_length).unwrap();
 
         let test_outputs = inputs
             .iter()
@@ -656,7 +718,7 @@ mod tests {
             .collect::<Vec<f32>>(); // use forward because we want the activations to be memoized
 
         let new_knot_length = knot_length - 2; // decrease knot length
-        spline.set_knot_length(new_knot_length);
+        spline.set_knot_length(new_knot_length).unwrap();
 
         let test_outputs = inputs
             .iter()
@@ -686,14 +748,38 @@ mod tests {
     }
 
     #[test]
-    fn test_error_send() {
+    fn test_create_error_send() {
         fn assert_send<T: Send>() {}
-        assert_send::<SplineError>();
+        assert_send::<CreateSplineError>();
     }
 
     #[test]
-    fn test_error_sync() {
+    fn test_create_error_sync() {
         fn assert_sync<T: Sync>() {}
-        assert_sync::<SplineError>();
+        assert_sync::<CreateSplineError>();
+    }
+
+    #[test]
+    fn test_backward_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<BackwardSplineError>();
+    }
+
+    #[test]
+    fn test_backward_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<BackwardSplineError>();
+    }
+
+    #[test]
+    fn test_knot_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<UpdateSplineKnotsError>();
+    }
+
+    #[test]
+    fn test_knot_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<UpdateSplineKnotsError>();
     }
 }
