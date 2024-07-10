@@ -197,6 +197,15 @@ pub fn train_model<T: TrainingObserver>(
     options: TrainingOptions,
 ) -> Result<Kan, TrainingError> {
     // train the model
+    // calculate the ideal knot length, using the conjectur from Liu et al. 2024 that the ideal total knot count ~= ||training_data||
+    let num_splines = model
+        .layers
+        .iter()
+        .fold(0, |acc, layer| acc + layer.total_edges());
+    let ideal_knot_length = (training_data.len() as f32 / num_splines as f32) as usize;
+    let (knot_extension_interval, knot_extension_targets) =
+        build_knot_extension_plan(model.knot_length(), ideal_knot_length, options.num_epochs);
+
     for epoch in 0..options.num_epochs {
         let mut epoch_loss = 0.0;
         let mut samples_seen = 0;
@@ -248,6 +257,10 @@ pub fn train_model<T: TrainingObserver>(
             }
 
             training_observer.on_sample_end();
+        }
+        if epoch % knot_extension_interval == 0 {
+            let new_knot_target = knot_extension_targets[epoch / knot_extension_interval];
+            model.set_knot_length(new_knot_target);
         }
         epoch_loss /= training_data.len() as f32;
 
@@ -355,6 +368,40 @@ fn calculate_mse_and_gradient(actual: f32, expected: f32) -> (f32, f32) {
     (loss, gradient)
 }
 
+/// Builds a plan for extending the knots of the model over the course of training.
+fn build_knot_extension_plan(
+    starting_knot_length: usize,
+    ideal_knot_length: usize,
+    num_epochs: usize,
+) -> (usize, Vec<usize>) {
+    // Determine how many epochs to wait before extending the knots, and to what length the knots should be extended each time, assuming:
+    // 1. we update no more frequently than once per epoch (this is negotiable, but it's what I'm going with for now)
+    // 2. update by at least 1 knot each time
+    // 3. we want to reach the ideal knot length before the last epoch
+    // 4. we want to extend the knots by the same amount each time
+    let knot_gap = ideal_knot_length - starting_knot_length;
+    if knot_gap <= 0 {
+        (num_epochs, vec![])
+    } else {
+        let knots_added_per_epoch = knot_gap as f32 / (num_epochs - 1) as f32; // -1 to make sure we have max knots by the last epoch
+        if knots_added_per_epoch >= 1.0 {
+            // we need to add at least one knot per epoch
+            let knot_targets: Vec<usize> = (1..num_epochs)
+                .map(|epoch_count| {
+                    starting_knot_length
+                        + (epoch_count as f32 * knots_added_per_epoch).round() as usize
+                })
+                .collect();
+            (1, knot_targets)
+        } else {
+            // we need to wait several epochs before adding a knot
+            let epochs_between_extensions = num_epochs / knot_gap;
+            let knot_targets: Vec<usize> = (starting_knot_length + 1..=ideal_knot_length).collect();
+            (epochs_between_extensions, knot_targets)
+        }
+    }
+}
+
 /// Indicates whether the model should be tested against the validation data set after each epoch
 pub enum EachEpoch<'a> {
     /// Test the model against the validation data set after each epoch, and report the validation loss through the [TrainingObserver]
@@ -416,6 +463,8 @@ impl std::error::Error for TrainingError {
 mod test {
     // ! test the loss functions
 
+    use core::num;
+
     use super::*;
 
     #[test]
@@ -441,6 +490,34 @@ mod test {
             .collect::<Vec<f32>>();
         assert_eq!(rounded_loss, expected_loss);
         assert_eq!(rounded_gradients, expected_gradients);
+    }
+
+    #[test]
+    fn test_build_knot_extension_plan_update_by_1() {
+        let starting_knots = 10;
+        let ideal_knots = 50;
+        let num_epochs = 100;
+        let (interval, targets) =
+            build_knot_extension_plan(starting_knots, ideal_knots, num_epochs);
+        assert_eq!(interval, 2, "knot update interval");
+        assert_eq!(
+            targets.len(),
+            ideal_knots - starting_knots,
+            "knot update count"
+        );
+        assert_eq!(targets.last().unwrap(), &ideal_knots, "last knot count");
+    }
+
+    #[test]
+    fn test_build_knot_extension_plan_update_every_epoch() {
+        let starting_knots = 10;
+        let ideal_knots = 100;
+        let num_epochs = 9;
+        let (interval, targets) =
+            build_knot_extension_plan(starting_knots, ideal_knots, num_epochs);
+        assert_eq!(interval, 1, "knot update interval");
+        assert_eq!(targets.len(), num_epochs - 1, "knot update count");
+        assert_eq!(targets.last().unwrap(), &ideal_knots, "last knot count");
     }
 
     #[test]

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Kan {
     /// the layers of the model
-    layers: Vec<KanLayer>,
+    pub layers: Vec<KanLayer>,
     /// the type of model. This field is metadata and does not affect the operation of the model, though it is used elsewhere in the crate. See [`fekan::train_model()`](crate::train_model) for an example
     model_type: ModelType, // determined how the output is interpreted, and what the loss function ought to be
     /// A map of class names to node indices. Only used if the model is a classification model or multi-output regression model.
