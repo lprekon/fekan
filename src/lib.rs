@@ -65,6 +65,8 @@ pub mod kan_layer;
 /// Provides a trait for observing the training process during [`crate::train_model`].
 pub mod training_observer;
 
+use std::cmp::min;
+
 use kan::{Kan, KanError, ModelType};
 use training_observer::TrainingObserver;
 
@@ -106,6 +108,9 @@ pub struct TrainingOptions {
     pub knot_adaptivity: f32,
     /// the learning rate of the model
     pub learning_rate: f32,
+    /// If set, the maximum length to which the knot vectors can be extended during training.
+    /// Liu et al. 2024 conjecture that the ideal model has a total knot count ~= ||training_data||, but that could become obscene for small models and large datasets
+    pub max_knot_length: Option<usize>,
 }
 
 impl Default for TrainingOptions {
@@ -115,6 +120,7 @@ impl Default for TrainingOptions {
             knot_update_interval: 100,
             knot_adaptivity: 0.1,
             learning_rate: 0.001,
+            max_knot_length: Some(1000),
         }
     }
 }
@@ -203,8 +209,14 @@ pub fn train_model<T: TrainingObserver>(
         .iter()
         .fold(0, |acc, layer| acc + layer.total_edges());
     let ideal_knot_length = (training_data.len() as f32 / num_splines as f32) as usize;
-    let (knot_extension_interval, knot_extension_targets) =
-        build_knot_extension_plan(model.knot_length(), ideal_knot_length, options.num_epochs);
+    let (knot_extension_interval, knot_extension_targets) = build_knot_extension_plan(
+        model.knot_length(),
+        min(
+            ideal_knot_length,
+            options.max_knot_length.unwrap_or(usize::MAX),
+        ),
+        options.num_epochs,
+    );
 
     for epoch in 0..options.num_epochs {
         let mut epoch_loss = 0.0;
@@ -462,8 +474,6 @@ impl std::error::Error for TrainingError {
 #[cfg(test)]
 mod test {
     // ! test the loss functions
-
-    use core::num;
 
     use super::*;
 

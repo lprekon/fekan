@@ -129,6 +129,10 @@ struct TrainArgs {
     /// the learning rate used to update the model weights
     learning_rate: f32,
 
+    /// the maximum length to which knot vectors can be extended during training. If not set, the knot vectors will gradually be extended so that the total number of knots ~= the number of training samples
+    #[arg(long, global = true)]
+    max_knot_length: Option<usize>,
+
     #[arg(long, global = true)]
     /// if set, the model will be run against the validation data after each epoch, and the loss will be reported to the observer
     validate_each_epoch: bool,
@@ -228,6 +232,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     knot_update_interval: train_args.knot_update_interval,
                     knot_adaptivity: train_args.knot_adaptivity,
                     learning_rate: train_args.learning_rate,
+                    max_knot_length: train_args.max_knot_length,
                 };
 
                 // run the training loop on the model
@@ -303,6 +308,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     knot_update_interval: train_args.knot_update_interval,
                     knot_adaptivity: train_args.knot_adaptivity,
                     learning_rate: train_args.learning_rate,
+                    max_knot_length: train_args.max_knot_length,
                 };
 
                 // run the training loop on the model
@@ -346,6 +352,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         knot_update_interval: train_args.knot_update_interval,
                         knot_adaptivity: train_args.knot_adaptivity,
                         learning_rate: train_args.learning_rate,
+                        max_knot_length: train_args.max_knot_length,
                     };
 
                     let load_result = match loaded_model.model_type() {
