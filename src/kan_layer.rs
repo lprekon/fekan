@@ -320,6 +320,53 @@ impl KanLayer {
         Ok(input_error)
     }
 
+    /// set the length of the knot vectors for each incoming edge in this layer
+    ///
+    /// Generally used multiple times throughout training to increase the number of knots in the spline to increase fidelity of the curve
+    /// * The number of control points is set to `knot_length - degree - 1`, and the control points are calculated using lstsq over cached samples to approximate the previous curve
+    /// * This method clears the internal cache of samples used by [`KanLayer::update_knots_from_samples`], so the two should not be called in the same training step
+    /// * This method clears the internal cache of samples used by [`KanLayer::forward`], so frequent calls to this method will slow down training
+    /// # Examples
+    /// ```
+    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
+    /// let layer_options = KanLayerOptions {
+    ///     input_dimension: 2,
+    ///     output_dimension: 4,
+    ///     degree: 5,
+    ///     coef_size: 6
+    /// };
+    /// let mut my_layer = KanLayer::new(&layer_options);
+    /// assert_eq!(my_layer.parameter_count(), 2 * 4 * (6 + (5 + 6 + 1)));
+    /// /* train the layer a bit to start shaping the splines */
+    /// let new_knot_length = my_layer.knot_length() * 2;
+    /// my_layer.set_knot_length(new_knot_length);
+    /// assert_eq!(my_layer.parameter_count(), 2 * 4 * (new_knot_length + (new_knot_length - 5 - 1)));
+    /// /* continue training layer, now with increased fidelity in the spline */
+    /// ```
+    /// # Panics
+    /// Panics if the Singular Value Decomposition (SVD) used to calculate the control points fails. This should never happen, but if it does, it's a bug
+    pub fn set_knot_length(&mut self, knot_length: usize) {
+        for spline in self.splines.iter_mut() {
+            spline.set_knot_length(knot_length);
+        }
+    }
+
+    /// return the length of the knot vectors for each incoming edge in this layer
+    /// # Examples
+    /// ```
+    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
+    /// let layer_options = KanLayerOptions {
+    ///     input_dimension: 2,
+    ///     output_dimension: 4,
+    ///     degree: 5,
+    ///     coef_size: 6
+    /// };
+    /// let mut my_layer = KanLayer::new(&layer_options);
+    /// assert_eq!(my_layer.knot_length(), 6 + 5 + 1);
+    pub fn knot_length(&self) -> usize {
+        self.splines[0].knots().len()
+    }
+
     /// update the control points for each incoming edge in this layer given the learning rate
     ///
     /// this function relies on internally stored gradients calculated during [`KanLayer::backward()`]

@@ -325,6 +325,22 @@ impl Kan {
             layer.clear_samples();
         }
     }
+
+    /// Set the size of the knot vector used in all splines in this model
+    /// see [KanLayer::set_knot_length](crate::kan_layer::KanLayer::set_knot_length) for more information
+    pub fn set_knot_length(&mut self, knot_length: usize) {
+        for layer in self.layers.iter_mut() {
+            layer.set_knot_length(knot_length);
+        }
+    }
+
+    /// Get the size of the knot vector used in all splines in this model
+    ///
+    /// ## Note
+    /// if different layers have different knot lengths, this method will return the knot length of the first layer
+    pub fn knot_length(&self) -> usize {
+        self.layers[0].knot_length()
+    }
 }
 
 impl PartialEq for Kan {
