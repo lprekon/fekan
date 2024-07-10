@@ -1,5 +1,6 @@
 use core::fmt;
-use nalgebra::{Dyn, OMatrix, U1};
+use lstsq::lstsq;
+use nalgebra::{DMatrix, DVector};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::slice::Iter;
@@ -21,7 +22,7 @@ pub(crate) struct Spline {
     #[serde(skip)]
     // only used during operation
     last_t: Option<f32>,
-    /// the activations of the spline at each interval, memoized from the most recent forward pass
+    /// the activations of the spline at each interval, stored from calls to [`forward()`](Spline::forward) and cleared on calls to [`update_knots_from_samples()`](Spline::update_knots_from_samples)
     #[serde(skip)] // only used during training
     activations: FxHashMap<(usize, usize, u32), f32>,
     /// accumulated gradients for each control point
@@ -77,6 +78,9 @@ impl Spline {
         sum
     }
 
+    /// comput the point on the spline at given parameter `t`
+    ///
+    /// Does not accumulate the activations of the spline at each interval in the internal `activations` field, or any other internal state
     pub fn infer(&self, t: f32) -> f32 {
         self.control_points
             .iter()
@@ -206,6 +210,55 @@ impl Spline {
 
         new_knots[0] -= KNOT_MARGIN;
         new_knots[knot_size - 1] += KNOT_MARGIN;
+        self.knots = new_knots;
+    }
+
+    /// set the length of the knot vector to `knot_length` by linearly interpolating between the first and last knot.
+    /// calculates a new set of control points using least squares regression over any and all cached activations. Clears the cache after use.
+    pub(super) fn set_knot_length(&mut self, knot_length: usize) {
+        let new_knots = linspace(self.knots[0], self.knots[self.knots.len() - 1], knot_length);
+        // build regressor matrix
+        let mut something = self
+            .activations
+            .iter()
+            .filter(|((_i, k, _t), _b)| *k == self.degree)
+            .map(|((i, _k, t), b)| (*i, f32::from_bits(*t), *b))
+            .collect::<Vec<_>>();
+        // put the activations in the correct order. We want each row of the final matrix to be all the basis functions for a single value of t, but since the nalgebra constructors take
+        // inputs in column major order, we build the transpose of the matrix we actually want, and sort by 't' first, then 'i'.
+        something.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        something.sort_by_key(|(i, _t, _b)| *i);
+        /* something = [
+            (0, t_0, B_0(t_0)), (0, t_1, B_0(t_1)), ..., (0, t_m, B_0(t_m)),
+            (1, t_0, B_1(t_0)), (1, t_1, B_1(t_1)), ..., (1, t_m, B_1(t_m)),
+            ...
+            (n, t_0, B_n(t_0)), (n, t_1, B_n(t_1)), ..., (n, t_m, B_n(t_m))
+        ]
+         */
+        let num_samples = something.len() / self.control_points.len();
+        let new_control_point_len = new_knots.len() - self.degree - 1;
+        let activation_matrix =
+            DMatrix::from_vec(num_samples, self.control_points.len(), something);
+        /* activation_matrix = [
+            [(0, t_0, B_0(t_0)), (1, t_0, B_1(t_0)), ..., (n, t_0, B_n(t_0))],
+            [(0, t_1, B_0(t_1)), (1, t_1, B_1(t_1)), ..., (n, t_1, B_n(t_1))],
+            ...
+            [(0, t_m, B_0(t_m)), (1, t_m, B_1(t_m)), ..., (n, t_m, B_n(t_m))]
+        ]
+         */
+        let regressor_matrix = DMatrix::from_fn(num_samples, new_control_point_len, |i, j| {
+            let this_t = activation_matrix.row(i)[0].1;
+            basis_no_cache(j, self.degree, this_t, &new_knots)
+        });
+        // build the target matrix by recombining the basis values in the activation matrix with the control points
+        let target_matrix = DVector::from_fn(num_samples, |row, _| {
+            let row = activation_matrix.row(row);
+            row.iter()
+                .fold(0.0, |sum, (i, _t, b)| sum + self.control_points[*i] * b)
+        });
+        // solve the least squares problem
+        let lstq_result = lstsq(&regressor_matrix, &target_matrix, 1e-6).unwrap();
+        self.control_points = lstq_result.solution.iter().map(|v| *v).collect();
         self.knots = new_knots;
     }
 
@@ -351,81 +404,10 @@ pub(crate) fn linspace(min: f32, max: f32, num: usize) -> Vec<f32> {
     knots
 }
 
-/// Find a set of control points that will map `samples` to `target_outputs` for a spline with the given `degree` and `knots`
-///
-/// Uses the least squares method provided by [`lstsq`](https://crates.io/crates/lstsq) and [`nalgebra`](https://crates.io/crates/nalgebra) crates
-// The ability of lstsq to match the curve seems to scale inversly with the number of knots.
-// Therefore, this function should probbaly be called less frequently for splines with more knots, so that the splines have more time to adapt their new control points
-fn curve2coef(
-    samples: &[f32],
-    target_outputs: &[f32],
-    knots: &[f32],
-    degree: usize,
-) -> Result<Vec<f32>, Curve2coefError> {
-    if samples.len() != target_outputs.len() {
-        return Err(Curve2coefError::MismatchedLengthsError {
-            samples: samples.len(),
-            target_outputs: target_outputs.len(),
-        });
-    }
-    let num_coefficients = knots.len() - degree - 1;
-    /* regressor_matrix = [
-       [B_0(t_0), B_1(t_0), ..., B_{num_coefficients-1}(t_0)],
-       [B_0(t_1), B_1(t_1), ..., B_{num_coefficients-1}(t_1)],
-       ...
-       [B_0(t_n), B_1(t_n), ..., B_{num_coefficients-1}(t_n)]
-       ]
-    */
-    let regressor_matrix: OMatrix<f32, Dyn, Dyn> =
-        OMatrix::<f32, Dyn, Dyn>::from_fn(samples.len(), num_coefficients, |j, i| {
-            basis_no_cache(i, degree, samples[j], knots)
-        });
-    /*  target_matrix = [
-            target_outputs_0,
-            target_outputs_1,
-            ...,
-            target_outputs_n
-        ]
-    */
-    let target_matrix = OMatrix::<f32, Dyn, U1>::from_column_slice(target_outputs);
-
-    let epsilon = 1e-6;
-    let results = lstsq::lstsq(&regressor_matrix, &target_matrix, epsilon)
-        .map_err(|e| Curve2coefError::LeastSquaresError(e))?;
-    assert_eq!(results.solution.nrows(), num_coefficients);
-    let coefficients: Vec<f32> = results.solution.iter().map(|v| *v).collect();
-    Ok(coefficients)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Curve2coefError {
-    MismatchedLengthsError {
-        samples: usize,
-        target_outputs: usize,
-    },
-    LeastSquaresError(&'static str),
-}
-
-impl fmt::Display for Curve2coefError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Curve2coefError::MismatchedLengthsError {
-                samples,
-                target_outputs,
-            } => write!(
-                f,
-                "samples and target_outputs have different lengths: {} and {}",
-                samples, target_outputs
-            ),
-            Curve2coefError::LeastSquaresError(e) => write!(f, "least squares error: {}", e),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use rand::distributions::Distribution;
-    use statrs::{assert_almost_eq, distribution::Uniform};
+
+    use statrs::assert_almost_eq;
 
     use super::*;
 
@@ -478,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn test_forward() {
+    fn test_forward_and_infer() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
         let mut spline = Spline::new(3, control_points, knots).unwrap();
@@ -495,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn test_forward_2() {
+    fn test_forward_and_infer_2() {
         let k = 3;
         let coef_size = 4;
         let knot_size = coef_size + k + 1;
@@ -620,74 +602,57 @@ mod tests {
     }
 
     #[test]
-    fn test_curve2coefficients_sliding_range() {
-        // create a spline with arbitrary knots and control points
-        // create random noise - roughly over the same range as the knots - to serve as our inputs
-        // calculate the expected outputs of the first spline on the inputs
-        // create a second set of knots different from the first set
-        // using the inputs, expected outputs, and new knots, calculate the control points of a new spline
-        // create a new spline using the new knots and the calculated control points
-        // test that the new spline has the same outputs as the first spline on the inputs, within some tolerance
-        let samples_to_test = 20;
-        let knots = linspace(-1., 1., 5); // it appears that the error is proportional to the number of knots
-        let degree = 3;
-        let control_points = linspace(-2., 5., knots.len() - degree - 1); // arbitrary
-        let original_spline = Spline::new(degree, control_points.clone(), knots.clone()).unwrap();
-        let mut rng = rand::thread_rng();
-        let dist = Uniform::new(-1.1, 0.9).unwrap();
-        let inputs: Vec<f32> = (0..samples_to_test)
-            .map(|_| dist.sample(&mut rng) as f32)
-            .collect();
-        let expected_outputs: Vec<f32> = inputs.iter().map(|i| original_spline.infer(*i)).collect();
+    fn test_set_knot_length_increasing() {
+        let k = 3;
+        let coef_size = 5;
+        let knot_length = coef_size + k + 1;
+        let knots = linspace(-1., 1., knot_length);
+        let mut spline = Spline::new(k, vec![1.0; coef_size], knots).unwrap();
 
-        let new_knots = linspace(-1.1, 0.9, 8);
-        let new_control_points =
-            curve2coef(&inputs, &expected_outputs, &new_knots, degree).unwrap();
-        let new_spline = Spline::new(degree, new_control_points, new_knots).unwrap();
-        let test_outputs: Vec<f32> = inputs.iter().map(|i| new_spline.infer(*i)).collect();
-        println!("    {: <15}{}", "expected", "actual");
-        for (idx, (expected, test)) in expected_outputs.iter().zip(test_outputs.iter()).enumerate()
-        {
-            println!("{idx: <4}{expected: <+15.8}{test:+.8}");
-            assert_almost_eq!((expected - test).powi(2) as f64, 0., 1e-1);
+        let sample_size = 10;
+        let inputs = linspace(-1., 1.0, sample_size);
+        let expected_outputs = inputs
+            .iter()
+            .map(|i| spline.forward(*i))
+            .collect::<Vec<f32>>(); // use forward because we want the activations to be memoized
+
+        let new_knot_length = knot_length * 2 - 1;
+        spline.set_knot_length(new_knot_length);
+        let new_coef_size = new_knot_length - k - 1;
+        let mut foil_spline = Spline::new(
+            k,
+            vec![1.0; new_coef_size],
+            linspace(-1.0, 1.0, new_knot_length),
+        )
+        .unwrap();
+        let foil_outputs = inputs
+            .iter()
+            .map(|i| foil_spline.forward(*i))
+            .collect::<Vec<f32>>();
+
+        let test_outputs = inputs
+            .iter()
+            .map(|i| spline.forward(*i))
+            .collect::<Vec<f32>>();
+
+        println!("{: ^15}{: ^15}{: ^15}", "expected", "actual", "foil");
+        for i in 0..sample_size {
+            println!(
+                "{: ^+15.4}{: ^+15.4}{: ^+15.4}",
+                expected_outputs[i], test_outputs[i], foil_outputs[i]
+            );
         }
-    }
 
-    #[test]
-    fn test_curve2cofficients_enhancing_range() {
-        // create a spline with arbitrary knots and control points
-        // create random noise - roughly over the same range as the knots - to serve as our inputs
-        // calculate the expected outputs of the first spline on the inputs
-        // create a second set of knots over the same range as the first set, but with more knots
-        // using the inputs, expected outputs, and new knots, calculate the control points of a new spline
-        // create a new spline using the new knots and the calculated control points
-        // test that the new spline has the same outputs as the first spline on the inputs, within some tolerance
+        println!("adjusted control points: {:?}", spline.control_points);
 
-        let samples_to_test = 20;
-        let starting_knots = 10;
-        let knots = linspace(-1., 1., starting_knots); // it appears that the error is proportional to the number of knots
-        let degree = 3;
-        let control_points = linspace(-2., 5., knots.len() - degree - 1); // arbitrary
-        let original_spline = Spline::new(degree, control_points.clone(), knots.clone()).unwrap();
-        let mut rng = rand::thread_rng();
-        let dist = Uniform::new(-1.1, 0.9).unwrap();
-        let inputs: Vec<f32> = (0..samples_to_test)
-            .map(|_| dist.sample(&mut rng) as f32)
-            .collect();
-        let expected_outputs: Vec<f32> = inputs.iter().map(|i| original_spline.infer(*i)).collect();
-
-        let new_knots = linspace(-1., 1., starting_knots * 2);
-        let new_control_points =
-            curve2coef(&inputs, &expected_outputs, &new_knots, degree).unwrap();
-        assert_ne!(new_control_points, control_points);
-        let new_spline = Spline::new(degree, new_control_points, new_knots).unwrap();
-        let test_outputs: Vec<f32> = inputs.iter().map(|i| new_spline.infer(*i)).collect();
-        println!("    {: <15}{}", "expected", "actual");
-        for (idx, (expected, test)) in expected_outputs.iter().zip(test_outputs.iter()).enumerate()
-        {
-            println!("{idx: <4}{expected: <+15.8}{test:+.8}");
-            assert_almost_eq!((expected - test).powi(2) as f64, 0., 1e-3);
-        }
+        let rmse = (expected_outputs
+            .iter()
+            .zip(test_outputs.iter())
+            .map(|(e, t)| (e - t).powi(2))
+            .sum::<f32>()
+            / sample_size as f32)
+            .sqrt();
+        assert_almost_eq!(rmse as f64, 0., 1e-3);
     }
 
     #[test]
