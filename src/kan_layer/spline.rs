@@ -1,6 +1,5 @@
 use core::fmt;
-use lstsq::lstsq;
-use nalgebra::{DMatrix, DVector};
+use nalgebra::{DMatrix, DVector, SVD};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::slice::Iter;
@@ -250,6 +249,7 @@ impl Spline {
             let this_t = activation_matrix.row(i)[0].1;
             basis_no_cache(j, self.degree, this_t, &new_knots)
         });
+
         // build the target matrix by recombining the basis values in the activation matrix with the control points
         let target_matrix = DVector::from_fn(num_samples, |row, _| {
             let row = activation_matrix.row(row);
@@ -257,9 +257,14 @@ impl Spline {
                 .fold(0.0, |sum, (i, _t, b)| sum + self.control_points[*i] * b)
         });
         // solve the least squares problem
-        let lstq_result = lstsq(&regressor_matrix, &target_matrix, 1e-6).unwrap();
-        self.control_points = lstq_result.solution.iter().map(|v| *v).collect();
+        let xtx = regressor_matrix.tr_mul(&regressor_matrix);
+        assert_eq!(xtx.nrows(), xtx.ncols());
+        let xty = regressor_matrix.tr_mul(&target_matrix);
+        let svd = SVD::new(xtx, true, true);
+        let solution = svd.solve(&xty, 1e-6).expect("SVD solve failed");
+        self.control_points = solution.iter().map(|v| *v).collect();
         self.knots = new_knots;
+        self.activations.clear();
     }
 
     /// return the number of control points and knots in the spline
@@ -609,41 +614,20 @@ mod tests {
         let knots = linspace(-1., 1., knot_length);
         let mut spline = Spline::new(k, vec![1.0; coef_size], knots).unwrap();
 
-        let sample_size = 10;
+        let sample_size = 100;
         let inputs = linspace(-1., 1.0, sample_size);
         let expected_outputs = inputs
             .iter()
             .map(|i| spline.forward(*i))
             .collect::<Vec<f32>>(); // use forward because we want the activations to be memoized
 
-        let new_knot_length = knot_length * 2 - 1;
+        let new_knot_length = knot_length * 2 - 1; // increase knot length
         spline.set_knot_length(new_knot_length);
-        let new_coef_size = new_knot_length - k - 1;
-        let mut foil_spline = Spline::new(
-            k,
-            vec![1.0; new_coef_size],
-            linspace(-1.0, 1.0, new_knot_length),
-        )
-        .unwrap();
-        let foil_outputs = inputs
-            .iter()
-            .map(|i| foil_spline.forward(*i))
-            .collect::<Vec<f32>>();
 
         let test_outputs = inputs
             .iter()
             .map(|i| spline.forward(*i))
             .collect::<Vec<f32>>();
-
-        println!("{: ^15}{: ^15}{: ^15}", "expected", "actual", "foil");
-        for i in 0..sample_size {
-            println!(
-                "{: ^+15.4}{: ^+15.4}{: ^+15.4}",
-                expected_outputs[i], test_outputs[i], foil_outputs[i]
-            );
-        }
-
-        println!("adjusted control points: {:?}", spline.control_points);
 
         let rmse = (expected_outputs
             .iter()
@@ -653,6 +637,40 @@ mod tests {
             / sample_size as f32)
             .sqrt();
         assert_almost_eq!(rmse as f64, 0., 1e-3);
+    }
+
+    #[test]
+    fn test_set_knot_length_decreasing() {
+        // I don't know when one would do this, but let's make sure it works anyway
+        let k = 3;
+        let coef_size = 10;
+        let knot_length = coef_size + k + 1;
+        let knots = linspace(-1., 1., knot_length);
+        let mut spline = Spline::new(k, vec![1.0; coef_size], knots).unwrap();
+
+        let sample_size = 100;
+        let inputs = linspace(-1., 1.0, sample_size);
+        let expected_outputs = inputs
+            .iter()
+            .map(|i| spline.forward(*i))
+            .collect::<Vec<f32>>(); // use forward because we want the activations to be memoized
+
+        let new_knot_length = knot_length - 2; // decrease knot length
+        spline.set_knot_length(new_knot_length);
+
+        let test_outputs = inputs
+            .iter()
+            .map(|i| spline.forward(*i))
+            .collect::<Vec<f32>>();
+
+        let rmse = (expected_outputs
+            .iter()
+            .zip(test_outputs.iter())
+            .map(|(e, t)| (e - t).powi(2))
+            .sum::<f32>()
+            / sample_size as f32)
+            .sqrt();
+        assert_almost_eq!(rmse as f64, 0., 1e-1); // it doesn't work as well as the other way around, but it still works
     }
 
     #[test]

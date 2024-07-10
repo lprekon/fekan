@@ -360,7 +360,6 @@ dependencies = [
  "ciborium",
  "clap",
  "indicatif",
- "lstsq",
  "nalgebra 0.33.0",
  "rand",
  "rustc-hash",
@@ -549,15 +548,6 @@ name = "log"
 version = "0.4.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
-
-[[package]]
-name = "lstsq"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0767b5d1bcb5c7a99647520963706322bdabd5e5ba18530fd9c9c02ab04029e"
-dependencies = [
- "nalgebra 0.33.0",
-]
 
 [[package]]
 name = "matrixmultiply"
