@@ -95,7 +95,9 @@ impl Spline {
     /// uses the memoized activations from the most recent forward pass
     ///
     /// # Errors
-    /// returns an error if `backward` is called before `forward`
+    /// * Returns [`BackwardSplineError::BackwardBeforeForwardError`] if called before a forward pass
+    /// * Returns [`BackwardSplineError::ReceivedNanError`] if the passed `error` value is `NaN`
+    /// * Returns [`BackwardSplineError::GradientIsNanError`] if any of the calculated gradients are `NaN`
     pub(super) fn backward(&mut self, error: f32) -> Result<f32, BackwardSplineError> {
         if let None = self.last_t {
             return Err(BackwardSplineError::BackwardBeforeForwardError);
@@ -116,9 +118,6 @@ impl Spline {
             let basis_activation = self.activations.get(&(i, k, last_t.to_bits())).unwrap();
             // gradients aka drt_output_wrt_control_point * error
             let gradient_update = adjusted_error * basis_activation;
-            if gradient_update.is_nan() {
-                return Err(BackwardSplineError::GradientIsNanError);
-            }
             self.gradients[i] += gradient_update;
 
             // calculate the derivative of the spline output with respect to the input (as opposed to wrt the control points)
@@ -222,7 +221,8 @@ impl Spline {
     /// set the length of the knot vector to `knot_length` by linearly interpolating between the first and last knot.
     /// calculates a new set of control points using least squares regression over any and all cached activations. Clears the cache after use.
     /// # Errors
-    /// returns an error if the activations cache is empty. The most likely cause of this is calling `set_knot_length`  after initializing the spline or calling `update_knots_from_samples`, without first calling `forward` at least once.
+    /// * returns [`UpdateSplineKnotsError::ActivationsEmptyError`] if the activations cache is empty. The most likely cause of this is calling `set_knot_length`  after initializing the spline or calling `update_knots_from_samples`, without first calling `forward` at least once.
+    /// * returns [`UpdateSplineKnotsError::NansInControlPointsError`] if the calculated control points contain `NaN` values
     pub(super) fn set_knot_length(
         &mut self,
         knot_length: usize,
@@ -283,6 +283,7 @@ impl Spline {
             return Err(UpdateSplineKnotsError::NansInControlPointsError);
         }
         self.knots = new_knots;
+        // reset state
         self.activations.clear();
         self.gradients = vec![0.0; self.control_points.len()];
         Ok(())
@@ -319,9 +320,9 @@ impl fmt::Display for CreateSplineError {
         match self {
             CreateSplineError::TooFewKnotsError { expected, actual } => {
                 write!(
-                f,
-                "knot vector has length {}, but expected length at least {}",
-                actual, expected
+                    f,
+                    "knot vector has length {}, but expected length at least {}",
+                    actual, expected
                 )
             }
         }
@@ -699,6 +700,10 @@ mod tests {
             .sum::<f32>()
             / sample_size as f32)
             .sqrt();
+        assert_ne!(
+            spline.control_points,
+            vec![0.0; spline.control_points.len()]
+        );
         assert_almost_eq!(rmse as f64, 0., 1e-3);
     }
 

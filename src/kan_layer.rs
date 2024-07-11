@@ -313,9 +313,9 @@ impl KanLayer {
                 expected: self.output_dimension,
             });
         }
-        if error.iter().any(|f| f.is_nan()) {
-            return Err(BackwardLayerError::ReceivedNanError);
-        }
+        // if error.iter().any(|f| f.is_nan()) {
+        //     return Err(BackwardLayerError::ReceivedNanError);
+        // }
 
         let mut input_error = vec![0.0; self.input_dimension];
         for i in 0..self.splines.len() {
@@ -501,6 +501,7 @@ impl From<BackwardSplineError> for BackwardLayerError {
             BackwardSplineError::BackwardBeforeForwardError => {
                 BackwardLayerError::BackwardBeforeForwardError
             }
+            BackwardSplineError::ReceivedNanError => BackwardLayerError::ReceivedNanError,
             _ => panic!(
                 "KanLayer::backward received an unexpected error from a spline: {:?}",
                 e
