@@ -10,6 +10,8 @@ build regressor \
 --data $DATA_FILE \
 --no-save \
 --hidden-layer-sizes "2,2" \
--e 25 \
+-e 5 \
+--max-knot-length 1000 \
 --learning-rate 0.01 \
 --validate-each-epoch 
+cargo clean
