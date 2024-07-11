@@ -135,6 +135,9 @@ impl Default for TrainingOptions {
 ///
 /// Returns the trained model if no errors are thrown.
 ///
+/// # Notes
+/// * if training_data.len() % knot_update_interval == 0, the knot update interval will be increased by 1 until the modulo is no longer 0, to ensure the knots are not updated at the very end of an epoch, which prevents grid extension after the epoch
+///
 /// # Errors
 /// returns a [TrainingError] if the model reports an error at any point during training.
 ///
@@ -217,7 +220,7 @@ pub fn train_model<T: TrainingObserver>(
         ),
         options.num_epochs,
     );
-
+    let mut next_knot_target_idx = 0;
     for epoch in 0..options.num_epochs {
         let mut epoch_loss = 0.0;
         let mut samples_seen = 0;
@@ -257,7 +260,10 @@ pub fn train_model<T: TrainingObserver>(
             }
             model.update(options.learning_rate); // TODO implement momentum
             model.zero_gradients();
-            if samples_seen % options.knot_update_interval == 0 {
+            if samples_seen % options.knot_update_interval == 0
+                && samples_seen != training_data.len()
+            // don't update knots at the end of an epoch, as it prevents grid extension
+            {
                 let _ = model
                     .update_knots_from_samples(options.knot_adaptivity)
                     .map_err(|e| TrainingError {
@@ -270,9 +276,12 @@ pub fn train_model<T: TrainingObserver>(
 
             training_observer.on_sample_end();
         }
-        if epoch % knot_extension_interval == 0 {
-            let new_knot_target = knot_extension_targets[epoch / knot_extension_interval];
-            model.set_knot_length(new_knot_target);
+        if epoch % knot_extension_interval == 0
+            && next_knot_target_idx < knot_extension_targets.len()
+        {
+            let new_knot_target = knot_extension_targets[next_knot_target_idx];
+            next_knot_target_idx += 1;
+            model.set_knot_length(new_knot_target).unwrap();
         }
         epoch_loss /= training_data.len() as f32;
 
@@ -348,10 +357,22 @@ fn calculate_nll_loss_and_gradient(logits: &Vec<f32>, label: usize) -> (f32, Vec
     let dlogprobs = (0..probs.len())
         .map(|i| if i == label { -1.0 } else { 0.0 })
         .collect::<Vec<f32>>(); // dloss/dlogpobs. vector is 0 except for the correct class, where it's -1
+
     let dprobs = probs
         .iter()
         .zip(dlogprobs.iter())
         .map(|(&p, &dlp)| dlp / p)
+        .map(|x| {
+            if x.is_infinite() {
+                if x.is_sign_positive() {
+                    f32::MAX
+                } else {
+                    f32::MIN
+                }
+            } else {
+                x
+            }
+        })
         .collect::<Vec<f32>>(); // dloss/dprobs = dlogprobs/dprobs * dloss/dlogprobs. d/dx ln(x) = 1/x. dlogprobs/dprobs = 1/probs, `dlp` = dloss/dlogprobs
     let dcounts_sum: f32 = counts
         .iter()
@@ -500,6 +521,15 @@ mod test {
             .collect::<Vec<f32>>();
         assert_eq!(rounded_loss, expected_loss);
         assert_eq!(rounded_gradients, expected_gradients);
+    }
+
+    #[test]
+    fn test_nll_loss_and_gradient_2() {
+        let logits = vec![50.4043, -42.404835];
+        let label = 1;
+        let (loss, gradient) = calculate_nll_loss_and_gradient(&logits, label);
+        println!("loss: {}, gradient: {:?}", loss, gradient);
+        assert!(gradient.iter().all(|x| x.is_normal()));
     }
 
     #[test]
