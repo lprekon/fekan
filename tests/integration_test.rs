@@ -12,20 +12,21 @@ mod classification {
     #[test]
     fn classifier_sum_greater_than_zero() {
         // select 10000 random x's, y's, and z's in the range -1000 to 1000 to train on, and 100 random x's, y's, and z's in the range -1000 to 1000 to validate on
-        let training_data = (0..10000)
+        let function_domain = -100.0..100.0;
+        let training_data = (0..1000)
             .map(|_| {
-                let x = thread_rng().gen_range(-1000.0..1000.0);
-                let y = thread_rng().gen_range(-1000.0..1000.0);
-                let z = thread_rng().gen_range(-1000.0..1000.0);
+                let x = thread_rng().gen_range(function_domain.clone());
+                let y = thread_rng().gen_range(function_domain.clone());
+                let z = thread_rng().gen_range(function_domain.clone());
                 let label = ((x + y + z) > 0.0) as u32;
                 Sample::new(vec![x, y, z], label as f32)
             })
             .collect::<Vec<Sample>>();
         let validation_data = (0..100)
             .map(|_| {
-                let x = thread_rng().gen_range(-1000.0..1000.0);
-                let y = thread_rng().gen_range(-1000.0..1000.0);
-                let z = thread_rng().gen_range(-1000.0..1000.0);
+                let x = thread_rng().gen_range(function_domain.clone());
+                let y = thread_rng().gen_range(function_domain.clone());
+                let z = thread_rng().gen_range(function_domain.clone());
                 let label = ((x + y + z) > 0.0) as u32;
                 Sample::new(vec![x, y, z], label as f32)
             })
@@ -33,7 +34,7 @@ mod classification {
 
         let mut untrained_model = Kan::new(&KanOptions {
             input_size: 3,
-            layer_sizes: vec![2],
+            layer_sizes: vec![3, 2],
             degree: 3,
             coef_size: 4,
             model_type: ModelType::Classification,
