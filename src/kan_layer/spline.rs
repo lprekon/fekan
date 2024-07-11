@@ -284,6 +284,7 @@ impl Spline {
         }
         self.knots = new_knots;
         self.activations.clear();
+        self.gradients = vec![0.0; self.control_points.len()];
         Ok(())
     }
 

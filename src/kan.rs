@@ -337,7 +337,7 @@ impl Kan {
                     source: ErrorOperation::UpdateKnots(e),
                     index: idx,
                 });
-        }
+            }
         }
         Ok(())
     }
