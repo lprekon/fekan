@@ -123,7 +123,7 @@ impl KanLayer {
     /// let preacts = vec![0.0, 0.5, 0.5];
     /// let acts = my_layer.forward(&preacts)?;
     /// assert_eq!(acts.len(), output_dimension);
-    /// # Ok::<(), fekan::kan_layer::LayerError>(())
+    /// # Ok::<(), fekan::kan_layer::ForwardLayerError>(())
     /// ```
     pub fn forward(&mut self, preactivation: &[f32]) -> Result<Vec<f32>, ForwardLayerError> {
         //  check the length here since it's the same check for the entire layer, even though the "node" is technically the part that cares
@@ -202,14 +202,14 @@ impl KanLayer {
     /// let sample1 = vec![100f32, -100f32];
     /// let sample2 = vec![-100f32, 100f32];
     ///
-    /// let acts = my_layer.forward(&sample1)?;
+    /// let acts = my_layer.forward(&sample1).unwrap();
     /// assert!(acts.iter().all(|x| *x == 0.0)); // the preacts were all outside the initial knot range, so the activations should all be 0
-    /// let acts = my_layer.forward(&sample2)?;
+    /// let acts = my_layer.forward(&sample2).unwrap();
     /// assert!(acts.iter().all(|x| *x == 0.0)); // the preacts were all outside the initial knot range, so the activations should all be 0
-    /// my_layer.update_knots_from_samples(0.0)?; // we don't have enough samples to calculate quantiles, so we have to keep the knots uniformly distributed. In practice, this function should be called every few hundred forward passes or so
-    /// let new_acts = my_layer.forward(&sample1)?;
+    /// my_layer.update_knots_from_samples(0.0).unwrap(); // we don't have enough samples to calculate quantiles, so we have to keep the knots uniformly distributed. In practice, this function should be called every few hundred forward passes or so
+    /// let new_acts = my_layer.forward(&sample1).unwrap();
     /// assert!(new_acts.iter().all(|x| *x != 0.0)); // the knot range now covers the samples, so the activations should be non-zero
-    /// # Ok::<(), fekan::kan_layer::LayerError>(())
+    /// # Ok::<(), fekan::kan_layer::UpdateLayerKnotsError>(())
     /// ```
     pub fn update_knots_from_samples(
         &mut self,
@@ -252,7 +252,7 @@ impl KanLayer {
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
     /// # let some_layer_options = KanLayerOptions {input_dimension: 2,output_dimension: 4,degree: 5, coef_size: 6};
     /// let mut my_layer = KanLayer::new(&some_layer_options);
-    /// /* Run several forward passes */
+    /// /* After several forward passes... */
     /// # let sample1 = vec![100f32, -100f32];
     /// # let sample2 = vec![-100f32, 100f32];
     /// # let _acts = my_layer.forward(&sample1)?;
@@ -262,7 +262,7 @@ impl KanLayer {
     /// my_layer.clear_samples();
     /// let update_result = my_layer.update_knots_from_samples(0.0);
     /// assert!(update_result.is_err()); // we've cleared the samples, so we can't update the knot vectors
-    /// # Ok::<(), fekan::kan_layer::LayerError>(())
+    /// # Ok::<(), fekan::kan_layer::ForwardLayerError>(())
     pub fn clear_samples(&mut self) {
         self.samples.clear();
     }
@@ -287,14 +287,14 @@ impl KanLayer {
     /// let mut second_layer = KanLayer::new(&second_layer_options);
     /// /* forward pass */
     /// let preacts = vec![0.0, 0.5];
-    /// let acts = first_layer.forward(&preacts)?;
-    /// let output = second_layer.forward(&acts)?;
+    /// let acts = first_layer.forward(&preacts).unwrap();
+    /// let output = second_layer.forward(&acts).unwrap();
     /// /* calculate error */
     /// # let error = vec![1.0, 0.5, 0.5];
     /// assert_eq!(error.len(), second_layer_options.output_dimension);
-    /// let first_layer_error = second_layer.backward(&error)?;
+    /// let first_layer_error = second_layer.backward(&error).unwrap();
     /// assert_eq!(first_layer_error.len(), first_layer_options.output_dimension);
-    /// let input_error = first_layer.backward(&first_layer_error)?;
+    /// let input_error = first_layer.backward(&first_layer_error).unwrap();
     /// assert_eq!(input_error.len(), first_layer_options.input_dimension);
     ///
     /// // apply the gradients
@@ -304,7 +304,7 @@ impl KanLayer {
     /// // reset the gradients
     /// first_layer.zero_gradients();
     /// second_layer.zero_gradients();
-    /// # Ok::<(), fekan::kan_layer::LayerError>(())
+    /// /* continue training */
     /// ```
     pub fn backward(&mut self, error: &[f32]) -> Result<Vec<f32>, BackwardLayerError> {
         if error.len() != self.output_dimension {
@@ -332,25 +332,92 @@ impl KanLayer {
     /// set the length of the knot vectors for each incoming edge in this layer
     ///
     /// Generally used multiple times throughout training to increase the number of knots in the spline to increase fidelity of the curve
+    /// # Notes
     /// * The number of control points is set to `knot_length - degree - 1`, and the control points are calculated using lstsq over cached samples to approximate the previous curve
-    /// * This method clears the internal cache of samples used by [`KanLayer::update_knots_from_samples`], so the two should not be called in the same training step
-    /// * This method clears the internal cache of samples used by [`KanLayer::forward`], so frequent calls to this method will slow down training
+    /// * This method clears the internal cache of samples used to update knots in [`KanLayer::update_knots_from_samples`] (as if [`KanLayer::clear_samples`] was called) so this function and [`update_knots_from_samples`](KanLayer::update_knots_from_samples) should not be called in the same training step (ideally, they should be separated by many training steps - maybe 100 or so)
+    /// * This method clears the internal cache of samples used by [`KanLayer::forward`], so frequent calls to this method may slow down training
+    /// # Errors
+    /// Returns a [`UpdateLayerKnotsError`] if the layer has no samples in the internal cache . This error is usually caused by calling this function before calling [`KanLayer::forward`], or by not calling [`KanLayer::forward`] between the last call to a cache-clearing function and this function
     /// # Examples
+    /// Extend the knot vectors during training to increase the fidelity of the splines
     /// ```
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
+    /// let input_dimension = 2;
+    /// let output_dimension = 4;
+    /// let degree = 5;
+    /// let coef_size = 6;
     /// let layer_options = KanLayerOptions {
-    ///     input_dimension: 2,
-    ///     output_dimension: 4,
-    ///     degree: 5,
-    ///     coef_size: 6
+    ///     input_dimension,
+    ///     output_dimension,
+    ///     degree,
+    ///     coef_size
     /// };
     /// let mut my_layer = KanLayer::new(&layer_options);
-    /// assert_eq!(my_layer.parameter_count(), 2 * 4 * (6 + (5 + 6 + 1)));
+    ///
+    /// let num_splines = input_dimension * output_dimension;
+    /// let expected_knots_per_spline = coef_size + degree + 1;
+    /// assert_eq!(my_layer.knot_length(), expected_knots_per_spline, "starting knots per edge");
+    /// assert_eq!(my_layer.parameter_count(), num_splines * (coef_size + my_layer.knot_length()), "starting parameter count");
+    ///
     /// /* train the layer a bit to start shaping the splines */
+    /// # let sample = vec![0.0; input_dimension];
+    /// # let _ = my_layer.forward(&sample);
+    ///
     /// let new_knot_length = my_layer.knot_length() * 2;
-    /// my_layer.set_knot_length(new_knot_length);
-    /// assert_eq!(my_layer.parameter_count(), 2 * 4 * (new_knot_length + (new_knot_length - 5 - 1)));
+    /// let update_result = my_layer.set_knot_length(new_knot_length);
+    /// assert!(update_result.is_ok(), "update knots"); // we have samples from training, so we can update the knot vectors
+    ///
+    /// assert_eq!(my_layer.knot_length(), new_knot_length, "ending knots per edge");
+    /// let new_coef_size = new_knot_length - degree - 1;
+    /// assert_eq!(my_layer.parameter_count(), num_splines * (new_coef_size + new_knot_length), "ending parameter count");
+    ///
     /// /* continue training layer, now with increased fidelity in the spline */
+    /// ```
+    /// Try to extend the knot vectors without first calling [`KanLayer::forward`]
+    /// ```
+    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
+    /// # let input_dimension = 2;
+    /// # let output_dimension = 4;
+    /// # let degree = 5;
+    /// # let coef_size = 6;
+    /// # let layer_options = KanLayerOptions {
+    /// #     input_dimension,
+    /// #     output_dimension,
+    /// #     degree,
+    /// #     coef_size
+    /// # };
+    ///
+    /// let mut my_layer = KanLayer::new(&layer_options);
+    ///
+    /// // oops - I wanted splines with greater fidelity. I'll just extend the knot vector real quick...
+    /// let the_knot_lenght_i_really_wanted = my_layer.knot_length() * 2;
+    /// let update_result = my_layer.set_knot_length(the_knot_lenght_i_really_wanted);
+    /// assert!(update_result.is_err(), "update knots"); // we haven't called forward, so we can't update the knot vectors
+    /// ```
+    /// Try to extend the knot vectors immediately after updating them with [`KanLayer::update_knots_from_samples`]
+    /// ```
+    /// # use fekan::kan_layer::KanLayerOptions;
+    /// use fekan::kan_layer::KanLayer;
+    /// # let input_dimension = 2;
+    /// # let output_dimension = 4;
+    /// # let degree = 5;
+    /// # let coef_size = 6;
+    /// # let layer_options = KanLayerOptions {
+    /// #     input_dimension,
+    /// #     output_dimension,
+    /// #     degree,
+    /// #     coef_size
+    /// # };
+    /// # let mut my_layer = KanLayer::new(&layer_options);
+    /// # let sample1 = vec![0.0; input_dimension];
+    /// # let sample2 = vec![0.0; input_dimension];
+    /// let _acts = my_layer.forward(&sample1);
+    /// let _acts = my_layer.forward(&sample2);
+    /// let update_knot_range_result = my_layer.update_knots_from_samples(0.0);
+    /// assert!(update_knot_range_result.is_ok(), "update knot range"); // we have samples from training, so we can update the knot vectors
+    /// // Well, that's the end of the epoch. I guess now's a good time to extend the knot vectors...
+    /// let extend_knot_vector_result = my_layer.set_knot_length(my_layer.knot_length() * 2);
+    /// assert!(extend_knot_vector_result.is_err(), "extend knot vector"); // we've cleared the samples, so we can't update the knot vectors
     /// ```
     /// # Panics
     /// Panics if the Singular Value Decomposition (SVD) used to calculate the control points fails. This should never happen, but if it does, it's a bug
