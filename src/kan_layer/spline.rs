@@ -335,7 +335,7 @@ impl std::error::Error for CreateSplineError {}
 pub(crate) enum BackwardSplineError {
     BackwardBeforeForwardError,
     ReceivedNanError,
-    GradientIsNanError,
+    // GradientIsNanError,
 }
 
 impl fmt::Display for BackwardSplineError {
@@ -345,7 +345,7 @@ impl fmt::Display for BackwardSplineError {
                 write!(f, "backward called before forward")
             }
             BackwardSplineError::ReceivedNanError => write!(f, "received `NaN` as error value"),
-            BackwardSplineError::GradientIsNanError => write!(f, "calculated gradient is NaN"),
+            // BackwardSplineError::GradientIsNanError => write!(f, "calculated gradient is NaN"),
         }
     }
 }

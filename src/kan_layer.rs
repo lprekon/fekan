@@ -495,6 +495,7 @@ pub enum BackwardLayerError {
     ReceivedNanError,
 }
 
+#[allow(unreachable_patterns)]
 impl From<BackwardSplineError> for BackwardLayerError {
     fn from(e: BackwardSplineError) -> Self {
         match e {
