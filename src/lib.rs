@@ -374,10 +374,11 @@ fn build_knot_extension_plan(
     // 2. update by at least 1 knot each time
     // 3. we want to reach the ideal knot length before the last epoch
     // 4. we want to extend the knots by the same amount each time
-    let knot_gap = ideal_knot_length - starting_knot_length;
-    if knot_gap <= 0 {
+
+    if starting_knot_length >= ideal_knot_length {
         (num_epochs, vec![])
     } else {
+        let knot_gap = ideal_knot_length - starting_knot_length;
         let knots_added_per_epoch = knot_gap as f32 / (num_epochs - 1) as f32; // -1 to make sure we have max knots by the last epoch
         if knots_added_per_epoch >= 1.0 {
             // we need to add at least one knot per epoch
