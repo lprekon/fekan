@@ -1,5 +1,5 @@
 
-running 33 tests
+running 46 tests
 test kan::test::test_error_send ... ignored
 test kan::test::test_error_sync ... ignored
 test kan::test::test_forward ... ignored
@@ -9,40 +9,53 @@ test kan::test::test_model_sync ... ignored
 test kan_layer::spline::tests::backward_after_infer ... ignored
 test kan_layer::spline::tests::test_b_2 ... ignored
 test kan_layer::spline::tests::test_backward_before_forward ... ignored
+test kan_layer::spline::tests::test_backward_error_send ... ignored
+test kan_layer::spline::tests::test_backward_error_sync ... ignored
 test kan_layer::spline::tests::test_basis_cached ... ignored
-test kan_layer::spline::tests::test_error_send ... ignored
-test kan_layer::spline::tests::test_error_sync ... ignored
-test kan_layer::spline::tests::test_forward ... ignored
-test kan_layer::spline::tests::test_forward_2 ... ignored
+test kan_layer::spline::tests::test_create_error_send ... ignored
+test kan_layer::spline::tests::test_create_error_sync ... ignored
+test kan_layer::spline::tests::test_forward_and_infer ... ignored
+test kan_layer::spline::tests::test_forward_and_infer_2 ... ignored
 test kan_layer::spline::tests::test_forward_then_backward ... ignored
 test kan_layer::spline::tests::test_forward_then_backward_2 ... ignored
+test kan_layer::spline::tests::test_knot_error_send ... ignored
+test kan_layer::spline::tests::test_knot_error_sync ... ignored
 test kan_layer::spline::tests::test_new_spline_with_too_few_knots ... ignored
+test kan_layer::spline::tests::test_set_knot_length_decreasing ... ignored
+test kan_layer::spline::tests::test_set_knot_length_increasing ... ignored
 test kan_layer::spline::tests::test_spline_send ... ignored
 test kan_layer::spline::tests::test_spline_sync ... ignored
 test kan_layer::spline::tests::test_update_knots ... ignored
 test kan_layer::test::test_backward_bad_error_length ... ignored
 test kan_layer::test::test_backward_before_forward ... ignored
-test kan_layer::test::test_error_send ... ignored
-test kan_layer::test::test_error_sync ... ignored
+test kan_layer::test::test_backward_error_send ... ignored
+test kan_layer::test::test_backward_error_sync ... ignored
 test kan_layer::test::test_forward ... ignored
 test kan_layer::test::test_forward_bad_activations ... ignored
+test kan_layer::test::test_forward_error_send ... ignored
+test kan_layer::test::test_forward_error_sync ... ignored
 test kan_layer::test::test_forward_then_backward ... ignored
+test kan_layer::test::test_knot_error_send ... ignored
+test kan_layer::test::test_knot_error_sync ... ignored
 test kan_layer::test::test_layer_send ... ignored
 test kan_layer::test::test_layer_sync ... ignored
 test kan_layer::test::test_new ... ignored
+test test::test_build_knot_extension_plan_update_by_1 ... ignored
+test test::test_build_knot_extension_plan_update_every_epoch ... ignored
 test test::test_error_send ... ignored
 test test::test_error_sync ... ignored
 test test::test_nll_loss_and_gradient ... ignored
+test test::test_nll_loss_and_gradient_2 ... ignored
 
-test result: ok. 0 passed; 0 failed; 33 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 46 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 running 5 tests
-test bench_backward                  ... bench:     549,370.80 ns/iter (+/- 8,339.04)
-test bench_forward                   ... bench:     354,733.40 ns/iter (+/- 13,440.03)
-test bench_forward_then_backward     ... bench:     452,297.90 ns/iter (+/- 12,246.89)
-test bench_update                    ... bench:      13,494.46 ns/iter (+/- 156.72)
-test bench_update_knots_from_samples ... bench:     463,427.10 ns/iter (+/- 45,426.25)
+test bench_backward                  ... bench:     321,786.97 ns/iter (+/- 8,984.94)
+test bench_forward                   ... bench:     205,752.61 ns/iter (+/- 11,731.36)
+test bench_forward_then_backward     ... bench:     263,318.75 ns/iter (+/- 2,489.64)
+test bench_update                    ... bench:       7,829.13 ns/iter (+/- 46.51)
+test bench_update_knots_from_samples ... bench:     264,945.85 ns/iter (+/- 5,907.69)
 
-test result: ok. 0 passed; 0 failed; 0 ignored; 5 measured; 0 filtered out; finished in 1.84s
+test result: ok. 0 passed; 0 failed; 0 ignored; 5 measured; 0 filtered out; finished in 4.33s
 
