@@ -49,6 +49,7 @@ mod classification {
             &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 50,
+                max_knot_length: Some(100),
                 ..TrainingOptions::default()
             },
         )
