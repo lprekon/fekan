@@ -8,6 +8,8 @@ fi
 git clone https://github.com/lprekon/fekan.git
 cd fekan
 echo "checking out branch $BRANCH"
+git checkout $BRANCH
+git rev-parse HEAD
 cargo install fekan --path . --features "serialization"
 
 cd benches
