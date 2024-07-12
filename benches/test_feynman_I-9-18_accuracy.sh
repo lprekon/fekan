@@ -2,7 +2,7 @@
 set -e # exit on error
 
 if [ -z $BRANCH ]; then
-    BRANCH="master"
+    BRANCH="main"
 fi
 
 git clone https://github.com/lprekon/fekan.git
@@ -17,7 +17,7 @@ touch $LOG_FILE
 DATA_FILE=$(mktemp)".json"
 trap "rm -f $DATA_FILE" EXIT
 
-if [ -n $S3_BUCKET ]; then
+if [ -n "$S3_BUCKET" ]; then
     echo "S3 target detected. Checking connection..."
     aws s3 ls s3://$S3_BUCKET
     if [$? -ne 0]; then
@@ -40,13 +40,14 @@ echo "running regression"
 fekan build regressor --data $DATA_FILE \
     --hidden-layer-sizes "6,4,2,1" \
     --learning-rate 0.001 \
+    --max-knot-length 500 \
     --validate-each-epoch \
     --log-output \
     --no-save \
     >> $LOG_FILE
 echo "regression complete"
 
-if [ -n $S3_BUCKET ]; then
+if [ -n "$S3_BUCKET" ]; then
     echo "uploading log file to s3"
     aws s3 cp $LOG_FILE s3://$S3_BUCKET
 fi

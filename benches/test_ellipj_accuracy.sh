@@ -54,7 +54,7 @@ fekan build regressor --data $DATA_FILE \
    >> $LOG_FILE
 echo "regression complete"
 
-if [ -n $S3_BUCKET ]; then
+if [ -n "$S3_BUCKET" ]; then
     echo "uploading log file to s3"
     aws s3 cp $LOG_FILE s3://$S3_BUCKET
 fi
