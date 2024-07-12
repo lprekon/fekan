@@ -68,6 +68,8 @@ pub mod training_observer;
 use std::cmp::min;
 
 use kan::{Kan, KanError, ModelType};
+use rand::{thread_rng, Rng};
+use shuffle::{fy, shuffler::Shuffler};
 use training_observer::TrainingObserver;
 
 /// A sample of data to be used in training a model.
@@ -200,7 +202,7 @@ impl Default for TrainingOptions {
 // then call update after all those gradients have been accumulated
 pub fn train_model<T: TrainingObserver>(
     mut model: Kan,
-    training_data: &Vec<Sample>,
+    training_data: &[Sample],
     validate: EachEpoch,
     training_observer: &T,
     options: TrainingOptions,
@@ -221,10 +223,16 @@ pub fn train_model<T: TrainingObserver>(
         options.num_epochs,
     );
     let mut next_knot_target_idx = 0;
+    let mut randomness = thread_rng();
+    let mut fys = fy::FisherYates::default();
     for epoch in 0..options.num_epochs {
         let mut epoch_loss = 0.0;
         let mut samples_seen = 0;
-        for sample in training_data {
+        // shuffle the training data
+        let mut shuffled_pointers: Vec<&Sample> = training_data.iter().collect();
+        fys.shuffle(&mut shuffled_pointers, &mut randomness)
+            .expect("Shuffling can't fail");
+        for sample in shuffled_pointers {
             samples_seen += 1;
             // run over each sample in the training data for each epoch
             let output = model
