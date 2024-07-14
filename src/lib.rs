@@ -128,6 +128,8 @@ impl Default for TrainingOptions {
     }
 }
 
+const HUBER_DELTA: f64 = 500.0;
+
 /// Train the provided model with the provided data.
 ///
 /// if `validation_data` is not `None`, the model will be validated after each epoch, and the validation loss will be reported to the observer, otherwise the reported validation loss will be NaN.
@@ -261,8 +263,11 @@ pub fn train_model<T: TrainingObserver>(
                     })?;
                 }
                 ModelType::Regression => {
-                    let (loss, dlogits) =
-                        calculate_mse_and_gradient(output[0], sample.label as f64);
+                    let (loss, dlogits) = calculate_huber_loss_and_gradient(
+                        output[0],
+                        sample.label as f64,
+                        HUBER_DELTA,
+                    ); //TODO allow different delta values
                     epoch_loss += loss;
                     let _ = model.backward(vec![dlogits]).map_err(|e| TrainingError {
                         source: e,
@@ -335,7 +340,8 @@ pub fn validate_model<T: TrainingObserver>(
                 loss
             }
             ModelType::Regression => {
-                let (loss, _) = calculate_mse_and_gradient(output[0], sample.label as f64);
+                let (loss, _) =
+                    calculate_huber_loss_and_gradient(output[0], sample.label as f64, HUBER_DELTA); //TODO allow different delta values
                 loss
             }
         };
@@ -365,7 +371,10 @@ fn calculate_nll_loss_and_gradient(logits: &Vec<f64>, label: usize) -> (f64, Vec
     let count_sum = counts.iter().sum::<f64>();
     let probs = counts.iter().map(|&x| x / count_sum).collect::<Vec<f64>>();
 
-    let logprobs = probs.iter().map(|&x| x.ln()).collect::<Vec<f64>>();
+    let logprobs = probs
+        .iter()
+        .map(|&x| (x + f64::MIN_POSITIVE).ln()) // make sure we don't take the log of 0
+        .collect::<Vec<f64>>();
     let loss = -logprobs[label];
 
     let mut dlogits = probs;
@@ -378,6 +387,22 @@ fn calculate_nll_loss_and_gradient(logits: &Vec<f64>, label: usize) -> (f64, Vec
 fn calculate_mse_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
     let loss = (actual - expected).powi(2);
     let gradient = 2.0 * (actual - expected);
+    (loss, gradient)
+}
+
+/// Calculates the huber loss and the gradient of the loss with respect to the actual value
+fn calculate_huber_loss_and_gradient(actual: f64, expected: f64, delta: f64) -> (f64, f64) {
+    let diff = actual - expected;
+    let loss = if diff.abs() <= delta {
+        0.5 * diff.powi(2)
+    } else {
+        delta * (diff.abs() - 0.5 * delta)
+    };
+    let gradient = if diff.abs() <= delta {
+        diff
+    } else {
+        delta * diff.signum()
+    };
     (loss, gradient)
 }
 
