@@ -19,7 +19,7 @@ mod classification {
                 let y = thread_rng().gen_range(function_domain.clone());
                 let z = thread_rng().gen_range(function_domain.clone());
                 let label = ((x + y + z) > 0.0) as u32;
-                Sample::new(vec![x, y, z], label as f32)
+                Sample::new(vec![x, y, z], label as f64)
             })
             .collect::<Vec<Sample>>();
         let validation_data = (0..100)
@@ -28,7 +28,7 @@ mod classification {
                 let y = thread_rng().gen_range(function_domain.clone());
                 let z = thread_rng().gen_range(function_domain.clone());
                 let label = ((x + y + z) > 0.0) as u32;
-                Sample::new(vec![x, y, z], label as f32)
+                Sample::new(vec![x, y, z], label as f64)
             })
             .collect::<Vec<Sample>>();
 
@@ -124,7 +124,7 @@ mod regression {
             .map(|_| {
                 let x = thread_rng().gen_range(-1.0..1.0);
                 let y = thread_rng().gen_range(-1.0..1.0);
-                let label = ((std::f32::consts::PI * x).sin() * (y * y)).exp();
+                let label = ((std::f64::consts::PI * x).sin() * (y * y)).exp();
                 Sample::new(vec![x, y], label)
             })
             .collect::<Vec<Sample>>();
@@ -132,7 +132,7 @@ mod regression {
             .map(|_| {
                 let x = thread_rng().gen_range(-1.0..1.0);
                 let y = thread_rng().gen_range(-1.0..1.0);
-                let label = ((std::f32::consts::PI * x).sin() * (y * y)).exp();
+                let label = ((std::f64::consts::PI * x).sin() * (y * y)).exp();
                 Sample::new(vec![x, y], label)
             })
             .collect::<Vec<Sample>>();
@@ -177,7 +177,7 @@ impl TestObserver {
 }
 
 impl TrainingObserver for TestObserver {
-    fn on_epoch_end(&self, epoch: usize, epoch_loss: f32, validation_loss: f32) {
+    fn on_epoch_end(&self, epoch: usize, epoch_loss: f64, validation_loss: f64) {
         println!(
             "Epoch: {}, Epoch Loss: {}, Validation Loss: {}",
             epoch, epoch_loss, validation_loss

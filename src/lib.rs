@@ -69,32 +69,33 @@ use std::cmp::min;
 
 use kan::{Kan, KanError, ModelType};
 use rand::thread_rng;
+use serde::{Deserialize, Serialize};
 use shuffle::{fy, shuffler::Shuffler};
 use training_observer::TrainingObserver;
 
 /// A sample of data to be used in training a model.
 ///
 /// Used for both [training](train_model) and [validation](validate_model) data.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Sample {
     /// The input data for the model
-    features: Vec<f32>,
+    features: Vec<f64>,
     /// The expected output of the model
-    label: f32, // use a f32 so the size doesn't change between platforms
+    label: f64, // use a f64 so the size doesn't change between platforms
 }
 
 impl Sample {
     /// Create a new Sample
-    pub fn new(features: Vec<f32>, label: f32) -> Self {
+    pub fn new(features: Vec<f64>, label: f64) -> Self {
         Sample { features, label }
     }
 
     /// Get the features of the sample
-    pub fn features(&self) -> &Vec<f32> {
+    pub fn features(&self) -> &Vec<f64> {
         &self.features
     }
     /// Get the label of the sample
-    pub fn label(&self) -> f32 {
+    pub fn label(&self) -> f64 {
         self.label
     }
 }
@@ -107,9 +108,9 @@ pub struct TrainingOptions {
     /// number of samples to pass through the model before updating the knots. See [kan_layer::KanLayer::update_knots_from_samples] for more information about this process.
     pub knot_update_interval: usize,
     /// the adaptivity of the knots when updating them. See [kan_layer::KanLayer::update_knots_from_samples] for more information about this process.
-    pub knot_adaptivity: f32,
+    pub knot_adaptivity: f64,
     /// the learning rate of the model
-    pub learning_rate: f32,
+    pub learning_rate: f64,
     /// If set, the maximum length to which the knot vectors can be extended during training.
     /// Liu et al. 2024 conjecture that the ideal model has a total knot count ~= ||training_data||, but that could become obscene for small models and large datasets
     pub max_knot_length: Option<usize>,
@@ -177,7 +178,7 @@ impl Default for TrainingOptions {
 /// #     fn new() -> Self { MyCustomObserver{} }
 /// # }
 /// # impl TrainingObserver for MyCustomObserver {
-/// #     fn on_epoch_end(&self, epoch: usize, epoch_loss: f32, validation_loss: f32) {}
+/// #     fn on_epoch_end(&self, epoch: usize, epoch_loss: f64, validation_loss: f64) {}
 /// #     fn on_sample_end(&self) {}
 /// # }
 ///
@@ -213,7 +214,7 @@ pub fn train_model<T: TrainingObserver>(
         .layers
         .iter()
         .fold(0, |acc, layer| acc + layer.total_edges());
-    let ideal_knot_length = (training_data.len() as f32 / num_splines as f32) as usize;
+    let ideal_knot_length = (training_data.len() as f64 / num_splines as f64) as usize;
     let (knot_extension_interval, knot_extension_targets) = build_knot_extension_plan(
         model.knot_length(),
         min(
@@ -222,10 +223,10 @@ pub fn train_model<T: TrainingObserver>(
         ),
         options.num_epochs,
     );
-    eprintln!(
-        "ideal knot length: {}, knot extension interval: {}, knot extension targets: {:?}",
-        ideal_knot_length, knot_extension_interval, knot_extension_targets
-    );
+    // eprintln!(
+    //     "ideal knot length: {}, knot extension interval: {}, knot extension targets: {:?}",
+    //     ideal_knot_length, knot_extension_interval, knot_extension_targets
+    // );
     let mut next_knot_target_idx = 0;
     let mut randomness = thread_rng();
     let mut fys = fy::FisherYates::default();
@@ -240,7 +241,7 @@ pub fn train_model<T: TrainingObserver>(
             samples_seen += 1;
             // run over each sample in the training data for each epoch
             let output = model
-                .forward(sample.features.iter().map(|&x| x as f32).collect())
+                .forward(sample.features.iter().map(|&x| x as f64).collect())
                 .map_err(|e| TrainingError {
                     source: e,
                     epoch,
@@ -261,7 +262,7 @@ pub fn train_model<T: TrainingObserver>(
                 }
                 ModelType::Regression => {
                     let (loss, dlogits) =
-                        calculate_mse_and_gradient(output[0], sample.label as f32);
+                        calculate_mse_and_gradient(output[0], sample.label as f64);
                     epoch_loss += loss;
                     let _ = model.backward(vec![dlogits]).map_err(|e| TrainingError {
                         source: e,
@@ -291,22 +292,22 @@ pub fn train_model<T: TrainingObserver>(
         if epoch % knot_extension_interval == 0
             && next_knot_target_idx < knot_extension_targets.len()
         {
-            eprintln!(
-                "extending knots from {} to {}",
-                model.knot_length(),
-                knot_extension_targets[next_knot_target_idx]
-            );
+            // eprintln!(
+            //     "extending knots from {} to {}",
+            //     model.knot_length(),
+            //     knot_extension_targets[next_knot_target_idx]
+            // );
             let new_knot_target = knot_extension_targets[next_knot_target_idx];
             next_knot_target_idx += 1;
             model.set_knot_length(new_knot_target).unwrap();
         }
-        epoch_loss /= training_data.len() as f32;
+        epoch_loss /= training_data.len() as f64;
 
         let validation_loss = match validate {
             EachEpoch::ValidateModel(validation_data) => {
                 validate_model(validation_data, &mut model, training_observer)
             }
-            EachEpoch::DoNotValidateModel => f32::NAN,
+            EachEpoch::DoNotValidateModel => f64::NAN,
         };
 
         training_observer.on_epoch_end(epoch, epoch_loss, validation_loss);
@@ -323,7 +324,7 @@ pub fn validate_model<T: TrainingObserver>(
     validation_data: &[Sample],
     model: &mut Kan,
     observer: &T,
-) -> f32 {
+) -> f64 {
     let mut validation_loss = 0.0;
 
     for sample in validation_data {
@@ -334,23 +335,23 @@ pub fn validate_model<T: TrainingObserver>(
                 loss
             }
             ModelType::Regression => {
-                let (loss, _) = calculate_mse_and_gradient(output[0], sample.label as f32);
+                let (loss, _) = calculate_mse_and_gradient(output[0], sample.label as f64);
                 loss
             }
         };
         validation_loss += loss;
         observer.on_sample_end();
     }
-    validation_loss /= validation_data.len() as f32;
+    validation_loss /= validation_data.len() as f64;
 
     validation_loss
 }
 
 /// Returns the negative log liklihood loss and the gradient of the loss with respect to the logits,
-fn calculate_nll_loss_and_gradient(logits: &Vec<f32>, label: usize) -> (f32, Vec<f32>) {
+fn calculate_nll_loss_and_gradient(logits: &Vec<f64>, label: usize) -> (f64, Vec<f64>) {
     // calculate the classification probabilities
     let logit_max = {
-        let mut max = f32::NEG_INFINITY;
+        let mut max = f64::NEG_INFINITY;
         for &logit in logits.iter() {
             if logit > max {
                 max = logit;
@@ -358,13 +359,13 @@ fn calculate_nll_loss_and_gradient(logits: &Vec<f32>, label: usize) -> (f32, Vec
         }
         max
     };
-    let norm_logits = logits.iter().map(|&x| x - logit_max).collect::<Vec<f32>>(); // subtract the max logit to prevent overflow
-    let counts = norm_logits.iter().map(|&x| x.exp()).collect::<Vec<f32>>();
+    let norm_logits = logits.iter().map(|&x| x - logit_max).collect::<Vec<f64>>(); // subtract the max logit to prevent overflow
+    let counts = norm_logits.iter().map(|&x| x.exp()).collect::<Vec<f64>>();
 
-    let count_sum = counts.iter().sum::<f32>();
-    let probs = counts.iter().map(|&x| x / count_sum).collect::<Vec<f32>>();
+    let count_sum = counts.iter().sum::<f64>();
+    let probs = counts.iter().map(|&x| x / count_sum).collect::<Vec<f64>>();
 
-    let logprobs = probs.iter().map(|&x| x.ln()).collect::<Vec<f32>>();
+    let logprobs = probs.iter().map(|&x| x.ln()).collect::<Vec<f64>>();
     let loss = -logprobs[label];
 
     let mut dlogits = probs;
@@ -374,7 +375,7 @@ fn calculate_nll_loss_and_gradient(logits: &Vec<f32>, label: usize) -> (f32, Vec
 }
 
 /// Calculates the mean squared error loss and the gradient of the loss with respect to the actual value
-fn calculate_mse_and_gradient(actual: f32, expected: f32) -> (f32, f32) {
+fn calculate_mse_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
     let loss = (actual - expected).powi(2);
     let gradient = 2.0 * (actual - expected);
     (loss, gradient)
@@ -398,13 +399,13 @@ fn build_knot_extension_plan(
         (num_epochs, vec![])
     } else {
         let knot_gap = ideal_knot_length - starting_knot_length;
-        // let knots_added_per_epoch = knot_gap as f32 / (num_epochs - 1) as f32; // -1 to make sure we have max knots by the last epoch
+        // let knots_added_per_epoch = knot_gap as f64 / (num_epochs - 1) as f64; // -1 to make sure we have max knots by the last epoch
         // if knots_added_per_epoch >= 1.0 {
         //     // we need to add at least one knot per epoch
         //     let knot_targets: Vec<usize> = (1..num_epochs)
         //         .map(|epoch_count| {
         //             starting_knot_length
-        //                 + (epoch_count as f32 * knots_added_per_epoch).round() as usize
+        //                 + (epoch_count as f64 * knots_added_per_epoch).round() as usize
         //         })
         //         .collect();
         //     (1, knot_targets)
@@ -443,7 +444,7 @@ impl EmptyObserver {
     }
 }
 impl TrainingObserver for EmptyObserver {
-    fn on_epoch_end(&self, _epoch: usize, _epoch_loss: f32, _validation_loss: f32) {
+    fn on_epoch_end(&self, _epoch: usize, _epoch_loss: f64, _validation_loss: f64) {
         // do nothing
     }
     fn on_sample_end(&self) {
@@ -506,7 +507,7 @@ mod test {
         let rounded_gradients = gradient
             .iter()
             .map(|x| (x * 10000.0).round() / 10000.0)
-            .collect::<Vec<f32>>();
+            .collect::<Vec<f64>>();
         assert_eq!(rounded_loss, expected_loss);
         assert_eq!(rounded_gradients, expected_gradients);
     }

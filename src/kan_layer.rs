@@ -32,7 +32,7 @@ pub struct KanLayer {
     ///
     /// dim1 = input_dimension
     #[serde(skip)] // part of the layer's operating state, not part of the model
-    samples: Vec<Vec<f32>>,
+    samples: Vec<Vec<f64>>,
 }
 
 /// Hyperparameters for a KanLayer
@@ -76,8 +76,8 @@ impl KanLayer {
         let mut randomness = thread_rng();
         let splines = (0..num_edges)
             .map(|_| {
-                let coefficients: Vec<f32> = (0..options.coef_size)
-                    .map(|_| normal_dist.sample(&mut randomness) as f32)
+                let coefficients: Vec<f64> = (0..options.coef_size)
+                    .map(|_| normal_dist.sample(&mut randomness) as f64)
                     .collect();
                 Spline::new(options.degree, coefficients, linspace(-1.0, 1.0, num_knots))
                     .expect("spline creation error")
@@ -125,7 +125,7 @@ impl KanLayer {
     /// assert_eq!(acts.len(), output_dimension);
     /// # Ok::<(), fekan::kan_layer::ForwardLayerError>(())
     /// ```
-    pub fn forward(&mut self, preactivation: &[f32]) -> Result<Vec<f32>, ForwardLayerError> {
+    pub fn forward(&mut self, preactivation: &[f64]) -> Result<Vec<f64>, ForwardLayerError> {
         //  check the length here since it's the same check for the entire layer, even though the "node" is technically the part that cares
         if preactivation.len() != self.input_dimension {
             return Err(ForwardLayerError::MissizedPreactsError {
@@ -138,7 +138,7 @@ impl KanLayer {
         // it probably makes sense to move straight down the list of splines, since that theoretically should have better cache performance
         // also, I guess I haven't decided (in code) how the splines are ordered, so there's no reason I can't say the first n splines all belong to the first node, etc.
         // I just have to be consistent when I get to back propagation
-        let mut activations: Vec<f32> = vec![0.0; self.output_dimension];
+        let mut activations: Vec<f64> = vec![0.0; self.output_dimension];
         for (idx, spline) in self.splines.iter_mut().enumerate() {
             let act = spline.forward(preactivation[idx % self.input_dimension]); // the first `input_dimension` splines belong to the first "node", the second `input_dimension` splines belong to the second node, etc.
             if act.is_nan() {
@@ -160,7 +160,7 @@ impl KanLayer {
     /// # Errors
     /// Returns an [`LayerError`] if the length of `preactivation` is not equal to the input_dimension this layer, or if the activations contain NaNs.
 
-    pub fn infer(&self, preactivation: &[f32]) -> Result<Vec<f32>, ForwardLayerError> {
+    pub fn infer(&self, preactivation: &[f64]) -> Result<Vec<f64>, ForwardLayerError> {
         if preactivation.len() != self.input_dimension {
             return Err(ForwardLayerError::MissizedPreactsError {
                 actual: preactivation.len(),
@@ -168,7 +168,7 @@ impl KanLayer {
             });
         }
 
-        let mut activations: Vec<f32> = vec![0.0; self.output_dimension];
+        let mut activations: Vec<f64> = vec![0.0; self.output_dimension];
         for (idx, spline) in self.splines.iter().enumerate() {
             let act = spline.infer(preactivation[idx % self.input_dimension]);
             activations[(idx / self.input_dimension) as usize] += act;
@@ -199,8 +199,8 @@ impl KanLayer {
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
     /// # let some_layer_options = KanLayerOptions {input_dimension: 2,output_dimension: 4,degree: 5, coef_size: 6};
     /// let mut my_layer = KanLayer::new(&some_layer_options);
-    /// let sample1 = vec![100f32, -100f32];
-    /// let sample2 = vec![-100f32, 100f32];
+    /// let sample1 = vec![100f64, -100f64];
+    /// let sample2 = vec![-100f64, 100f64];
     ///
     /// let acts = my_layer.forward(&sample1).unwrap();
     /// assert!(acts.iter().all(|x| *x == 0.0)); // the preacts were all outside the initial knot range, so the activations should all be 0
@@ -213,7 +213,7 @@ impl KanLayer {
     /// ```
     pub fn update_knots_from_samples(
         &mut self,
-        knot_adaptivity: f32,
+        knot_adaptivity: f64,
     ) -> Result<(), UpdateLayerKnotsError> {
         if self.samples.is_empty() {
             return Err(UpdateLayerKnotsError::NoSamplesError);
@@ -221,7 +221,7 @@ impl KanLayer {
 
         // lets construct a sorted vector of the samples for each incoming value
         // first we transpose the samples, so that dim0 = input_dimension, dim1 = number of samples
-        let mut sorted_samples: Vec<Vec<f32>> =
+        let mut sorted_samples: Vec<Vec<f64>> =
             vec![Vec::with_capacity(self.samples.len()); self.input_dimension];
         for i in 0..self.samples.len() {
             for j in 0..self.input_dimension {
@@ -253,8 +253,8 @@ impl KanLayer {
     /// # let some_layer_options = KanLayerOptions {input_dimension: 2,output_dimension: 4,degree: 5, coef_size: 6};
     /// let mut my_layer = KanLayer::new(&some_layer_options);
     /// /* After several forward passes... */
-    /// # let sample1 = vec![100f32, -100f32];
-    /// # let sample2 = vec![-100f32, 100f32];
+    /// # let sample1 = vec![100f64, -100f64];
+    /// # let sample2 = vec![-100f64, 100f64];
     /// # let _acts = my_layer.forward(&sample1)?;
     /// # let _acts = my_layer.forward(&sample2)?;
     /// let update_result = my_layer.update_knots_from_samples(0.0);
@@ -306,7 +306,7 @@ impl KanLayer {
     /// second_layer.zero_gradients();
     /// /* continue training */
     /// ```
-    pub fn backward(&mut self, error: &[f32]) -> Result<Vec<f32>, BackwardLayerError> {
+    pub fn backward(&mut self, error: &[f64]) -> Result<Vec<f64>, BackwardLayerError> {
         if error.len() != self.output_dimension {
             return Err(BackwardLayerError::MissizedGradientError {
                 actual: error.len(),
@@ -322,7 +322,7 @@ impl KanLayer {
             // every `input_dimension` splines belong to the same node, and thus will use the same error value.
             // "Distribute" the error at a given node among all incoming edges
             let error_at_edge_output =
-                error[i / self.input_dimension] / self.input_dimension as f32;
+                error[i / self.input_dimension] / self.input_dimension as f64;
             let error_at_edge_input = self.splines[i].backward(error_at_edge_output)?;
             input_error[i % self.input_dimension] += error_at_edge_input;
         }
@@ -450,7 +450,7 @@ impl KanLayer {
     ///
     /// # Examples
     /// see [`KanLayer::backward`]
-    pub fn update(&mut self, learning_rate: f32) {
+    pub fn update(&mut self, learning_rate: f64) {
         for spline in self.splines.iter_mut() {
             spline.update(learning_rate);
         }
@@ -648,7 +648,7 @@ mod test {
         let mut knots = vec![0.0; knot_size];
         knots[0] = -1.0;
         for i in 1..knots.len() {
-            knots[i] = -1.0 + (i as f32 / (knot_size - 1) as f32 * 2.0);
+            knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
         }
         let spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
         let spline2 = Spline::new(k, vec![-1.0; coef_size], knots.clone()).unwrap();
@@ -684,7 +684,7 @@ mod test {
         let preacts = vec![0.0, 0.5];
         let acts = layer.forward(&preacts).unwrap();
         let expected_activations = vec![0.3177, -0.3177];
-        let rounded_activations: Vec<f32> = acts
+        let rounded_activations: Vec<f64> = acts
             .iter()
             .map(|x| (x * 10000.0).round() / 10000.0)
             .collect();
@@ -712,7 +712,7 @@ mod test {
         let preacts = vec![0.0, 0.5];
         let acts = layer.forward(&preacts).unwrap();
         let expected_activations = vec![0.3177, -0.3177];
-        let rounded_activations: Vec<f32> = acts
+        let rounded_activations: Vec<f64> = acts
             .iter()
             .map(|x| (x * 10000.0).round() / 10000.0)
             .collect();
@@ -721,7 +721,7 @@ mod test {
         let error = vec![1.0, 0.5];
         let input_error = layer.backward(&error).unwrap();
         let expected_input_error = vec![0.0, 0.60156];
-        let rounded_input_error: Vec<f32> = input_error
+        let rounded_input_error: Vec<f64> = input_error
             .iter()
             .map(|f| (f * 100000.0).round() / 100000.0)
             .collect();

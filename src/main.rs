@@ -123,11 +123,11 @@ struct TrainArgs {
     /// When knot_adaptivity = 0, the knots are uniformly distributed over the sample space;
     /// when knot_adaptivity = 1, the knots are placed at the quantiles of the input data;
     /// 0 < knot_adaptivity < 1 interpolates between these two extremes.
-    knot_adaptivity: f32,
+    knot_adaptivity: f64,
 
     #[arg(long, alias = "lr", default_value = "0.01", global = true)]
     /// the learning rate used to update the model weights
-    learning_rate: f32,
+    learning_rate: f64,
 
     /// the maximum length to which knot vectors can be extended during training. If not set, the knot vectors will gradually be extended so that the total number of knots ~= the number of training samples
     #[arg(long, global = true)]
@@ -139,7 +139,7 @@ struct TrainArgs {
 
     #[arg(long, default_value = "0.2", global = true)]
     /// the fraction of the training data to use as validation data
-    validation_split: f32,
+    validation_split: f64,
 
     /// path to the output file for the model weights. Supported file extensions are .pkl, .json, and .cbor
     #[arg(short = 'o', long = "model-out", group = "output")]
@@ -536,7 +536,7 @@ impl TrainingObserver for TrainingProgress {
     fn on_sample_end(&self) {
         self.pb.inc(1);
     }
-    fn on_epoch_end(&self, epoch: usize, epoch_loss: f32, validation_loss: f32) {
+    fn on_epoch_end(&self, epoch: usize, epoch_loss: f64, validation_loss: f64) {
         self.pb.println(format!(
             "{} Epoch {}: Training Loss: {}, Validation Loss: {}",
             chrono::Local::now(),
@@ -559,22 +559,22 @@ impl TrainingObserver for TrainingProgress {
 #[derive(Deserialize, Debug)]
 #[cfg_attr(test, derive(serde::Serialize, PartialEq))]
 struct ClassificationSample {
-    features: Vec<f32>,
+    features: Vec<f64>,
     label: String,
 }
 
 #[derive(Deserialize, Debug)]
 #[cfg_attr(test, derive(serde::Serialize, PartialEq))]
 struct RegressionSample {
-    features: Vec<f32>,
-    label: f32,
+    features: Vec<f64>,
+    label: f64,
 }
 
 const SUPPORTED_EXTENSIONS: [&str; 3] = ["pkl", "json", "avro"];
 
 fn load_classification_data(
     data_file_path: &PathBuf,
-    validation_split: f32,
+    validation_split: f64,
     classes: &Vec<String>,
 ) -> Result<(Vec<Sample>, Vec<Sample>), Box<dyn Error>> {
     let file = File::open(data_file_path)?;
@@ -613,15 +613,15 @@ fn load_classification_data(
     );
     println!("Using class map: {:?}", class_map);
 
-    // turn the raw data into a vector of Samples (with the labels mapped to u32s (with the u32s  as f32s))
+    // turn the raw data into a vector of Samples (with the labels mapped to u32s (with the u32s  as f64s))
     let mut data = Vec::with_capacity(raw_data.len());
     for raw_sample in raw_data {
         if !class_map.contains_key(&raw_sample.label) {
             continue; // ignore data points with labels not in the provided class list
         }
         let label = class_map[&raw_sample.label];
-        let features: Vec<f32> = raw_sample.features;
-        data.push(Sample::new(features, label as f32));
+        let features: Vec<f64> = raw_sample.features;
+        data.push(Sample::new(features, label as f64));
     }
 
     split_data(validation_split, data, rows_loaded)
@@ -629,7 +629,7 @@ fn load_classification_data(
 
 fn load_regression_data(
     data_file_path: &PathBuf,
-    validation_split: f32,
+    validation_split: f64,
 ) -> Result<(Vec<Sample>, Vec<Sample>), Box<dyn Error>> {
     println!("Loading regression data from file: {:?}", data_file_path);
     let file = File::open(data_file_path)?;
@@ -671,7 +671,7 @@ fn load_regression_data(
 fn load_inference_data(data_file_path: &PathBuf) -> Result<Vec<Sample>, Box<dyn Error>> {
     #[derive(Deserialize, Debug)]
     struct InferenceSample {
-        features: Vec<f32>,
+        features: Vec<f64>,
     }
 
     let file = File::open(data_file_path)?;
@@ -706,13 +706,13 @@ fn load_inference_data(data_file_path: &PathBuf) -> Result<Vec<Sample>, Box<dyn 
 }
 
 fn split_data(
-    validation_split: f32,
+    validation_split: f64,
     data: Vec<Sample>,
     rows_loaded: usize,
 ) -> Result<(Vec<Sample>, Vec<Sample>), Box<dyn Error>> {
     // separate the data into training and validation sets
     let mut validation_indecies: FxHashSet<usize> = FxHashSet::default();
-    while validation_indecies.len() < (validation_split * data.len() as f32) as usize {
+    while validation_indecies.len() < (validation_split * data.len() as f64) as usize {
         let index = rand::random::<usize>() % data.len();
         validation_indecies.insert(index);
     }
@@ -762,7 +762,7 @@ mod test_main {
                     label: classes[0].clone(),
                 },
                 ClassificationSample {
-                    features: vec![f32::MIN, 0.0, f32::MAX],
+                    features: vec![f64::MIN, 0.0, f64::MAX],
                     label: classes[1].clone(),
                 },
                 ClassificationSample {
@@ -781,7 +781,7 @@ mod test_main {
                 label: -1.0,
             },
             RegressionSample {
-                features: vec![f32::MIN, 0.0, f32::MAX],
+                features: vec![f64::MIN, 0.0, f64::MAX],
                 label: 0.001,
             },
             RegressionSample {
@@ -803,7 +803,7 @@ mod test_main {
         let expected_data: Vec<Sample> = test_data
             .iter()
             .enumerate()
-            .map(|(i, sample)| Sample::new(sample.features.clone(), i as f32))
+            .map(|(i, sample)| Sample::new(sample.features.clone(), i as f64))
             .collect();
         assert_eq!(expected_data, loaded_data);
     }
@@ -820,7 +820,7 @@ mod test_main {
         let expected_data: Vec<Sample> = test_data
             .iter()
             .enumerate()
-            .map(|(i, sample)| Sample::new(sample.features.clone(), i as f32))
+            .map(|(i, sample)| Sample::new(sample.features.clone(), i as f64))
             .collect();
         assert_eq!(expected_data, loaded_data);
     }
@@ -844,7 +844,7 @@ mod test_main {
         let expected_data: Vec<Sample> = test_data
             .iter()
             .enumerate()
-            .map(|(i, sample)| Sample::new(sample.features.clone(), i as f32))
+            .map(|(i, sample)| Sample::new(sample.features.clone(), i as f64))
             .collect();
         assert_eq!(expected_data, loaded_data);
     }

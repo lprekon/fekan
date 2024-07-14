@@ -5,28 +5,28 @@ use serde::{Deserialize, Serialize};
 use std::slice::Iter;
 
 /// margin to add to the beginning and end of the knot vector when updating it from samples
-pub(super) const KNOT_MARGIN: f32 = 0.01;
+pub(super) const KNOT_MARGIN: f64 = 0.01;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Spline {
     // degree, control points, and knots are the parameters of the spline
     // these three fields constitute the "identity" of the spline, so they're the only ones that get serialized, considered for equality, etc.
     degree: usize,
-    control_points: Vec<f32>,
-    knots: Vec<f32>,
+    control_points: Vec<f64>,
+    knots: Vec<f64>,
 
     // the remaining fields represent the "state" of the spline.
     // They're in flux during operation, and so are ignored for any sort of persitence or comparison.
     /// the most recent parameter used in the forward pass
     #[serde(skip)]
     // only used during operation
-    last_t: Option<f32>,
+    last_t: Option<f64>,
     /// the activations of the spline at each interval, stored from calls to [`forward()`](Spline::forward) and cleared on calls to [`update_knots_from_samples()`](Spline::update_knots_from_samples)
     #[serde(skip)] // only used during training
-    activations: FxHashMap<(usize, usize, u32), f32>,
+    activations: FxHashMap<(usize, usize, u64), f64>,
     /// accumulated gradients for each control point
     #[serde(skip)] // only used during training
-    gradients: Vec<f32>,
+    gradients: Vec<f64>,
 }
 
 impl Spline {
@@ -36,8 +36,8 @@ impl Spline {
     /// returns an error if the length of the knot vector is not at least `|control_points| + degree + 1`
     pub(super) fn new(
         degree: usize,
-        control_points: Vec<f32>,
-        knots: Vec<f32>,
+        control_points: Vec<f64>,
+        knots: Vec<f64>,
     ) -> Result<Self, CreateSplineError> {
         let size = control_points.len();
         let min_required_knots = size + degree + 1;
@@ -60,7 +60,7 @@ impl Spline {
     /// compute the point on the spline at the given parameter `t`
     ///
     /// accumulate the activations of the spline at each interval in the internal `activations` field
-    pub fn forward(&mut self, t: f32) -> f32 {
+    pub fn forward(&mut self, t: f64) -> f64 {
         self.last_t = Some(t); // store the most recent input for use in the backward pass
         let mut sum = 0.0;
         for (idx, coef) in self.control_points.iter().enumerate() {
@@ -80,7 +80,7 @@ impl Spline {
     /// comput the point on the spline at given parameter `t`
     ///
     /// Does not accumulate the activations of the spline at each interval in the internal `activations` field, or any other internal state
-    pub fn infer(&self, t: f32) -> f32 {
+    pub fn infer(&self, t: f64) -> f64 {
         self.control_points
             .iter()
             .enumerate()
@@ -98,7 +98,7 @@ impl Spline {
     /// * Returns [`BackwardSplineError::BackwardBeforeForwardError`] if called before a forward pass
     /// * Returns [`BackwardSplineError::ReceivedNanError`] if the passed `error` value is `NaN`
     /// * Returns [`BackwardSplineError::GradientIsNanError`] if any of the calculated gradients are `NaN`
-    pub(super) fn backward(&mut self, error: f32) -> Result<f32, BackwardSplineError> {
+    pub(super) fn backward(&mut self, error: f64) -> Result<f64, BackwardSplineError> {
         if let None = self.last_t {
             return Err(BackwardSplineError::BackwardBeforeForwardError);
         }
@@ -107,7 +107,7 @@ impl Spline {
         }
         let last_t = self.last_t.unwrap();
 
-        let adjusted_error = error / self.control_points.len() as f32; // distribute the error evenly across all control points
+        let adjusted_error = error / self.control_points.len() as f64; // distribute the error evenly across all control points
 
         // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
         let mut drt_output_wrt_input = 0.0;
@@ -122,8 +122,8 @@ impl Spline {
 
             // calculate the derivative of the spline output with respect to the input (as opposed to wrt the control points)
             // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
-            let left = (k as f32 - 1.0) / (self.knots[i + k - 1] - self.knots[i]);
-            let right = (k as f32 - 1.0) / (self.knots[i + k] - self.knots[i + 1]);
+            let left = (k as f64 - 1.0) / (self.knots[i + k - 1] - self.knots[i]);
+            let right = (k as f64 - 1.0) / (self.knots[i + k] - self.knots[i + 1]);
             let left_recurse = basis_cached(
                 i,
                 k - 1,
@@ -151,7 +151,7 @@ impl Spline {
         return Ok(drt_output_wrt_input * error);
     }
 
-    pub(super) fn update(&mut self, learning_rate: f32) {
+    pub(super) fn update(&mut self, learning_rate: f64) {
         for i in 0..self.control_points.len() {
             self.control_points[i] -= learning_rate * self.gradients[i];
         }
@@ -165,11 +165,11 @@ impl Spline {
 
     #[allow(dead_code)]
     // used in tests for parent module
-    pub(super) fn knots<'a>(&'a self) -> Iter<'a, f32> {
+    pub(super) fn knots<'a>(&'a self) -> Iter<'a, f64> {
         self.knots.iter()
     }
 
-    // pub(super) fn control_points(&self) -> Iter<'_, f32> {
+    // pub(super) fn control_points(&self) -> Iter<'_, f64> {
     //     self.control_points.iter()
     // }
 
@@ -178,11 +178,11 @@ impl Spline {
     /// If the new knots would contain `degree` or more duplicates - generally caused by too many duplicates in the samples - the knots are not updated
     ///
     /// If `samples` is not sorted, the results of the update and future spline operation are undefined.
-    pub(super) fn update_knots_from_samples(&mut self, samples: &[f32], knot_adaptivity: f32) {
+    pub(super) fn update_knots_from_samples(&mut self, samples: &[f64], knot_adaptivity: f64) {
         self.activations.clear(); // clear the memoized activations. They're no longer valid, now that the knots are changing
 
         let knot_size = self.knots.len();
-        let mut adaptive_knots: Vec<f32> = Vec::with_capacity(knot_size);
+        let mut adaptive_knots: Vec<f64> = Vec::with_capacity(knot_size);
         let num_intervals = self.knots.len() - 1;
         let step_size = samples.len() / (num_intervals);
         for i in 0..num_intervals {
@@ -194,7 +194,7 @@ impl Spline {
         let span_max = samples[samples.len() - 1];
         let uniform_knots = linspace(span_min, span_max, self.knots.len());
 
-        let mut new_knots: Vec<f32> = adaptive_knots
+        let mut new_knots: Vec<f64> = adaptive_knots
             .iter()
             .zip(uniform_knots.iter())
             .map(|(a, b)| a * knot_adaptivity + b * (1.0 - knot_adaptivity))
@@ -233,7 +233,7 @@ impl Spline {
             .activations
             .iter()
             .filter(|((_i, k, _t), _b)| *k == self.degree)
-            .map(|((i, _k, t), b)| (*i, f32::from_bits(*t), *b))
+            .map(|((i, _k, t), b)| (*i, f64::from_bits(*t), *b))
             .collect::<Vec<_>>();
         if something.is_empty() {
             return Err(UpdateSplineKnotsError::ActivationsEmptyError);
@@ -380,12 +380,12 @@ impl std::error::Error for UpdateSplineKnotsError {}
 // since this function neither takes nor returns a Spline struct, it doesn't make sense to have it as a method on the struct, so I'm moving it outside the impl block
 // TODO fix caching to not cache past first recursion and to add a no-cache option
 // fn b(
-//     cache: &mut FxHashMap<(usize, usize, u32), f32>,
+//     cache: &mut FxHashMap<(usize, usize, u32), f64>,
 //     i: usize,
 //     k: usize,
-//     knots: &Vec<f32>,
-//     t: f32,
-// ) -> f32 {
+//     knots: &Vec<f64>,
+//     t: f64,
+// ) -> f64 {
 //     if k == 0 {
 //         if knots[i] <= t && t < knots[i + 1] {
 //             return 1.0;
@@ -412,11 +412,11 @@ impl std::error::Error for UpdateSplineKnotsError {}
 fn basis_cached(
     i: usize,
     k: usize,
-    t: f32,
-    knots: &[f32],
-    cache: &mut FxHashMap<(usize, usize, u32), f32>,
+    t: f64,
+    knots: &[f64],
+    cache: &mut FxHashMap<(usize, usize, u64), f64>,
     degree: usize,
-) -> f32 {
+) -> f64 {
     if k == 0 {
         if knots[i] <= t && t < knots[i + 1] {
             return 1.0;
@@ -446,7 +446,7 @@ fn basis_cached(
 
 /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
 /// These functions need to be outside the impl block because they need to borrow the cache mutably, which would conflict with the borrow of self used to iterate over the coefficients
-fn basis_no_cache(i: usize, k: usize, t: f32, knots: &[f32]) -> f32 {
+fn basis_no_cache(i: usize, k: usize, t: f64, knots: &[f64]) -> f64 {
     if k == 0 {
         if knots[i] <= t && t < knots[i + 1] {
             return 1.0;
@@ -462,12 +462,12 @@ fn basis_no_cache(i: usize, k: usize, t: f32, knots: &[f32]) -> f32 {
 }
 
 /// generate `num` values evenly spaced between `min` and `max` inclusive
-pub(crate) fn linspace(min: f32, max: f32, num: usize) -> Vec<f32> {
+pub(crate) fn linspace(min: f64, max: f64, num: usize) -> Vec<f64> {
     let mut knots = Vec::with_capacity(num);
     let num_intervals = num - 1;
-    let step_size = (max - min) / (num_intervals) as f32;
+    let step_size = (max - min) / (num_intervals) as f64;
     for i in 0..num_intervals {
-        knots.push(min + i as f32 * step_size);
+        knots.push(min + i as f64 * step_size);
     }
     knots.push(max);
     knots
@@ -553,11 +553,11 @@ mod tests {
         let mut knots = vec![0.0; knot_size];
         knots[0] = -1.0;
         for i in 1..knots.len() {
-            knots[i] = -1.0 + (i as f32 / (knot_size - 1) as f32 * 2.0);
+            knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
         }
         let mut spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
         println!("{:#?}", spline1);
-        let t: f32 = 0.0;
+        let t: f64 = 0.0;
         let result = spline1.forward(t);
         let infer_result = spline1.infer(t);
         assert_eq!(
@@ -581,7 +581,7 @@ mod tests {
         let input_gradient = spline.backward(error).unwrap();
         let expected_spline_drt_wrt_input = 1.2290;
         let expedted_control_point_gradients = vec![-0.0077, -0.0867, -0.0547, -0.0009];
-        let rounded_control_point_gradients: Vec<f32> = spline
+        let rounded_control_point_gradients: Vec<f64> = spline
             .gradients
             .iter()
             .map(|g| (g * 10000.0).round() / 10000.0)
@@ -605,7 +605,7 @@ mod tests {
         let mut knots = vec![0.0; knot_size];
         knots[0] = -1.0;
         for i in 1..knots.len() {
-            knots[i] = -1.0 + (i as f32 / (knot_size - 1) as f32 * 2.0);
+            knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
         }
         let mut spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
         println!("setup: {:#?}", spline1);
@@ -654,15 +654,15 @@ mod tests {
             samples.push(3.0)
         }
         for i in 0..100 {
-            samples.push(-3.0 + i as f32 * 0.06);
+            samples.push(-3.0 + i as f64 * 0.06);
         }
-        samples.sort_by(|a, b| a.partial_cmp(b).unwrap()); // this is annoying, but f32 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp // this is annoying, but f32 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp)
+        samples.sort_by(|a, b| a.partial_cmp(b).unwrap()); // this is annoying, but f64 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp // this is annoying, but f64 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp)
         println!("{:?}", samples);
         spline.update_knots_from_samples(samples.as_slice(), 1.0);
         let mut expected_knots = vec![-3.0, -1.74, -0.48, 0.78, 2.04, 3.0, 3.0, 3.0];
         expected_knots[0] -= KNOT_MARGIN;
         expected_knots[7] += KNOT_MARGIN;
-        let rounded_knots: Vec<f32> = spline
+        let rounded_knots: Vec<f64> = spline
             .knots
             .iter()
             .map(|k| (k * 10000.0).round() / 10000.0)
@@ -683,7 +683,7 @@ mod tests {
         let expected_outputs = inputs
             .iter()
             .map(|i| spline.forward(*i))
-            .collect::<Vec<f32>>(); // use forward because we want the activations to be memoized
+            .collect::<Vec<f64>>(); // use forward because we want the activations to be memoized
 
         let new_knot_length = knot_length * 2 - 1; // increase knot length
         spline.set_knot_length(new_knot_length).unwrap();
@@ -691,14 +691,14 @@ mod tests {
         let test_outputs = inputs
             .iter()
             .map(|i| spline.forward(*i))
-            .collect::<Vec<f32>>();
+            .collect::<Vec<f64>>();
 
         let rmse = (expected_outputs
             .iter()
             .zip(test_outputs.iter())
             .map(|(e, t)| (e - t).powi(2))
-            .sum::<f32>()
-            / sample_size as f32)
+            .sum::<f64>()
+            / sample_size as f64)
             .sqrt();
         assert_ne!(
             spline.control_points,
@@ -721,7 +721,7 @@ mod tests {
         let expected_outputs = inputs
             .iter()
             .map(|i| spline.forward(*i))
-            .collect::<Vec<f32>>(); // use forward because we want the activations to be memoized
+            .collect::<Vec<f64>>(); // use forward because we want the activations to be memoized
 
         let new_knot_length = knot_length - 2; // decrease knot length
         spline.set_knot_length(new_knot_length).unwrap();
@@ -729,14 +729,14 @@ mod tests {
         let test_outputs = inputs
             .iter()
             .map(|i| spline.forward(*i))
-            .collect::<Vec<f32>>();
+            .collect::<Vec<f64>>();
 
         let rmse = (expected_outputs
             .iter()
             .zip(test_outputs.iter())
             .map(|(e, t)| (e - t).powi(2))
-            .sum::<f32>()
-            / sample_size as f32)
+            .sum::<f64>()
+            / sample_size as f64)
             .sqrt();
         assert_almost_eq!(rmse as f64, 0., 1e-1); // it doesn't work as well as the other way around, but it still works
     }

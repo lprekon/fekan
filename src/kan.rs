@@ -184,7 +184,7 @@ impl Kan {
     /// /* interpret the output as you like, for example as logits in a classifier, or as predicted value in a regressor */
     /// # Ok::<(), fekan::kan::KanError>(())
     /// ```
-    pub fn forward(&mut self, input: Vec<f32>) -> Result<Vec<f32>, KanError> {
+    pub fn forward(&mut self, input: Vec<f64>) -> Result<Vec<f64>, KanError> {
         let mut preacts = input;
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             let result = layer.forward(&preacts);
@@ -206,7 +206,7 @@ impl Kan {
     ///
     /// # Errors
     /// returns a [KanError] if any layer returns an error.
-    pub fn infer(&self, input: Vec<f32>) -> Result<Vec<f32>, KanError> {
+    pub fn infer(&self, input: Vec<f64>) -> Result<Vec<f64>, KanError> {
         let mut preacts = input;
         for (idx, layer) in self.layers.iter().enumerate() {
             let result = layer.infer(&preacts);
@@ -249,7 +249,7 @@ impl Kan {
     /// /* interpret the output as you like, for example as logits */
     /// # Ok::<(), fekan::kan::KanError>(())
     /// ```
-    pub fn backward(&mut self, error: Vec<f32>) -> Result<Vec<f32>, KanError> {
+    pub fn backward(&mut self, error: Vec<f64>) -> Result<Vec<f64>, KanError> {
         let mut error = error;
         for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
             let backward_result = layer.backward(&error);
@@ -269,7 +269,7 @@ impl Kan {
     }
 
     /// calls each layer's [`crate::kan_layer::KanLayer::update`] method with the given learning rate
-    pub fn update(&mut self, learning_rate: f32) {
+    pub fn update(&mut self, learning_rate: f64) {
         for layer in self.layers.iter_mut() {
             layer.update(learning_rate);
         }
@@ -307,7 +307,7 @@ impl Kan {
     /// # Errors
     /// returns a [KanError] if any layer returns an error. see [`crate::kan_layer::KanLayer::update_knots_from_samples`] for more information
     ///
-    pub fn update_knots_from_samples(&mut self, knot_adaptivity: f32) -> Result<(), KanError> {
+    pub fn update_knots_from_samples(&mut self, knot_adaptivity: f64) -> Result<(), KanError> {
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             if let Err(e) = layer.update_knots_from_samples(knot_adaptivity) {
                 return Err(KanError {

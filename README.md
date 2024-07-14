@@ -111,10 +111,10 @@ Load and use a trained classification model
  use fekan::kan::Kan;
 
  let trained_model = serde_json::from_reader(&model_file);
- let data: Vec<Vec<f32>> = /* load data */
- let predictions: Vec<(Vec<f32>, &str)> = Vec::with_capacity(data.len());
+ let data: Vec<Vec<f64>> = /* load data */
+ let predictions: Vec<(Vec<f64>, &str)> = Vec::with_capacity(data.len());
  for features in data{
-  let logits: Vec<f32> = trained_model.forward(features);
+  let logits: Vec<f64> = trained_model.forward(features);
   let (index, probability) = /* interpret your logit data */
   let label: &str = trained_model.node_to_label(index); // get the human-readable label for a given output node
  }
