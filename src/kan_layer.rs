@@ -3,12 +3,15 @@ mod spline;
 
 use rand::distributions::Distribution;
 use rand::thread_rng;
+use rayon::prelude::*;
+use rayon::{iter::IntoParallelIterator, ThreadPool};
 use serde::{Deserialize, Serialize};
 use spline::{linspace, BackwardSplineError, Spline, UpdateSplineKnotsError};
 use statrs::distribution::Normal; // apparently the statrs distributions use the rand Distribution trait
 
 use std::{
     fmt::{self, Formatter},
+    sync::{Arc, Mutex},
     vec,
 };
 
@@ -126,14 +129,7 @@ impl KanLayer {
     /// # Ok::<(), fekan::kan_layer::ForwardLayerError>(())
     /// ```
     pub fn forward(&mut self, preactivation: &[f64]) -> Result<Vec<f64>, ForwardLayerError> {
-        //  check the length here since it's the same check for the entire layer, even though the "node" is technically the part that cares
-        if preactivation.len() != self.input_dimension {
-            return Err(ForwardLayerError::MissizedPreactsError {
-                actual: preactivation.len(),
-                expected: self.input_dimension,
-            });
-        }
-        self.samples.push(preactivation.into()); // save a copy of the preactivation for updating the knot vectors later
+        self.forward_preamble(preactivation)?;
 
         // it probably makes sense to move straight down the list of splines, since that theoretically should have better cache performance
         // also, I guess I haven't decided (in code) how the splines are ordered, so there's no reason I can't say the first n splines all belong to the first node, etc.
@@ -150,6 +146,104 @@ impl KanLayer {
         // if activations.iter().any(|x| x.is_nan()) {
         //     return Err(ForwardLayerError::NaNsError);
         // }
+        Ok(activations)
+    }
+
+    fn forward_preamble(&mut self, preactivation: &[f64]) -> Result<(), ForwardLayerError> {
+        if preactivation.len() != self.input_dimension {
+            return Err(ForwardLayerError::MissizedPreactsError {
+                actual: preactivation.len(),
+                expected: self.input_dimension,
+            });
+        }
+        self.samples.push(preactivation.into());
+        //  check the length here since it's the same check for the entire layer, even though the "node" is technically the part that cares
+        // save a copy of the preactivation for updating the knot vectors later
+        Ok(())
+    }
+
+    /// as [KanLayer::forward], but multi-threaded
+    pub fn forward_concurrent(
+        &mut self,
+        preactivation: &[f64],
+        thread_pool: &ThreadPool,
+    ) -> Result<Vec<f64>, ForwardLayerError> {
+        // until I fix the spline cache setup so that the threads don't have to keep locking and unlocking the same cache, multi-threading at the layer-level only is the fastest choice
+        self.forward_top_concurrent(preactivation, thread_pool)
+    }
+
+    /// used for testing and benchmarking. Users looking for a multithreaded forward pass should use [`KanLayer::forward_concurrent`]
+    pub fn forward_full_concurrent(
+        &mut self,
+        preactivation: &[f64],
+        thread_pool: &ThreadPool,
+    ) -> Result<Vec<f64>, ForwardLayerError> {
+        self.forward_preamble(preactivation)?;
+
+        // we don't bother multi-threading the splines, since most layers aren't going to have many splines - probably an order of magnitude fewer splines-per-layer than knots-per-spline
+        // so rather than dealing with 'Sending' the splines between threads, we'll loop over the splines in the main thread and let the splines pass out work to the thread pool
+
+        let mut activations: Vec<f64> = vec![0.0; self.output_dimension];
+        for (idx, spline) in self.splines.iter_mut().enumerate() {
+            let act =
+                spline.forward_concurrent(preactivation[idx % self.input_dimension], thread_pool); // the first `input_dimension` splines belong to the first "node", the second `input_dimension` splines belong to the second node, etc.
+            if act.is_nan() {
+                return Err(ForwardLayerError::NaNsError);
+            }
+            activations[(idx / self.input_dimension) as usize] += act; // every `input_dimension` splines, we move to the next node
+        }
+
+        Ok(activations)
+    }
+
+    /// used for testing and benchmarking. Users looking for a multithreaded forward pass should use [`KanLayer::forward_concurrent`]
+    pub fn forward_top_concurrent(
+        &mut self,
+        preactivation: &[f64],
+        thread_pool: &ThreadPool,
+    ) -> Result<Vec<f64>, ForwardLayerError> {
+        self.forward_preamble(preactivation)?;
+
+        let num_splines = self.splines.len();
+        let thread_safe_splines = self
+            .splines
+            .iter_mut()
+            .map(|spline| Arc::new(Mutex::new(spline)))
+            .collect::<Vec<_>>();
+        let activations = thread_pool
+            .install(|| {
+                let acts = Arc::new(Mutex::new(vec![0.0; self.output_dimension]));
+                (0..num_splines).into_par_iter().for_each(|idx| {
+                    let mut acting_spline = thread_safe_splines[idx].lock().unwrap();
+                    let act = acting_spline.forward(preactivation[idx % self.input_dimension]);
+                    acts.lock().unwrap()[(idx / self.input_dimension) as usize] += act;
+                    // every `input_dimension` splines, we move to the next node
+                });
+                acts
+            })
+            .lock()
+            .unwrap()
+            .to_vec();
+        Ok(activations)
+    }
+
+    /// used for testing and benchmarking. Users looking for a multithreaded forward pass should use [`KanLayer::forward_concurrent`]
+    pub fn forward_bot_concurrent(
+        &mut self,
+        preactivation: &[f64],
+        thread_pool: &ThreadPool,
+    ) -> Result<Vec<f64>, ForwardLayerError> {
+        self.forward_preamble(preactivation)?;
+
+        let mut activations: Vec<f64> = vec![0.0; self.output_dimension];
+        for (idx, spline) in self.splines.iter_mut().enumerate() {
+            let act =
+                spline.forward_concurrent(preactivation[idx % self.input_dimension], thread_pool); // the first `input_dimension` splines belong to the first "node", the second `input_dimension` splines belong to the second node, etc.
+            if act.is_nan() {
+                return Err(ForwardLayerError::NaNsError);
+            }
+            activations[(idx / self.input_dimension) as usize] += act; // every `input_dimension` splines, we move to the next node
+        }
         Ok(activations)
     }
 
@@ -635,6 +729,7 @@ impl std::error::Error for UpdateLayerKnotsError {}
 
 #[cfg(test)]
 mod test {
+    use rayon::ThreadPoolBuilder;
     use spline::Spline;
 
     use super::*;
@@ -683,6 +778,22 @@ mod test {
         let mut layer = build_test_layer();
         let preacts = vec![0.0, 0.5];
         let acts = layer.forward(&preacts).unwrap();
+        let expected_activations = vec![0.3177, -0.3177];
+        let rounded_activations: Vec<f64> = acts
+            .iter()
+            .map(|x| (x * 10000.0).round() / 10000.0)
+            .collect();
+        assert_eq!(rounded_activations, expected_activations);
+    }
+
+    #[test]
+    fn test_forward_concurrent() {
+        let mut layer = build_test_layer();
+        let preacts = vec![0.0, 0.5];
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let acts = layer
+            .forward_full_concurrent(&preacts, &thread_pool)
+            .unwrap();
         let expected_activations = vec![0.3177, -0.3177];
         let rounded_activations: Vec<f64> = acts
             .iter()

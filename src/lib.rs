@@ -31,6 +31,7 @@
 //! use tempfile::tempfile;
 //!
 //!
+//!
 //! // initialize the model
 //! let model_options = KanOptions{
 //!     input_size: 2,
