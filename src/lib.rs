@@ -128,8 +128,6 @@ impl Default for TrainingOptions {
     }
 }
 
-const HUBER_DELTA: f64 = 500.0;
-
 /// Train the provided model with the provided data.
 ///
 /// if `validation_data` is not `None`, the model will be validated after each epoch, and the validation loss will be reported to the observer, otherwise the reported validation loss will be NaN.
@@ -263,11 +261,8 @@ pub fn train_model<T: TrainingObserver>(
                     })?;
                 }
                 ModelType::Regression => {
-                    let (loss, dlogits) = calculate_huber_loss_and_gradient(
-                        output[0],
-                        sample.label as f64,
-                        HUBER_DELTA,
-                    ); //TODO allow different delta values
+                    let (loss, dlogits) =
+                        calculate_huber_loss_and_gradient(output[0], sample.label as f64); //TODO allow different delta values
                     epoch_loss += loss;
                     let _ = model.backward(vec![dlogits]).map_err(|e| TrainingError {
                         source: e,
@@ -340,8 +335,7 @@ pub fn validate_model<T: TrainingObserver>(
                 loss
             }
             ModelType::Regression => {
-                let (loss, _) =
-                    calculate_huber_loss_and_gradient(output[0], sample.label as f64, HUBER_DELTA); //TODO allow different delta values
+                let (loss, _) = calculate_huber_loss_and_gradient(output[0], sample.label as f64); //TODO allow different delta values
                 loss
             }
         };
@@ -390,20 +384,19 @@ fn calculate_mse_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
     (loss, gradient)
 }
 
+const HUBER_DELTA: f64 = 1.3407807929942596e154 - 1.0; // f64::MAX ^ 0.5 - 1.0. Chosen so the loss is equivalent to the MSE loss until the error would be greater than f64::MAX, and then it becomes linear
+
 /// Calculates the huber loss and the gradient of the loss with respect to the actual value
-fn calculate_huber_loss_and_gradient(actual: f64, expected: f64, delta: f64) -> (f64, f64) {
+fn calculate_huber_loss_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
     let diff = actual - expected;
-    let loss = if diff.abs() <= delta {
-        0.5 * diff.powi(2)
+    if diff.abs() <= HUBER_DELTA {
+        (0.5 * diff.powi(2), diff)
     } else {
-        delta * (diff.abs() - 0.5 * delta)
-    };
-    let gradient = if diff.abs() <= delta {
-        diff
-    } else {
-        delta * diff.signum()
-    };
-    (loss, gradient)
+        (
+            HUBER_DELTA * (diff.abs() - 0.5 * HUBER_DELTA),
+            HUBER_DELTA * diff.signum(),
+        )
+    }
 }
 
 /// Builds a plan for extending the knots of the model over the course of training.
