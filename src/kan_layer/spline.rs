@@ -1,4 +1,3 @@
-use core::fmt;
 use nalgebra::{DMatrix, DVector, SVD};
 use rayon::prelude::*;
 use rayon::ThreadPool;
@@ -6,6 +5,11 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::slice::Iter;
 use std::sync::{Arc, Mutex};
+
+mod basis_cache;
+pub(crate) mod spline_errors;
+
+use spline_errors::*;
 
 /// margin to add to the beginning and end of the knot vector when updating it from samples
 pub(super) const KNOT_MARGIN: f64 = 0.01;
@@ -352,69 +356,6 @@ impl PartialEq for Spline {
             && self.knots == other.knots
     }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum CreateSplineError {
-    TooFewKnotsError { expected: usize, actual: usize },
-}
-
-impl fmt::Display for CreateSplineError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            CreateSplineError::TooFewKnotsError { expected, actual } => {
-                write!(
-                    f,
-                    "knot vector has length {}, but expected length at least {}",
-                    actual, expected
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for CreateSplineError {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum BackwardSplineError {
-    BackwardBeforeForwardError,
-    ReceivedNanError,
-    // GradientIsNanError,
-}
-
-impl fmt::Display for BackwardSplineError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            BackwardSplineError::BackwardBeforeForwardError => {
-                write!(f, "backward called before forward")
-            }
-            BackwardSplineError::ReceivedNanError => write!(f, "received `NaN` as error value"),
-            // BackwardSplineError::GradientIsNanError => write!(f, "calculated gradient is NaN"),
-        }
-    }
-}
-
-impl std::error::Error for BackwardSplineError {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum UpdateSplineKnotsError {
-    ActivationsEmptyError,
-    NansInControlPointsError,
-}
-
-impl fmt::Display for UpdateSplineKnotsError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            UpdateSplineKnotsError::ActivationsEmptyError => {
-                write!(f, "activations cache is empty")
-            }
-            UpdateSplineKnotsError::NansInControlPointsError => {
-                write!(f, "control points contain NaN values")
-            }
-        }
-    }
-}
-
-impl std::error::Error for UpdateSplineKnotsError {}
 
 /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
 /// checks the provided cache for a memoized result before computing it. If the result is not found, it is computed and stored in the cache before being returned.
