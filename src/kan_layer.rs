@@ -1,12 +1,14 @@
 // #![allow(dead_code)]
 mod spline;
 
+pub use spline::basis_cache::CacheStats;
+
 use rand::distributions::Distribution;
 use rand::thread_rng;
 use rayon::prelude::*;
 use rayon::{iter::IntoParallelIterator, ThreadPool};
 use serde::{Deserialize, Serialize};
-use spline::{linspace, BackwardSplineError, Spline, UpdateSplineKnotsError};
+use spline::{linspace, spline_errors::*, Spline};
 use statrs::distribution::Normal; // apparently the statrs distributions use the rand Distribution trait
 
 use std::{
@@ -600,6 +602,11 @@ impl KanLayer {
     /// return the number of incoming edges to nodes in this layer
     pub fn total_edges(&self) -> usize {
         self.input_dimension * self.output_dimension
+    }
+
+    /// Get the cache stats for each spline in this layer. This is useful for debugging and performance tuning
+    pub fn cache_stats(&self) -> Vec<&Vec<Vec<CacheStats>>> {
+        self.splines.iter().map(|s| s.cache_stats()).collect()
     }
 }
 

@@ -1,11 +1,12 @@
 
-running 47 tests
+running 48 tests
 test kan::test::test_error_send ... ignored
 test kan::test::test_error_sync ... ignored
 test kan::test::test_forward ... ignored
 test kan::test::test_forward_then_backward ... ignored
 test kan::test::test_model_send ... ignored
 test kan::test::test_model_sync ... ignored
+test kan_layer::spline::basis_cache::test::test_cache_iteration ... ignored
 test kan_layer::spline::tests::backward_after_infer ... ignored
 test kan_layer::spline::tests::test_b_2 ... ignored
 test kan_layer::spline::tests::test_backward_before_forward ... ignored
@@ -48,24 +49,24 @@ test test::test_error_sync ... ignored
 test test::test_nll_loss_and_gradient ... ignored
 test test::test_nll_loss_and_gradient_2 ... ignored
 
-test result: ok. 0 passed; 0 failed; 47 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 48 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 running 14 tests
-test bench_backward                                       ... bench:     881,139.60 ns/iter (+/- 4,919.74)
-test bench_forward_big_layer_small_spline                 ... bench:     338,658.20 ns/iter (+/- 4,940.35)
-test bench_forward_bot_concurrent_big_layer_big_spline    ... bench: 356,514,729.10 ns/iter (+/- 15,621,586.25)
-test bench_forward_bot_concurrent_big_layer_small_spline  ... bench:  14,145,195.90 ns/iter (+/- 1,243,506.60)
-test bench_forward_bot_concurrent_small_layer_big_spline  ... bench:      37,986.74 ns/iter (+/- 3,050.21)
-test bench_forward_full_concurrent_big_layer_big_spline   ... bench: 359,950,904.10 ns/iter (+/- 9,881,844.36)
-test bench_forward_full_concurrent_big_layer_small_spline ... bench:  14,139,900.00 ns/iter (+/- 1,166,234.16)
-test bench_forward_full_concurrent_small_layer_big_spline ... bench:      37,899.35 ns/iter (+/- 3,011.56)
-test bench_forward_then_backward                          ... bench:     607,254.20 ns/iter (+/- 5,919.13)
-test bench_forward_top_concurrent_big_layer_big_spline    ... bench:  41,964,525.00 ns/iter (+/- 2,698,312.42)
-test bench_forward_top_concurrent_big_layer_small_spline  ... bench:     538,950.26 ns/iter (+/- 22,260.55)
-test bench_forward_top_concurrent_small_layer_big_spline  ... bench:      10,907.11 ns/iter (+/- 1,791.98)
-test bench_update                                         ... bench:       5,567.27 ns/iter (+/- 25.13)
-test bench_update_knots_from_samples                      ... bench:     280,218.75 ns/iter (+/- 38,756.33)
+test bench_backward                                       ... bench:   1,012,372.90 ns/iter (+/- 43,098.10)
+test bench_forward_big_layer_small_spline                 ... bench:     408,550.00 ns/iter (+/- 3,585.38)
+test bench_forward_bot_concurrent_big_layer_big_spline    ... bench: 271,100,458.30 ns/iter (+/- 131,280,052.18)
+test bench_forward_bot_concurrent_big_layer_small_spline  ... bench:  13,741,420.80 ns/iter (+/- 485,791.83)
+test bench_forward_bot_concurrent_small_layer_big_spline  ... bench:      37,137.39 ns/iter (+/- 1,845.53)
+test bench_forward_full_concurrent_big_layer_big_spline   ... bench: 272,773,491.60 ns/iter (+/- 16,524,089.07)
+test bench_forward_full_concurrent_big_layer_small_spline ... bench:  13,619,404.20 ns/iter (+/- 654,750.90)
+test bench_forward_full_concurrent_small_layer_big_spline ... bench:      37,222.75 ns/iter (+/- 1,015.75)
+test bench_forward_then_backward                          ... bench:     714,089.60 ns/iter (+/- 3,362.41)
+test bench_forward_top_concurrent_big_layer_big_spline    ... bench:  44,251,208.30 ns/iter (+/- 2,646,008.32)
+test bench_forward_top_concurrent_big_layer_small_spline  ... bench:     519,441.66 ns/iter (+/- 52,665.76)
+test bench_forward_top_concurrent_small_layer_big_spline  ... bench:      15,063.33 ns/iter (+/- 5,788.90)
+test bench_update                                         ... bench:       7,118.52 ns/iter (+/- 183.71)
+test bench_update_knots_from_samples                      ... bench:     871,621.88 ns/iter (+/- 38,651.88)
 
-test result: ok. 0 passed; 0 failed; 0 ignored; 14 measured; 0 filtered out; finished in 261.19s
+test result: ok. 0 passed; 0 failed; 0 ignored; 14 measured; 0 filtered out; finished in 214.13s
 

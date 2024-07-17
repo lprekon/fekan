@@ -1,5 +1,6 @@
 use crate::kan_layer::{
-    BackwardLayerError, ForwardLayerError, KanLayer, KanLayerOptions, UpdateLayerKnotsError,
+    BackwardLayerError, CacheStats, ForwardLayerError, KanLayer, KanLayerOptions,
+    UpdateLayerKnotsError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -348,6 +349,11 @@ impl Kan {
     /// if different layers have different knot lengths, this method will return the knot length of the first layer
     pub fn knot_length(&self) -> usize {
         self.layers[0].knot_length()
+    }
+
+    /// Get the cache statistics for a particular layer layer
+    pub fn layer_cache_stats(&self, layer: usize) -> Vec<&Vec<Vec<CacheStats>>> {
+        self.layers[layer].cache_stats()
     }
 }
 

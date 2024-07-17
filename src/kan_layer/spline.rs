@@ -1,12 +1,13 @@
+use basis_cache::BasisCache;
 use nalgebra::{DMatrix, DVector, SVD};
 use rayon::prelude::*;
 use rayon::ThreadPool;
-use rustc_hash::FxHashMap;
+use serde::Deserializer;
 use serde::{Deserialize, Serialize};
 use std::slice::Iter;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-mod basis_cache;
+pub(crate) mod basis_cache;
 pub(crate) mod spline_errors;
 
 use spline_errors::*;
@@ -14,7 +15,7 @@ use spline_errors::*;
 /// margin to add to the beginning and end of the knot vector when updating it from samples
 pub(super) const KNOT_MARGIN: f64 = 0.01;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub(crate) struct Spline {
     // degree, control points, and knots are the parameters of the spline
     // these three fields constitute the "identity" of the spline, so they're the only ones that get serialized, considered for equality, etc.
@@ -25,14 +26,13 @@ pub(crate) struct Spline {
     // the remaining fields represent the "state" of the spline.
     // They're in flux during operation, and so are ignored for any sort of persitence or comparison.
     /// the most recent parameter used in the forward pass
-    #[serde(skip)]
-    // only used during operation
+    // skipped during serialization - only used during operation
     last_t: Option<f64>,
     /// the activations of the spline at each interval, stored from calls to [`forward()`](Spline::forward) and cleared on calls to [`update_knots_from_samples()`](Spline::update_knots_from_samples)
-    #[serde(skip)] // only used during training
-    activations: Arc<Mutex<FxHashMap<(usize, usize, u64), f64>>>,
+    // skipped during serialization - only used during operation
+    activations: Arc<BasisCache>,
     /// accumulated gradients for each control point
-    #[serde(skip)] // only used during training
+    // skipped during serialization - only used during operation
     gradients: Vec<f64>,
 }
 
@@ -54,12 +54,13 @@ impl Spline {
                 actual: knots.len(),
             });
         }
+        let cache_size = knots.len();
         Ok(Spline {
-            degree,
+            degree: degree.clone(),
             control_points,
             knots,
             last_t: None,
-            activations: Arc::new(Mutex::new(FxHashMap::default())),
+            activations: Arc::new(BasisCache::new(cache_size, degree)),
             gradients: vec![0.0; size],
         })
     }
@@ -106,12 +107,7 @@ impl Spline {
         });
         let mut sum = 0.0;
         for (idx, coef) in self.control_points.iter().enumerate() {
-            let basis_activation = *self
-                .activations
-                .lock()
-                .unwrap()
-                .get(&(idx, self.degree, t.to_bits()))
-                .unwrap();
+            let basis_activation = self.activations.get(idx, self.degree, t.to_bits()).unwrap();
             sum += *coef * basis_activation;
         }
         sum
@@ -155,11 +151,9 @@ impl Spline {
         for i in 0..self.control_points.len() {
             // calculate control point gradients
             // dC_i = B_ik(t) * adjusted_error
-            let basis_activation = *self
+            let basis_activation = self
                 .activations
-                .lock()
-                .unwrap()
-                .get(&(i, k, last_t.to_bits()))
+                .get(i, self.degree, last_t.to_bits())
                 .unwrap();
             // gradients aka drt_output_wrt_control_point * error
             let gradient_update = adjusted_error * basis_activation;
@@ -224,7 +218,7 @@ impl Spline {
     ///
     /// If `samples` is not sorted, the results of the update and future spline operation are undefined.
     pub(super) fn update_knots_from_samples(&mut self, samples: &[f64], knot_adaptivity: f64) {
-        self.activations.lock().unwrap().clear(); // clear the memoized activations. They're no longer valid, now that the knots are changing
+        self.activations.clear(); // clear the memoized activations. They're no longer valid, now that the knots are changing
 
         let knot_size = self.knots.len();
         let mut adaptive_knots: Vec<f64> = Vec::with_capacity(knot_size);
@@ -276,11 +270,9 @@ impl Spline {
         // build regressor matrix
         let mut something = self
             .activations
-            .lock()
-            .unwrap()
             .iter()
             .filter(|((_i, k, _t), _b)| *k == self.degree)
-            .map(|((i, _k, t), b)| (*i, f64::from_bits(*t), *b))
+            .map(|((i, _k, t), b)| (i, f64::from_bits(t), b))
             .collect::<Vec<_>>();
         if something.is_empty() {
             return Err(UpdateSplineKnotsError::ActivationsEmptyError);
@@ -331,7 +323,7 @@ impl Spline {
         }
         self.knots = new_knots;
         // reset state
-        self.activations.lock().unwrap().clear();
+        self.activations = Arc::new(BasisCache::new(self.knots.len(), self.degree));
         self.gradients = vec![0.0; self.control_points.len()];
         Ok(())
     }
@@ -345,6 +337,10 @@ impl Spline {
     pub(super) fn trainable_parameter_count(&self) -> usize {
         self.control_points.len()
     }
+
+    pub(super) fn cache_stats(&self) -> &Vec<Vec<basis_cache::CacheStats>> {
+        self.activations.stats()
+    }
 }
 
 impl PartialEq for Spline {
@@ -354,6 +350,49 @@ impl PartialEq for Spline {
         self.degree == other.degree
             && self.control_points == other.control_points
             && self.knots == other.knots
+    }
+}
+
+impl<'de> Deserialize<'de> for Spline {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let spline_data = SplineData::deserialize(deserializer)?;
+        Ok(Spline {
+            degree: spline_data.degree.clone(),
+            control_points: spline_data.control_points.clone(),
+            knots: spline_data.knots.clone(),
+            last_t: None,
+            activations: Arc::new(BasisCache::new(spline_data.knots.len(), spline_data.degree)),
+            gradients: vec![0.0; spline_data.control_points.len()],
+        })
+    }
+}
+
+impl Serialize for Spline {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        SplineData::from(self.clone()).serialize(serializer)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct SplineData {
+    degree: usize,
+    control_points: Vec<f64>,
+    knots: Vec<f64>,
+}
+
+impl From<Spline> for SplineData {
+    fn from(spline: Spline) -> Self {
+        SplineData {
+            degree: spline.degree,
+            control_points: spline.control_points,
+            knots: spline.knots,
+        }
     }
 }
 
@@ -398,7 +437,7 @@ fn basis_cached(
     k: usize,
     t: f64,
     knots: &[f64],
-    cache: Arc<Mutex<FxHashMap<(usize, usize, u64), f64>>>,
+    cache: Arc<BasisCache>,
     degree: usize,
 ) -> f64 {
     if k == 0 {
@@ -410,11 +449,9 @@ fn basis_cached(
     }
     // only cache the resuts of the initial call and the first recursion
     if k > degree - 2 {
-        let locked_cache = cache.lock().unwrap();
-        if let Some(cached_result) = locked_cache.get(&(i, k, t.to_bits())) {
-            return *cached_result;
+        if let Some(value) = cache.get(i, k, t.to_bits()) {
+            return value;
         }
-        drop(locked_cache); // drop the cache once we get the value we needed
 
         let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
         let right_coefficient = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
@@ -422,8 +459,7 @@ fn basis_cached(
         let right_val = basis_cached(i + 1, k - 1, t, knots, Arc::clone(&cache), degree);
         let result = left_coefficient * left_val + right_coefficient * right_val;
 
-        let mut locked_cache = cache.lock().unwrap(); // reacquire the lock
-        locked_cache.insert((i, k, t.to_bits()), result);
+        cache.set(i, k, t.to_bits(), result);
         return result; // lock is automatically dropped here
     }
     let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
@@ -490,7 +526,7 @@ mod tests {
                 k,
                 t,
                 &knots,
-                Arc::new(Mutex::new(FxHashMap::default())),
+                Arc::new(BasisCache::new(knots.len(), k)),
                 k,
             );
             let result_from_non_caching_function = basis_no_cache(i, k, t, &knots);
@@ -516,7 +552,7 @@ mod tests {
                 k,
                 t,
                 &knots,
-                Arc::new(Mutex::new(FxHashMap::default())),
+                Arc::new(BasisCache::new(knots.len(), k)),
                 k,
             );
             let result_from_non_caching_function = basis_no_cache(i, k, t, &knots);
@@ -558,7 +594,6 @@ mod tests {
             knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
         }
         let mut spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
-        println!("{:#?}", spline1);
         let t: f64 = 0.0;
         let result = spline1.forward(t);
         let infer_result = spline1.infer(t);
@@ -566,7 +601,6 @@ mod tests {
             result, infer_result,
             "forward and infer should return the same result"
         );
-        println!("{:#?}", spline1);
         let rounded_activation = (result * 10000.0).round() / 10000.0;
         assert_eq!(rounded_activation, 1.0);
     }
@@ -639,15 +673,14 @@ mod tests {
             knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
         }
         let mut spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
-        println!("setup: {:#?}", spline1);
 
         let activation = spline1.forward(0.0);
-        println!("forward: {:#?}", spline1);
+
         let rounded_activation = (activation * 10000.0).round() / 10000.0;
         assert_eq!(rounded_activation, 1.0);
 
         let input_gradient = spline1.backward(0.5).unwrap();
-        println!("backward: {:#?}", spline1);
+
         let expected_input_gradient = 0.0;
         let rounded_input_gradient = (input_gradient * 10000.0).round() / 10000.0;
         assert_eq!(rounded_input_gradient, expected_input_gradient);
@@ -708,7 +741,7 @@ mod tests {
         let knot_length = coef_size + k + 1;
         let knots = linspace(-1., 1., knot_length);
         let mut spline = Spline::new(k, vec![1.0; coef_size], knots).unwrap();
-
+        println!("starting spline: {:?}", spline);
         let sample_size = 100;
         let inputs = linspace(-1., 1.0, sample_size);
         let expected_outputs = inputs
@@ -718,7 +751,7 @@ mod tests {
 
         let new_knot_length = knot_length * 2 - 1; // increase knot length
         spline.set_knot_length(new_knot_length).unwrap();
-
+        println!("new spline: {:?}", spline);
         let test_outputs = inputs
             .iter()
             .map(|i| spline.forward(*i))

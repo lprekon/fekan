@@ -379,11 +379,11 @@ fn calculate_nll_loss_and_gradient(logits: &Vec<f64>, label: usize) -> (f64, Vec
 }
 
 /// Calculates the mean squared error loss and the gradient of the loss with respect to the actual value
-fn calculate_mse_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
-    let loss = (actual - expected).powi(2);
-    let gradient = 2.0 * (actual - expected);
-    (loss, gradient)
-}
+// fn calculate_mse_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
+//     let loss = (actual - expected).powi(2);
+//     let gradient = 2.0 * (actual - expected);
+//     (loss, gradient)
+// }
 
 const HUBER_DELTA: f64 = 1.3407807929942596e154 - 1.0; // f64::MAX ^ 0.5 - 1.0. Chosen so the loss is equivalent to the MSE loss until the error would be greater than f64::MAX, and then it becomes linear
 
