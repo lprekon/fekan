@@ -1,6 +1,7 @@
 use crate::kan_layer::{
     BackwardLayerError, ForwardLayerError, KanLayer, KanLayerOptions, UpdateLayerKnotsError,
 };
+use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
 
 /// A full neural network model, consisting of multiple Kolmogorov-Arnold layers
@@ -200,6 +201,27 @@ impl Kan {
         Ok(preacts)
     }
 
+    /// as [Kan::forward], but uses a thread pool to multi-thread the forward pass
+    pub fn forward_concurrent(
+        &mut self,
+        input: Vec<f64>,
+        thread_pool: &ThreadPool,
+    ) -> Result<Vec<f64>, KanError> {
+        let mut preacts = input;
+        for (idx, layer) in self.layers.iter_mut().enumerate() {
+            let result = layer.forward_concurrent(&preacts, thread_pool);
+            if let Err(e) = result {
+                return Err(KanError {
+                    source: ErrorOperation::Forward(e),
+                    index: idx,
+                });
+            }
+            let output = result.unwrap();
+            preacts = output;
+        }
+        Ok(preacts)
+    }
+
     /// as [Kan::forward], but does not accumulate any internal state
     ///
     /// This method should be used during inference or validation, when the model is not being trained
@@ -224,7 +246,7 @@ impl Kan {
 
     /// passes the error to the [crate::kan_layer::KanLayer::backward] method of the last layer,
     /// then calls the `backward` method of each subsequent layer with the output of the previous layer,
-    /// returning the error returned by first layer
+    /// returning the error returned by first layer. For a multi-threaded version of this method, see [Kan::backward_concurrent]
     ///
     /// # Errors
     /// returns an error if any layer returns an error.
@@ -253,6 +275,30 @@ impl Kan {
         let mut error = error;
         for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
             let backward_result = layer.backward(&error);
+            match backward_result {
+                Ok(result) => {
+                    error = result;
+                }
+                Err(e) => {
+                    return Err(KanError {
+                        source: ErrorOperation::Backward(e),
+                        index: idx,
+                    });
+                }
+            }
+        }
+        Ok(error)
+    }
+
+    /// as [Kan::backward], but uses a thread pool to multi-thread the backward pass
+    pub fn backward_concurrent(
+        &mut self,
+        error: Vec<f64>,
+        thread_pool: &ThreadPool,
+    ) -> Result<Vec<f64>, KanError> {
+        let mut error = error;
+        for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
+            let backward_result = layer.backward_concurrent(&error, thread_pool);
             match backward_result {
                 Ok(result) => {
                     error = result;
@@ -349,6 +395,11 @@ impl Kan {
     pub fn knot_length(&self) -> usize {
         self.layers[0].knot_length()
     }
+
+    // /// Get the cache statistics for a particular layer layer
+    // pub fn layer_cache_stats(&self, layer: usize) -> Vec<&Vec<Vec<CacheStats>>> {
+    //     self.layers[layer].cache_stats()
+    // }
 }
 
 impl PartialEq for Kan {

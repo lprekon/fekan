@@ -31,6 +31,7 @@
 //! use tempfile::tempfile;
 //!
 //!
+//!
 //! // initialize the model
 //! let model_options = KanOptions{
 //!     input_size: 2,
@@ -69,6 +70,7 @@ use std::cmp::min;
 
 use kan::{Kan, KanError, ModelType};
 use rand::thread_rng;
+use rayon::ThreadPoolBuilder;
 use serde::{Deserialize, Serialize};
 use shuffle::{fy, shuffler::Shuffler};
 use training_observer::TrainingObserver;
@@ -114,6 +116,8 @@ pub struct TrainingOptions {
     /// If set, the maximum length to which the knot vectors can be extended during training.
     /// Liu et al. 2024 conjecture that the ideal model has a total knot count ~= ||training_data||, but that could become obscene for small models and large datasets
     pub max_knot_length: Option<usize>,
+    /// the number of threads to use when training the model.
+    pub num_threads: usize,
 }
 
 impl Default for TrainingOptions {
@@ -124,11 +128,10 @@ impl Default for TrainingOptions {
             knot_adaptivity: 0.1,
             learning_rate: 0.001,
             max_knot_length: Some(1000),
+            num_threads: 1,
         }
     }
 }
-
-const HUBER_DELTA: f64 = 500.0;
 
 /// Train the provided model with the provided data.
 ///
@@ -210,7 +213,14 @@ pub fn train_model<T: TrainingObserver>(
     training_observer: &T,
     options: TrainingOptions,
 ) -> Result<Kan, TrainingError> {
-    // train the model
+    // TRAINING
+
+    // build the thread pool
+    let thread_pool = ThreadPoolBuilder::new()
+        .num_threads(options.num_threads)
+        .build()
+        .expect("Failed to build thread pool");
+
     // calculate the ideal knot length, using the conjectur from Liu et al. 2024 that the ideal total knot count ~= ||training_data||
     let num_splines = model
         .layers
@@ -243,39 +253,34 @@ pub fn train_model<T: TrainingObserver>(
             samples_seen += 1;
             // run over each sample in the training data for each epoch
             let output = model
-                .forward(sample.features.iter().map(|&x| x as f64).collect())
+                .forward_concurrent(
+                    sample.features.iter().map(|&x| x as f64).collect(),
+                    &thread_pool,
+                )
                 .map_err(|e| TrainingError {
                     source: e,
                     epoch,
                     sample: samples_seen,
                 })?;
-            match model.model_type() {
+            let (loss, dlogits) = match model.model_type() {
                 ModelType::Classification => {
-                    // calculate classification probability from logits
-                    let (loss, dlogits) =
-                        calculate_nll_loss_and_gradient(&output, sample.label as usize);
-                    epoch_loss += loss;
-                    // pass the error back through the model
-                    let _ = model.backward(dlogits).map_err(|e| TrainingError {
-                        source: e,
-                        epoch,
-                        sample: samples_seen,
-                    })?;
+                    calculate_nll_loss_and_gradient(&output, sample.label as usize)
                 }
                 ModelType::Regression => {
-                    let (loss, dlogits) = calculate_huber_loss_and_gradient(
-                        output[0],
-                        sample.label as f64,
-                        HUBER_DELTA,
-                    ); //TODO allow different delta values
-                    epoch_loss += loss;
-                    let _ = model.backward(vec![dlogits]).map_err(|e| TrainingError {
-                        source: e,
-                        epoch,
-                        sample: samples_seen,
-                    })?;
+                    let (loss, dlogit) =
+                        calculate_huber_loss_and_gradient(output[0], sample.label as f64); //TODO allow different delta values
+                    (loss, vec![dlogit])
                 }
-            }
+            };
+            epoch_loss += loss;
+            // pass the error back through the model
+            let _ = model
+                .backward_concurrent(dlogits, &thread_pool)
+                .map_err(|e| TrainingError {
+                    source: e,
+                    epoch,
+                    sample: samples_seen,
+                })?;
             model.update(options.learning_rate); // TODO implement momentum
             model.zero_gradients();
             if samples_seen % options.knot_update_interval == 0
@@ -340,8 +345,7 @@ pub fn validate_model<T: TrainingObserver>(
                 loss
             }
             ModelType::Regression => {
-                let (loss, _) =
-                    calculate_huber_loss_and_gradient(output[0], sample.label as f64, HUBER_DELTA); //TODO allow different delta values
+                let (loss, _) = calculate_huber_loss_and_gradient(output[0], sample.label as f64); //TODO allow different delta values
                 loss
             }
         };
@@ -384,26 +388,25 @@ fn calculate_nll_loss_and_gradient(logits: &Vec<f64>, label: usize) -> (f64, Vec
 }
 
 /// Calculates the mean squared error loss and the gradient of the loss with respect to the actual value
-fn calculate_mse_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
-    let loss = (actual - expected).powi(2);
-    let gradient = 2.0 * (actual - expected);
-    (loss, gradient)
-}
+// fn calculate_mse_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
+//     let loss = (actual - expected).powi(2);
+//     let gradient = 2.0 * (actual - expected);
+//     (loss, gradient)
+// }
+
+const HUBER_DELTA: f64 = 1.3407807929942596e154 - 1.0; // f64::MAX ^ 0.5 - 1.0. Chosen so the loss is equivalent to the MSE loss until the error would be greater than f64::MAX, and then it becomes linear
 
 /// Calculates the huber loss and the gradient of the loss with respect to the actual value
-fn calculate_huber_loss_and_gradient(actual: f64, expected: f64, delta: f64) -> (f64, f64) {
+fn calculate_huber_loss_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
     let diff = actual - expected;
-    let loss = if diff.abs() <= delta {
-        0.5 * diff.powi(2)
+    if diff.abs() <= HUBER_DELTA {
+        (0.5 * diff.powi(2), diff)
     } else {
-        delta * (diff.abs() - 0.5 * delta)
-    };
-    let gradient = if diff.abs() <= delta {
-        diff
-    } else {
-        delta * diff.signum()
-    };
-    (loss, gradient)
+        (
+            HUBER_DELTA * (diff.abs() - 0.5 * HUBER_DELTA),
+            HUBER_DELTA * diff.signum(),
+        )
+    }
 }
 
 /// Builds a plan for extending the knots of the model over the course of training.

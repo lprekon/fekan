@@ -3,12 +3,15 @@ mod spline;
 
 use rand::distributions::Distribution;
 use rand::thread_rng;
+use rayon::prelude::*;
+use rayon::{iter::IntoParallelIterator, ThreadPool};
 use serde::{Deserialize, Serialize};
-use spline::{linspace, BackwardSplineError, Spline, UpdateSplineKnotsError};
+use spline::{linspace, spline_errors::*, Spline};
 use statrs::distribution::Normal; // apparently the statrs distributions use the rand Distribution trait
 
 use std::{
     fmt::{self, Formatter},
+    sync::{Arc, Mutex},
     vec,
 };
 
@@ -100,7 +103,7 @@ impl KanLayer {
     //     self.nodes.len() * self.nodes[0].0.len()
     // }
 
-    /// calculate the activations of the nodes in this layer given the preactivations.
+    /// calculate the activations of the nodes in this layer given the preactivations. For a multi-threaded version of this function, see [`KanLayer::forward_concurrent`]
     /// This operation mutates internal state, which will be read in [`KanLayer::backward()`] and [`KanLayer::update_knots_from_samples()`]
     ///
     /// `preactivation.len()` must be equal to the layer's `input_dimension`
@@ -126,14 +129,7 @@ impl KanLayer {
     /// # Ok::<(), fekan::kan_layer::ForwardLayerError>(())
     /// ```
     pub fn forward(&mut self, preactivation: &[f64]) -> Result<Vec<f64>, ForwardLayerError> {
-        //  check the length here since it's the same check for the entire layer, even though the "node" is technically the part that cares
-        if preactivation.len() != self.input_dimension {
-            return Err(ForwardLayerError::MissizedPreactsError {
-                actual: preactivation.len(),
-                expected: self.input_dimension,
-            });
-        }
-        self.samples.push(preactivation.into()); // save a copy of the preactivation for updating the knot vectors later
+        self.forward_preamble(preactivation)?;
 
         // it probably makes sense to move straight down the list of splines, since that theoretically should have better cache performance
         // also, I guess I haven't decided (in code) how the splines are ordered, so there's no reason I can't say the first n splines all belong to the first node, etc.
@@ -150,6 +146,50 @@ impl KanLayer {
         // if activations.iter().any(|x| x.is_nan()) {
         //     return Err(ForwardLayerError::NaNsError);
         // }
+        Ok(activations)
+    }
+
+    fn forward_preamble(&mut self, preactivation: &[f64]) -> Result<(), ForwardLayerError> {
+        if preactivation.len() != self.input_dimension {
+            return Err(ForwardLayerError::MissizedPreactsError {
+                actual: preactivation.len(),
+                expected: self.input_dimension,
+            });
+        }
+        self.samples.push(preactivation.into());
+        //  check the length here since it's the same check for the entire layer, even though the "node" is technically the part that cares
+        // save a copy of the preactivation for updating the knot vectors later
+        Ok(())
+    }
+
+    /// as [KanLayer::forward], but multi-threaded
+    pub fn forward_concurrent(
+        &mut self,
+        preactivation: &[f64],
+        thread_pool: &ThreadPool,
+    ) -> Result<Vec<f64>, ForwardLayerError> {
+        self.forward_preamble(preactivation)?;
+
+        let num_splines = self.splines.len();
+        let thread_safe_splines = self
+            .splines
+            .iter_mut()
+            .map(|spline| Arc::new(Mutex::new(spline)))
+            .collect::<Vec<_>>();
+        let activations = thread_pool
+            .install(|| {
+                let acts = Arc::new(Mutex::new(vec![0.0; self.output_dimension]));
+                (0..num_splines).into_par_iter().for_each(|idx| {
+                    let mut acting_spline = thread_safe_splines[idx].lock().unwrap();
+                    let act = acting_spline.forward(preactivation[idx % self.input_dimension]);
+                    acts.lock().unwrap()[(idx / self.input_dimension) as usize] += act;
+                    // every `input_dimension` splines, we move to the next node
+                });
+                acts
+            })
+            .lock()
+            .unwrap()
+            .to_vec();
         Ok(activations)
     }
 
@@ -268,7 +308,7 @@ impl KanLayer {
     }
 
     /// Given a vector of error values for the nodes in this layer, backpropogate the error through the layer, updating the internal gradients for the incoming edges
-    /// and return the error for the previous layer.
+    /// and return the error for the previous layer. Use [`KanLayer::backward_concurrent`] for a multi-threaded version of this function
     ///
     /// This function relies on mutated inner state and should be called after [`KanLayer::forward`].
     ///
@@ -327,6 +367,45 @@ impl KanLayer {
             input_error[i % self.input_dimension] += error_at_edge_input;
         }
         Ok(input_error)
+    }
+
+    /// as [KanLayer::backward], but divides the work among the passed thread pool
+    pub fn backward_concurrent(
+        &mut self,
+        error: &[f64],
+        thread_pool: &ThreadPool,
+    ) -> Result<Vec<f64>, BackwardLayerError> {
+        if error.len() != self.output_dimension {
+            return Err(BackwardLayerError::MissizedGradientError {
+                actual: error.len(),
+                expected: self.output_dimension,
+            });
+        }
+        // if error.iter().any(|f| f.is_nan()) {
+        //     return Err(BackwardLayerError::ReceivedNanError);
+        // }
+
+        let backprop_result: (Vec<f64>, Vec<BackwardSplineError>) = thread_pool.install(|| {
+            let mut input_gradient = vec![0.0; self.input_dimension];
+            let mut spline_errors = Vec::with_capacity(self.splines.len());
+            for i in 0..self.splines.len() {
+                // every `input_dimension` splines belong to the same node, and thus will use the same error value.
+                // "Distribute" the error at a given node among all incoming edges
+                let error_at_edge_output =
+                    error[i / self.input_dimension] / self.input_dimension as f64;
+                match self.splines[i].backward(error_at_edge_output) {
+                    Ok(error_at_edge_input) => {
+                        input_gradient[i % self.input_dimension] += error_at_edge_input
+                    }
+                    Err(e) => spline_errors.push(e),
+                }
+            }
+            (input_gradient, spline_errors)
+        });
+        if !backprop_result.1.is_empty() {
+            return Err(backprop_result.1[0].into());
+        }
+        Ok(backprop_result.0)
     }
 
     /// set the length of the knot vectors for each incoming edge in this layer
@@ -507,6 +586,11 @@ impl KanLayer {
     pub fn total_edges(&self) -> usize {
         self.input_dimension * self.output_dimension
     }
+
+    // /// Get the cache stats for each spline in this layer. This is useful for debugging and performance tuning
+    // pub fn cache_stats(&self) -> Vec<&Vec<Vec<CacheStats>>> {
+    //     self.splines.iter().map(|s| s.cache_stats()).collect()
+    // }
 }
 
 impl PartialEq for KanLayer {
@@ -635,6 +719,7 @@ impl std::error::Error for UpdateLayerKnotsError {}
 
 #[cfg(test)]
 mod test {
+    use rayon::ThreadPoolBuilder;
     use spline::Spline;
 
     use super::*;
@@ -692,6 +777,20 @@ mod test {
     }
 
     #[test]
+    fn test_forward_concurrent() {
+        let mut layer = build_test_layer();
+        let preacts = vec![0.0, 0.5];
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let acts = layer.forward_concurrent(&preacts, &thread_pool).unwrap();
+        let expected_activations = vec![0.3177, -0.3177];
+        let rounded_activations: Vec<f64> = acts
+            .iter()
+            .map(|x| (x * 10000.0).round() / 10000.0)
+            .collect();
+        assert_eq!(rounded_activations, expected_activations);
+    }
+
+    #[test]
     fn test_forward_bad_activations() {
         let mut layer = build_test_layer();
         let preacts = vec![0.0, 0.5, 0.5];
@@ -729,10 +828,65 @@ mod test {
     }
 
     #[test]
+    fn test_forward_then_backward_concurrent() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let mut layer = build_test_layer();
+        let preacts = vec![0.0, 0.5];
+        let acts = layer.forward(&preacts).unwrap();
+        let expected_activations = vec![0.3177, -0.3177];
+        let rounded_activations: Vec<f64> = acts
+            .iter()
+            .map(|x| (x * 10000.0).round() / 10000.0)
+            .collect();
+        assert_eq!(rounded_activations, expected_activations, "forward failed");
+
+        let error = vec![1.0, 0.5];
+        let input_error = layer.backward_concurrent(&error, &thread_pool).unwrap();
+        let expected_input_error = vec![0.0, 0.60156];
+        let rounded_input_error: Vec<f64> = input_error
+            .iter()
+            .map(|f| (f * 100000.0).round() / 100000.0)
+            .collect();
+        assert_eq!(rounded_input_error, expected_input_error, "backward failed");
+    }
+
+    #[test]
+    fn test_forward_concurrent_then_backward_concurrent() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let mut layer = build_test_layer();
+        let preacts = vec![0.0, 0.5];
+        let acts = layer.forward_concurrent(&preacts, &thread_pool).unwrap();
+        let expected_activations = vec![0.3177, -0.3177];
+        let rounded_activations: Vec<f64> = acts
+            .iter()
+            .map(|x| (x * 10000.0).round() / 10000.0)
+            .collect();
+        assert_eq!(rounded_activations, expected_activations, "forward failed");
+
+        let error = vec![1.0, 0.5];
+        let input_error = layer.backward_concurrent(&error, &thread_pool).unwrap();
+        let expected_input_error = vec![0.0, 0.60156];
+        let rounded_input_error: Vec<f64> = input_error
+            .iter()
+            .map(|f| (f * 100000.0).round() / 100000.0)
+            .collect();
+        assert_eq!(rounded_input_error, expected_input_error, "backward failed");
+    }
+
+    #[test]
     fn test_backward_before_forward() {
         let mut layer = build_test_layer();
         let error = vec![1.0, 0.5];
         let input_error = layer.backward(&error);
+        assert!(input_error.is_err());
+    }
+
+    #[test]
+    fn test_backward_concurrent_before_forward() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let mut layer = build_test_layer();
+        let error = vec![1.0, 0.5];
+        let input_error = layer.backward_concurrent(&error, &thread_pool);
         assert!(input_error.is_err());
     }
 

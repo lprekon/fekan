@@ -1,7 +1,7 @@
 // use std::fs::File;
 
 //! Does this show up anywhere
-use std::{error::Error, fs::File, path::PathBuf};
+use std::{error::Error, fs::File, path::PathBuf, thread::available_parallelism};
 
 use clap::{ArgGroup, Args, Parser, Subcommand};
 
@@ -24,6 +24,10 @@ struct Cli {
     /// log model output to stdout in addition to drawing on the terminal, allowing output to be piped
     #[arg(long, default_value = "false", global = true)]
     log_output: bool,
+
+    /// the number of threads to use for the model. If not set, the program will use as many threads as available cores
+    #[arg(long, global = true)]
+    num_threads: Option<usize>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -182,6 +186,16 @@ enum WhyCommands {
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     println!("Using arguments {cli:?}");
+    let num_threads = cli.num_threads.unwrap_or_else(|| {
+        let default_threads = available_parallelism()
+            .expect("Number of threads not specified and could not be auto-detected")
+            .get();
+        println!(
+            "Thread count not specified. Using {} threads",
+            default_threads
+        );
+        default_threads
+    });
     match cli.command {
         WhereCommands::Build(build_args) => match build_args.model_type {
             CliModelType::Classifier(classifier_args) => {
@@ -216,6 +230,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     layers.push(classifier_args.classes.len() as usize);
                     layers
                 };
+
                 // build the model
                 let untrained_model = Kan::new(&KanOptions {
                     input_size: training_data[0].features().len() as usize,
@@ -233,6 +248,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     knot_adaptivity: train_args.knot_adaptivity,
                     learning_rate: train_args.learning_rate,
                     max_knot_length: train_args.max_knot_length,
+                    num_threads,
                 };
 
                 // run the training loop on the model
@@ -309,6 +325,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     knot_adaptivity: train_args.knot_adaptivity,
                     learning_rate: train_args.learning_rate,
                     max_knot_length: train_args.max_knot_length,
+                    num_threads,
                 };
 
                 // run the training loop on the model
@@ -353,6 +370,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         knot_adaptivity: train_args.knot_adaptivity,
                         learning_rate: train_args.learning_rate,
                         max_knot_length: train_args.max_knot_length,
+                        num_threads,
                     };
 
                     let load_result = match loaded_model.model_type() {
