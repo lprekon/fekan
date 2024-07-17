@@ -1,6 +1,5 @@
 use crate::kan_layer::{
-    BackwardLayerError, CacheStats, ForwardLayerError, KanLayer, KanLayerOptions,
-    UpdateLayerKnotsError,
+    BackwardLayerError, ForwardLayerError, KanLayer, KanLayerOptions, UpdateLayerKnotsError,
 };
 use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
@@ -373,10 +372,10 @@ impl Kan {
         self.layers[0].knot_length()
     }
 
-    /// Get the cache statistics for a particular layer layer
-    pub fn layer_cache_stats(&self, layer: usize) -> Vec<&Vec<Vec<CacheStats>>> {
-        self.layers[layer].cache_stats()
-    }
+    // /// Get the cache statistics for a particular layer layer
+    // pub fn layer_cache_stats(&self, layer: usize) -> Vec<&Vec<Vec<CacheStats>>> {
+    //     self.layers[layer].cache_stats()
+    // }
 }
 
 impl PartialEq for Kan {
