@@ -262,30 +262,25 @@ pub fn train_model<T: TrainingObserver>(
                     epoch,
                     sample: samples_seen,
                 })?;
-            match model.model_type() {
+            let (loss, dlogits) = match model.model_type() {
                 ModelType::Classification => {
-                    // calculate classification probability from logits
-                    let (loss, dlogits) =
-                        calculate_nll_loss_and_gradient(&output, sample.label as usize);
-                    epoch_loss += loss;
-                    // pass the error back through the model
-                    let _ = model.backward(dlogits).map_err(|e| TrainingError {
-                        source: e,
-                        epoch,
-                        sample: samples_seen,
-                    })?;
+                    calculate_nll_loss_and_gradient(&output, sample.label as usize)
                 }
                 ModelType::Regression => {
-                    let (loss, dlogits) =
+                    let (loss, dlogit) =
                         calculate_huber_loss_and_gradient(output[0], sample.label as f64); //TODO allow different delta values
-                    epoch_loss += loss;
-                    let _ = model.backward(vec![dlogits]).map_err(|e| TrainingError {
-                        source: e,
-                        epoch,
-                        sample: samples_seen,
-                    })?;
+                    (loss, vec![dlogit])
                 }
-            }
+            };
+            epoch_loss += loss;
+            // pass the error back through the model
+            let _ = model
+                .backward_concurrent(dlogits, &thread_pool)
+                .map_err(|e| TrainingError {
+                    source: e,
+                    epoch,
+                    sample: samples_seen,
+                })?;
             model.update(options.learning_rate); // TODO implement momentum
             model.zero_gradients();
             if samples_seen % options.knot_update_interval == 0
