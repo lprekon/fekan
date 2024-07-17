@@ -56,6 +56,34 @@ fn bench_forward_big_layer_small_spline(b: &mut Bencher) {
     });
 }
 
+#[bench]
+fn bench_forward_big_layer_big_spline(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
+        .map(|_| thread_rng().gen())
+        .collect();
+    b.iter(|| {
+        // run multiple times per iteration so cache improvements will show.
+        for _ in 0..2 {
+            let _ = layer.forward(&input);
+        }
+    });
+}
+
+#[bench]
+fn bench_forward_small_layer_big_spline(b: &mut Bencher) {
+    let mut layer = small_layer_big_spline();
+    let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
+        .map(|_| thread_rng().gen())
+        .collect();
+    b.iter(|| {
+        // run multiple times per iteration so cache improvements will show.
+        for _ in 0..2 {
+            let _ = layer.forward(&input);
+        }
+    });
+}
+
 fn run_full_concurrent(b: &mut Bencher, mut layer: KanLayer, input_layer_size: usize) {
     let input: Vec<f64> = (0..input_layer_size).map(|_| thread_rng().gen()).collect();
     let thread_pool = rayon::ThreadPoolBuilder::new()

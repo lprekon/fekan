@@ -2,6 +2,7 @@ use crate::kan_layer::{
     BackwardLayerError, CacheStats, ForwardLayerError, KanLayer, KanLayerOptions,
     UpdateLayerKnotsError,
 };
+use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
 
 /// A full neural network model, consisting of multiple Kolmogorov-Arnold layers
@@ -189,6 +190,27 @@ impl Kan {
         let mut preacts = input;
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             let result = layer.forward(&preacts);
+            if let Err(e) = result {
+                return Err(KanError {
+                    source: ErrorOperation::Forward(e),
+                    index: idx,
+                });
+            }
+            let output = result.unwrap();
+            preacts = output;
+        }
+        Ok(preacts)
+    }
+
+    /// as [Kan::forward], but uses a thread pool to multi-thread the forward pass
+    pub fn forward_concurrent(
+        &mut self,
+        input: Vec<f64>,
+        thread_pool: &ThreadPool,
+    ) -> Result<Vec<f64>, KanError> {
+        let mut preacts = input;
+        for (idx, layer) in self.layers.iter_mut().enumerate() {
+            let result = layer.forward_concurrent(&preacts, thread_pool);
             if let Err(e) = result {
                 return Err(KanError {
                     source: ErrorOperation::Forward(e),

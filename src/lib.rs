@@ -70,6 +70,7 @@ use std::cmp::min;
 
 use kan::{Kan, KanError, ModelType};
 use rand::thread_rng;
+use rayon::ThreadPoolBuilder;
 use serde::{Deserialize, Serialize};
 use shuffle::{fy, shuffler::Shuffler};
 use training_observer::TrainingObserver;
@@ -115,6 +116,8 @@ pub struct TrainingOptions {
     /// If set, the maximum length to which the knot vectors can be extended during training.
     /// Liu et al. 2024 conjecture that the ideal model has a total knot count ~= ||training_data||, but that could become obscene for small models and large datasets
     pub max_knot_length: Option<usize>,
+    /// the number of threads to use when training the model.
+    pub num_threads: usize,
 }
 
 impl Default for TrainingOptions {
@@ -125,6 +128,7 @@ impl Default for TrainingOptions {
             knot_adaptivity: 0.1,
             learning_rate: 0.001,
             max_knot_length: Some(1000),
+            num_threads: 1,
         }
     }
 }
@@ -209,7 +213,14 @@ pub fn train_model<T: TrainingObserver>(
     training_observer: &T,
     options: TrainingOptions,
 ) -> Result<Kan, TrainingError> {
-    // train the model
+    // TRAINING
+
+    // build the thread pool
+    let thread_pool = ThreadPoolBuilder::new()
+        .num_threads(options.num_threads)
+        .build()
+        .expect("Failed to build thread pool");
+
     // calculate the ideal knot length, using the conjectur from Liu et al. 2024 that the ideal total knot count ~= ||training_data||
     let num_splines = model
         .layers
@@ -242,7 +253,10 @@ pub fn train_model<T: TrainingObserver>(
             samples_seen += 1;
             // run over each sample in the training data for each epoch
             let output = model
-                .forward(sample.features.iter().map(|&x| x as f64).collect())
+                .forward_concurrent(
+                    sample.features.iter().map(|&x| x as f64).collect(),
+                    &thread_pool,
+                )
                 .map_err(|e| TrainingError {
                     source: e,
                     epoch,

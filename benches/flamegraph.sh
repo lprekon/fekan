@@ -14,4 +14,4 @@ build regressor \
 --max-knot-length 1000 \
 --learning-rate 0.01 \
 --validate-each-epoch 
-cargo clean
+sudo cargo clean
