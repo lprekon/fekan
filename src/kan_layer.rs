@@ -308,7 +308,7 @@ impl KanLayer {
     }
 
     /// Given a vector of error values for the nodes in this layer, backpropogate the error through the layer, updating the internal gradients for the incoming edges
-    /// and return the error for the previous layer.
+    /// and return the error for the previous layer. Use [`KanLayer::backward_concurrent`] for a multi-threaded version of this function
     ///
     /// This function relies on mutated inner state and should be called after [`KanLayer::forward`].
     ///
@@ -367,6 +367,45 @@ impl KanLayer {
             input_error[i % self.input_dimension] += error_at_edge_input;
         }
         Ok(input_error)
+    }
+
+    /// as [KanLayer::backward], but divides the work among the passed thread pool
+    pub fn backward_concurrent(
+        &mut self,
+        error: &[f64],
+        thread_pool: &ThreadPool,
+    ) -> Result<Vec<f64>, BackwardLayerError> {
+        if error.len() != self.output_dimension {
+            return Err(BackwardLayerError::MissizedGradientError {
+                actual: error.len(),
+                expected: self.output_dimension,
+            });
+        }
+        // if error.iter().any(|f| f.is_nan()) {
+        //     return Err(BackwardLayerError::ReceivedNanError);
+        // }
+
+        let backprop_result: (Vec<f64>, Vec<BackwardSplineError>) = thread_pool.install(|| {
+            let mut input_gradient = vec![0.0; self.input_dimension];
+            let mut spline_errors = Vec::with_capacity(self.splines.len());
+            for i in 0..self.splines.len() {
+                // every `input_dimension` splines belong to the same node, and thus will use the same error value.
+                // "Distribute" the error at a given node among all incoming edges
+                let error_at_edge_output =
+                    error[i / self.input_dimension] / self.input_dimension as f64;
+                match self.splines[i].backward(error_at_edge_output) {
+                    Ok(error_at_edge_input) => {
+                        input_gradient[i % self.input_dimension] += error_at_edge_input
+                    }
+                    Err(e) => spline_errors.push(e),
+                }
+            }
+            (input_gradient, spline_errors)
+        });
+        if !backprop_result.1.is_empty() {
+            return Err(backprop_result.1[0].into());
+        }
+        Ok(backprop_result.0)
     }
 
     /// set the length of the knot vectors for each incoming edge in this layer
@@ -789,10 +828,65 @@ mod test {
     }
 
     #[test]
+    fn test_forward_then_backward_concurrent() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let mut layer = build_test_layer();
+        let preacts = vec![0.0, 0.5];
+        let acts = layer.forward(&preacts).unwrap();
+        let expected_activations = vec![0.3177, -0.3177];
+        let rounded_activations: Vec<f64> = acts
+            .iter()
+            .map(|x| (x * 10000.0).round() / 10000.0)
+            .collect();
+        assert_eq!(rounded_activations, expected_activations, "forward failed");
+
+        let error = vec![1.0, 0.5];
+        let input_error = layer.backward_concurrent(&error, &thread_pool).unwrap();
+        let expected_input_error = vec![0.0, 0.60156];
+        let rounded_input_error: Vec<f64> = input_error
+            .iter()
+            .map(|f| (f * 100000.0).round() / 100000.0)
+            .collect();
+        assert_eq!(rounded_input_error, expected_input_error, "backward failed");
+    }
+
+    #[test]
+    fn test_forward_concurrent_then_backward_concurrent() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let mut layer = build_test_layer();
+        let preacts = vec![0.0, 0.5];
+        let acts = layer.forward_concurrent(&preacts, &thread_pool).unwrap();
+        let expected_activations = vec![0.3177, -0.3177];
+        let rounded_activations: Vec<f64> = acts
+            .iter()
+            .map(|x| (x * 10000.0).round() / 10000.0)
+            .collect();
+        assert_eq!(rounded_activations, expected_activations, "forward failed");
+
+        let error = vec![1.0, 0.5];
+        let input_error = layer.backward_concurrent(&error, &thread_pool).unwrap();
+        let expected_input_error = vec![0.0, 0.60156];
+        let rounded_input_error: Vec<f64> = input_error
+            .iter()
+            .map(|f| (f * 100000.0).round() / 100000.0)
+            .collect();
+        assert_eq!(rounded_input_error, expected_input_error, "backward failed");
+    }
+
+    #[test]
     fn test_backward_before_forward() {
         let mut layer = build_test_layer();
         let error = vec![1.0, 0.5];
         let input_error = layer.backward(&error);
+        assert!(input_error.is_err());
+    }
+
+    #[test]
+    fn test_backward_concurrent_before_forward() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let mut layer = build_test_layer();
+        let error = vec![1.0, 0.5];
+        let input_error = layer.backward_concurrent(&error, &thread_pool);
         assert!(input_error.is_err());
     }
 
