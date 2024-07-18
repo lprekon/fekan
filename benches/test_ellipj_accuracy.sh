@@ -6,6 +6,7 @@
 # Yay, portability!
 
 set -e # exit on error
+set -x # print commands
 
 if [ -z $BRANCH ]; then
     BRANCH="main"
