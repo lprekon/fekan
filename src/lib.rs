@@ -65,8 +65,8 @@ pub mod kan;
 pub mod kan_layer;
 /// Provides a trait for observing the training process during [`crate::train_model`].
 pub mod training_observer;
-
-use std::cmp::min;
+/// Options for training a model with [`crate::train_model`].
+pub mod training_options;
 
 use kan::{Kan, KanError, ModelType};
 use rand::thread_rng;
@@ -74,6 +74,7 @@ use rayon::ThreadPoolBuilder;
 use serde::{Deserialize, Serialize};
 use shuffle::{fy, shuffler::Shuffler};
 use training_observer::TrainingObserver;
+use training_options::TrainingOptions;
 
 /// A sample of data to be used in training a model.
 ///
@@ -99,37 +100,6 @@ impl Sample {
     /// Get the label of the sample
     pub fn label(&self) -> f64 {
         self.label
-    }
-}
-
-/// Used by the [`train_model`] function to determine how the model should be trained.
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub struct TrainingOptions {
-    /// number of epochs for which to train, where an epoch is one pass through the training data
-    pub num_epochs: usize,
-    /// number of samples to pass through the model before updating the knots. See [kan_layer::KanLayer::update_knots_from_samples] for more information about this process.
-    pub knot_update_interval: usize,
-    /// the adaptivity of the knots when updating them. See [kan_layer::KanLayer::update_knots_from_samples] for more information about this process.
-    pub knot_adaptivity: f64,
-    /// the learning rate of the model
-    pub learning_rate: f64,
-    /// If set, the maximum length to which the knot vectors can be extended during training.
-    /// Liu et al. 2024 conjecture that the ideal model has a total knot count ~= ||training_data||, but that could become obscene for small models and large datasets
-    pub max_knot_length: Option<usize>,
-    /// the number of threads to use when training the model.
-    pub num_threads: usize,
-}
-
-impl Default for TrainingOptions {
-    fn default() -> Self {
-        TrainingOptions {
-            num_epochs: 100,
-            knot_update_interval: 100,
-            knot_adaptivity: 0.1,
-            learning_rate: 0.001,
-            max_knot_length: Some(1000),
-            num_threads: 1,
-        }
     }
 }
 
@@ -217,38 +187,24 @@ pub fn train_model<T: TrainingObserver>(
 
     // build the thread pool
     let thread_pool = ThreadPoolBuilder::new()
-        .num_threads(options.num_threads)
+        .num_threads(options.num_threads())
         .build()
         .expect("Failed to build thread pool");
 
-    // calculate the ideal knot length, using the conjectur from Liu et al. 2024 that the ideal total knot count ~= ||training_data||
-    let num_splines = model
-        .layers
-        .iter()
-        .fold(0, |acc, layer| acc + layer.total_edges());
-    let ideal_knot_length = (training_data.len() as f64 / num_splines as f64) as usize;
-    let (knot_extension_interval, knot_extension_targets) = build_knot_extension_plan(
-        model.knot_length(),
-        min(
-            ideal_knot_length,
-            options.max_knot_length.unwrap_or(usize::MAX),
-        ),
-        options.num_epochs,
-    );
-    // eprintln!(
-    //     "ideal knot length: {}, knot extension interval: {}, knot extension targets: {:?}",
-    //     ideal_knot_length, knot_extension_interval, knot_extension_targets
-    // );
-    let mut next_knot_target_idx = 0;
     let mut randomness = thread_rng();
     let mut fys = fy::FisherYates::default();
-    for epoch in 0..options.num_epochs {
+    let mut knot_extensions_completed = 0;
+    let knot_extension_targets = options.knot_extension_targets().unwrap_or(&[]);
+    let knot_extension_times = options.knot_extension_times().unwrap_or(&[]);
+    for epoch in 0..options.num_epochs() {
         let mut epoch_loss = 0.0;
         let mut samples_seen = 0;
         // shuffle the training data
         let mut shuffled_pointers: Vec<&Sample> = training_data.iter().collect();
         fys.shuffle(&mut shuffled_pointers, &mut randomness)
             .expect("Shuffling can't fail");
+
+        // run over each sample in the training data for each epoch
         for sample in shuffled_pointers {
             samples_seen += 1;
             // run over each sample in the training data for each epoch
@@ -281,14 +237,15 @@ pub fn train_model<T: TrainingObserver>(
                     epoch,
                     sample: samples_seen,
                 })?;
-            model.update(options.learning_rate); // TODO implement momentum
+            model.update(options.learning_rate()); // TODO implement momentum
             model.zero_gradients();
-            if samples_seen % options.knot_update_interval == 0
+            // update the knots if necessary
+            if samples_seen % options.knot_update_interval() == 0
                 && samples_seen < training_data.len() - model.knot_length()
             // don't update knots at the end of an epoch, as it prevents grid extension
             {
                 let _ = model
-                    .update_knots_from_samples(options.knot_adaptivity)
+                    .update_knots_from_samples(options.knot_adaptivity())
                     .map_err(|e| TrainingError {
                         source: e,
                         epoch,
@@ -299,28 +256,33 @@ pub fn train_model<T: TrainingObserver>(
 
             training_observer.on_sample_end();
         }
-        if epoch % knot_extension_interval == 0
-            && next_knot_target_idx < knot_extension_targets.len()
-        {
-            // eprintln!(
-            //     "extending knots from {} to {}",
-            //     model.knot_length(),
-            //     knot_extension_targets[next_knot_target_idx]
-            // );
-            let new_knot_target = knot_extension_targets[next_knot_target_idx];
-            next_knot_target_idx += 1;
-            model.set_knot_length(new_knot_target).unwrap();
-        }
-        epoch_loss /= training_data.len() as f64;
 
+        epoch_loss /= training_data.len() as f64;
         let validation_loss = match validate {
             EachEpoch::ValidateModel(validation_data) => {
                 validate_model(validation_data, &mut model, training_observer)
             }
             EachEpoch::DoNotValidateModel => f64::NAN,
         };
-
+        // notify the observer that the epoch has ended
         training_observer.on_epoch_end(epoch, epoch_loss, validation_loss);
+
+        // update the knots if necessary
+        if knot_extensions_completed < knot_extension_targets.len()
+            && epoch == knot_extension_times[knot_extensions_completed]
+        {
+            let target_length = knot_extension_targets[knot_extensions_completed];
+            let old_length = model.knot_length();
+            model
+                .set_knot_length(target_length)
+                .map_err(|e| TrainingError {
+                    source: e,
+                    epoch,
+                    sample: samples_seen,
+                })?;
+            training_observer.on_knot_extension(old_length, target_length);
+            knot_extensions_completed += 1;
+        }
     }
 
     Ok(model)
@@ -409,49 +371,6 @@ fn calculate_huber_loss_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
     }
 }
 
-/// Builds a plan for extending the knots of the model over the course of training.
-fn build_knot_extension_plan(
-    starting_knot_length: usize,
-    ideal_knot_length: usize,
-    num_epochs: usize,
-) -> (usize, Vec<usize>) {
-    // Determine how many epochs to wait before extending the knots, and to what length the knots should be extended each time, assuming:
-    // 1. we update no more frequently than once per epoch (this is negotiable, but it's what I'm going with for now)
-    // 2. update by at least 1 knot each time
-    // 3. we want to reach the ideal knot length before the last epoch
-    // 4. we want to extend the knots by the same amount each time
-
-    const MAX_KNOT_EXTENSIONS: usize = 5; // testing something
-
-    if starting_knot_length >= ideal_knot_length {
-        (num_epochs, vec![])
-    } else {
-        let knot_gap = ideal_knot_length - starting_knot_length;
-        // let knots_added_per_epoch = knot_gap as f64 / (num_epochs - 1) as f64; // -1 to make sure we have max knots by the last epoch
-        // if knots_added_per_epoch >= 1.0 {
-        //     // we need to add at least one knot per epoch
-        //     let knot_targets: Vec<usize> = (1..num_epochs)
-        //         .map(|epoch_count| {
-        //             starting_knot_length
-        //                 + (epoch_count as f64 * knots_added_per_epoch).round() as usize
-        //         })
-        //         .collect();
-        //     (1, knot_targets)
-        // } else {
-        //     // we need to wait several epochs before adding a knot
-        //     let epochs_between_extensions = num_epochs / knot_gap;
-        //     let knot_targets: Vec<usize> = (starting_knot_length + 1..=ideal_knot_length).collect();
-        //     (epochs_between_extensions, knot_targets)
-        // }
-        let knot_step_size = knot_gap / MAX_KNOT_EXTENSIONS;
-        let knot_update_interval = num_epochs / MAX_KNOT_EXTENSIONS;
-        let knot_targets: Vec<usize> = (1..=MAX_KNOT_EXTENSIONS)
-            .map(|i| starting_knot_length + i * knot_step_size)
-            .collect();
-        (knot_update_interval, knot_targets)
-    }
-}
-
 /// Indicates whether the model should be tested against the validation data set after each epoch
 pub enum EachEpoch<'a> {
     /// Test the model against the validation data set after each epoch, and report the validation loss through the [TrainingObserver]
@@ -476,6 +395,10 @@ impl TrainingObserver for EmptyObserver {
         // do nothing
     }
     fn on_sample_end(&self) {
+        // do nothing
+    }
+
+    fn on_knot_extension(&self, _old_length: usize, _new_length: usize) {
         // do nothing
     }
 }
