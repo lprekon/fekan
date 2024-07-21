@@ -1,6 +1,7 @@
 // use std::fs::File;
 
 //! Does this show up anywhere
+
 use std::{error::Error, fs::File, path::PathBuf, thread::available_parallelism};
 
 use clap::{ArgGroup, Args, Parser, Subcommand};
@@ -9,7 +10,8 @@ use fekan::{
     kan::{Kan, KanOptions, ModelType},
     train_model,
     training_observer::TrainingObserver,
-    validate_model, EachEpoch, Sample, TrainingOptions,
+    training_options::{TrainingOptions, TrainingOptionsError},
+    validate_model, EachEpoch, Sample,
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -101,6 +103,7 @@ struct GenericBuildParams {
 
 #[derive(Args, Clone, Debug)]
 #[command(group(ArgGroup::new("output").required(true).multiple(false)))]
+#[command(group(ArgGroup::new("knots").required(false).multiple(true)))]
 struct TrainArgs {
     /// path to the file containing the training data.
     /// The file format is determined by the file extension. Supported formats are: pickle, json, avro
@@ -119,7 +122,7 @@ struct TrainArgs {
     num_epochs: usize,
 
     #[arg(long, default_value = "100", global = true)]
-    /// the interval at which to update the spline knot vectors, based on the inputs seen since the last update
+    /// the interval - measured in forward passes - at which to update the spline knot vectors, based on the inputs seen since the last update
     knot_update_interval: usize,
 
     #[arg(long, default_value = "0.1", global = true)]
@@ -133,9 +136,22 @@ struct TrainArgs {
     /// the learning rate used to update the model weights
     learning_rate: f64,
 
-    /// the maximum length to which knot vectors can be extended during training. If not set, the knot vectors will gradually be extended so that the total number of knots ~= the number of training samples
-    #[arg(long, global = true)]
-    max_knot_length: Option<usize>,
+    #[arg(
+        long,
+        global = true,
+        requires = "knot_extension_points",
+        value_delimiter = ','
+    )]
+    /// The lengths to which the knot vectors should be extended when the model is trained
+    knot_extension_targets: Option<Vec<usize>>,
+
+    #[arg(
+        long,
+        global = true,
+        requires = "knot_extension_targets",
+        value_delimiter = ','
+    )]
+    knot_extension_points: Option<Vec<usize>>,
 
     #[arg(long, global = true)]
     /// if set, the model will be run against the validation data after each epoch, and the loss will be reported to the observer
@@ -180,6 +196,40 @@ enum WhyCommands {
     },
 }
 
+impl TryFrom<TrainArgs> for TrainingOptions {
+    type Error = TrainingOptionsError;
+
+    fn try_from(args: TrainArgs) -> Result<Self, Self::Error> {
+        TrainingOptions::new(
+            args.num_epochs,
+            args.knot_update_interval,
+            args.knot_adaptivity,
+            args.learning_rate,
+            args.knot_extension_targets,
+            args.knot_extension_points,
+            available_parallelism()
+                .expect("Could not determine number of threads")
+                .get(),
+        )
+    }
+}
+
+impl TrainArgs {
+    fn build_training_options(
+        &self,
+        num_threads: usize,
+    ) -> Result<TrainingOptions, TrainingOptionsError> {
+        TrainingOptions::new(
+            self.num_epochs,
+            self.knot_update_interval,
+            self.knot_adaptivity,
+            self.learning_rate,
+            self.knot_extension_targets.clone(),
+            self.knot_extension_points.clone(),
+            num_threads,
+        )
+    }
+}
 // when designing this program, I had 3 things for which I could optimize - a helpful and intutive CLI,
 // consistent and deduplicated definitions for the arguments, and a clean main function - and I could pick two.
 // Please forgive the messy code below :)
@@ -241,15 +291,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     class_map: Some(classifier_args.classes),
                 });
 
-                let training_options = TrainingOptions {
-                    // we can't use the From<T> pattern here because some of the fields are not directly copyable
-                    num_epochs: train_args.num_epochs,
-                    knot_update_interval: train_args.knot_update_interval,
-                    knot_adaptivity: train_args.knot_adaptivity,
-                    learning_rate: train_args.learning_rate,
-                    max_knot_length: train_args.max_knot_length,
-                    num_threads,
-                };
+                let training_options = train_args.build_training_options(num_threads)?;
 
                 // run the training loop on the model
                 let mut trained_model = train_model(
@@ -274,8 +316,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                         .finish_with_message("Training complete");
                 }
                 // save the model to a file
-                if let Some(model_output_file) = &train_args.model_output_file {
-                    serialize_model(model_output_file, &trained_model)?;
+                if let Some(output_path) = train_args.model_output_file {
+                    serialize_model(&output_path, &trained_model)?;
                 }
                 Ok(())
             }
@@ -318,15 +360,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     class_map: regressor_args.labels,
                 });
 
-                let training_options = TrainingOptions {
-                    // we can't use the From<T> pattern here because some of the fields are not directly copyable
-                    num_epochs: train_args.num_epochs,
-                    knot_update_interval: train_args.knot_update_interval,
-                    knot_adaptivity: train_args.knot_adaptivity,
-                    learning_rate: train_args.learning_rate,
-                    max_knot_length: train_args.max_knot_length,
-                    num_threads,
-                };
+                let training_options = train_args.build_training_options(num_threads)?;
 
                 // run the training loop on the model
                 let mut trained_model = train_model(
@@ -363,16 +397,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             match load_args.command {
                 WhyCommands::Train(train_args) => {
-                    let training_options = TrainingOptions {
-                        // we can't use the From<T> pattern here because some of the fields are not directly copyable
-                        num_epochs: train_args.num_epochs,
-                        knot_update_interval: train_args.knot_update_interval,
-                        knot_adaptivity: train_args.knot_adaptivity,
-                        learning_rate: train_args.learning_rate,
-                        max_knot_length: train_args.max_knot_length,
-                        num_threads,
-                    };
-
+                    let training_options = train_args.build_training_options(num_threads)?;
                     let load_result = match loaded_model.model_type() {
                         ModelType::Classification => load_classification_data(
                             &train_args.data_file,
@@ -569,6 +594,23 @@ impl TrainingObserver for TrainingProgress {
                 epoch,
                 epoch_loss,
                 validation_loss
+            );
+        }
+    }
+
+    fn on_knot_extension(&self, old_length: usize, new_length: usize) {
+        self.pb.println(format!(
+            "{} Extending knot vectors from {} to {}",
+            chrono::Local::now(),
+            old_length,
+            new_length
+        ));
+        if self.should_log {
+            println!(
+                "{} Extending knot vectors from {} to {}",
+                chrono::Local::now(),
+                old_length,
+                new_length
             );
         }
     }

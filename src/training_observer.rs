@@ -5,4 +5,7 @@ pub trait TrainingObserver {
 
     /// called by [`crate::train_model`] at the end of each sample. useful for logging or benchmarking.
     fn on_sample_end(&self);
+
+    /// called by [`crate::train_model`] when the knots are extended. useful for understanding changes in the model.
+    fn on_knot_extension(&self, old_length: usize, new_length: usize);
 }

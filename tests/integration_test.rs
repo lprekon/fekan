@@ -2,7 +2,8 @@ use fekan::{
     kan::{Kan, KanOptions, ModelType},
     train_model,
     training_observer::TrainingObserver,
-    validate_model, Sample, TrainingOptions,
+    training_options::TrainingOptions,
+    validate_model, Sample,
 };
 use rand::{thread_rng, Rng};
 
@@ -49,7 +50,6 @@ mod classification {
             &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 50,
-                max_knot_length: Some(100),
                 ..TrainingOptions::default()
             },
         )
@@ -186,5 +186,9 @@ impl TrainingObserver for TestObserver {
 
     fn on_sample_end(&self) {
         // do nothing
+    }
+
+    fn on_knot_extension(&self, old_length: usize, new_length: usize) {
+        println!("Knots extended from {} to {}", old_length, new_length);
     }
 }
