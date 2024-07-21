@@ -14,11 +14,11 @@ trap "rm -f $DATA_FILE" EXIT
 
 git rev-parse HEAD
 
-python3 generate_ellipj_data.py 1000 > $DATA_FILE
+python3 generate_exp_data.py 1000 > $DATA_FILE
 
 
 cargo run --features serialization -- build regressor --data $DATA_FILE \
-   --hidden-layer-sizes "2,5" \
+   --hidden-layer-sizes "5" \
    --learning-rate 0.001 \
    --max-knot-length 1 \
    --validate-each-epoch \
