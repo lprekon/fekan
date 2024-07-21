@@ -139,10 +139,10 @@ struct TrainArgs {
     #[arg(
         long,
         global = true,
-        requires = "knot_extension_points",
+        requires = "knot_extension_times",
         value_delimiter = ','
     )]
-    /// The lengths to which the knot vectors should be extended when the model is trained
+    /// A comma delimmted list of numbers representing lengths to which the knot vectors should be extended when the model is trained. Must be equal in length to `knot_extension_points`. If not set, no extension will occur. Example: `100,300,500` would extend the knots to 100, then 300, then 500 elements after the epochs specified in `knot_extension_times`
     knot_extension_targets: Option<Vec<usize>>,
 
     #[arg(
@@ -151,7 +151,8 @@ struct TrainArgs {
         requires = "knot_extension_targets",
         value_delimiter = ','
     )]
-    knot_extension_points: Option<Vec<usize>>,
+    /// A comma delimmited list numbers representing the epochs after which to extend the knots. Must be equal in length to `knot_extension_targets`. If not set, no extension will occur. Example: `10,50,100` would extend the knots to the lengths specified in `knot_extension_targets` after the 10th, 50th, and 100th epochs (zero indexed)
+    knot_extension_times: Option<Vec<usize>>,
 
     #[arg(long, global = true)]
     /// if set, the model will be run against the validation data after each epoch, and the loss will be reported to the observer
@@ -206,7 +207,7 @@ impl TryFrom<TrainArgs> for TrainingOptions {
             args.knot_adaptivity,
             args.learning_rate,
             args.knot_extension_targets,
-            args.knot_extension_points,
+            args.knot_extension_times,
             available_parallelism()
                 .expect("Could not determine number of threads")
                 .get(),
@@ -225,7 +226,7 @@ impl TrainArgs {
             self.knot_adaptivity,
             self.learning_rate,
             self.knot_extension_targets.clone(),
-            self.knot_extension_points.clone(),
+            self.knot_extension_times.clone(),
             num_threads,
         )
     }
