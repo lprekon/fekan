@@ -62,7 +62,7 @@ git rev-parse HEAD > $LOG_FILE
 DATA_FILE=$(mktemp)".json"
 trap 'rm -f $DATA_FILE' EXIT
 pip3 install -r requirements.txt
-python3 generate_${BENCHMARK}_data.py 1000000 > $DATA_FILE
+python3 generate_${BENCHMARK}_data.py 100000 > $DATA_FILE
 
 fekan build regressor \
     --data $DATA_FILE \
