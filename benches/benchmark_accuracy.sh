@@ -2,16 +2,7 @@ set -e # exit on error
 set -x # print commands
 
 # make sure we have all the variables and accesses we need
-if [ -z $BENCHMARK ]; then
-    # error out - we need to know where out data is coming from
-    echo "Error: BENCHMARK environment variable not set"
-    exit 1
-else
-    if [ ! -f "generate_${BENCHMARK}_data.py" ]; then
-        echo "Error: generate_${BENCHMARK}_data.py not found"
-        exit 1
-    fi
-fi
+
 if [ -n "$S3_BUCKET" ]; then
     echo "S3 target detected. Checking connection..."
     aws s3 ls s3://$S3_BUCKET
@@ -50,6 +41,17 @@ git rev-parse HEAD
 cargo install fekan --path . --features "serialization"
 
 cd benches
+
+if [ -z $BENCHMARK ]; then
+    # error out - we need to know where out data is coming from
+    echo "Error: BENCHMARK environment variable not set"
+    exit 1
+else
+    if [ ! -f "generate_${BENCHMARK}_data.py" ]; then
+        echo "Error: generate_${BENCHMARK}_data.py not found"
+        exit 1
+    fi
+fi
 
 LOG_FILE="${BENCHMARK}_accuracy_$BRANCH.log"
 touch $LOG_FILE
