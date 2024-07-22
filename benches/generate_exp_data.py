@@ -9,8 +9,8 @@ import math
 def generate_function_data(num_samples):
     samples = []
     for _ in range(num_samples):
-        x = np.random.uniform(-10, 10)
-        y = np.random.uniform(-10, 10)
+        x = np.random.uniform(-1, 1)
+        y = np.random.uniform(-1, 1)
         label = np.exp(math.sin(math.pi * x) + y**2)
         features = [x, y]
         sample = {"features": features, "label": label}  # Store the sample as a dictionary"
