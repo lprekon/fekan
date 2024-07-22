@@ -76,3 +76,7 @@ fekan build regressor \
     --log-output \
     --no-save \
     >> $LOG_FILE
+
+if [ -n "$S3_BUCKET" ]; then
+    aws s3 cp $LOG_FILE s3://$S3_BUCKET
+fi
