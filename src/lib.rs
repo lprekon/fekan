@@ -185,11 +185,17 @@ pub fn train_model<T: TrainingObserver>(
 ) -> Result<Kan, TrainingError> {
     // TRAINING
 
-    // build the thread pool
-    let thread_pool = ThreadPoolBuilder::new()
-        .num_threads(options.num_threads())
-        .build()
-        .expect("Failed to build thread pool");
+    // build the thread pool, if required
+    let thread_pool = if options.num_threads() > 1 {
+        Some(
+            ThreadPoolBuilder::new()
+                .num_threads(options.num_threads())
+                .build()
+                .expect("Failed to build thread pool"),
+        )
+    } else {
+        None
+    };
 
     let mut randomness = thread_rng();
     let mut fys = fy::FisherYates::default();
@@ -208,16 +214,17 @@ pub fn train_model<T: TrainingObserver>(
         for sample in shuffled_pointers {
             samples_seen += 1;
             // run over each sample in the training data for each epoch
-            let output = model
-                .forward_concurrent(
-                    sample.features.iter().map(|&x| x as f64).collect(),
-                    &thread_pool,
-                )
-                .map_err(|e| TrainingError {
-                    source: e,
-                    epoch,
-                    sample: samples_seen,
-                })?;
+            let forward_result = match thread_pool.as_ref() {
+                Some(thread_pool) => {
+                    model.forward_concurrent(sample.features.clone(), &thread_pool)
+                }
+                None => model.forward(sample.features().clone()),
+            };
+            let output = forward_result.map_err(|e| TrainingError {
+                source: e,
+                epoch,
+                sample: samples_seen,
+            })?;
             let (loss, dlogits) = match model.model_type() {
                 ModelType::Classification => {
                     calculate_nll_loss_and_gradient(&output, sample.label as usize)
@@ -230,13 +237,16 @@ pub fn train_model<T: TrainingObserver>(
             };
             epoch_loss += loss;
             // pass the error back through the model
-            let _ = model
-                .backward_concurrent(dlogits, &thread_pool)
-                .map_err(|e| TrainingError {
-                    source: e,
-                    epoch,
-                    sample: samples_seen,
-                })?;
+            let backward_result = match thread_pool.as_ref() {
+                Some(thread_pool) => model.backward_concurrent(dlogits, &thread_pool),
+                None => model.backward(dlogits),
+            };
+
+            let _ = backward_result.map_err(|e| TrainingError {
+                source: e,
+                epoch,
+                sample: samples_seen,
+            })?;
             model.update(options.learning_rate()); // TODO implement momentum
             model.zero_gradients();
             // update the knots if necessary

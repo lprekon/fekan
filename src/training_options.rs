@@ -15,7 +15,7 @@ pub struct TrainingOptions {
     pub knot_extension_targets: Option<Vec<usize>>,
     /// The epochs (zero-indexed) after which to extend the knots. Must be sorted in ascending order and equal in length to `knot_extension_targets`
     pub knot_extension_times: Option<Vec<usize>>,
-    /// the number of threads to use when training the model.
+    /// the number of threads to use when training the model. If <= 1, training will be single-threaded.
     pub num_threads: usize,
 }
 

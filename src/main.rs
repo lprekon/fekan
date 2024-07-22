@@ -27,7 +27,7 @@ struct Cli {
     #[arg(long, default_value = "false", global = true)]
     log_output: bool,
 
-    /// the number of threads to use for the model. If not set, the program will use as many threads as available cores
+    /// the number of threads to use for the model. If not set, the program will use as many threads as available cores. If <= 1, the program will use a single thread
     #[arg(long, global = true)]
     num_threads: Option<usize>,
 }
