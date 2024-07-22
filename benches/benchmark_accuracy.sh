@@ -17,7 +17,7 @@ fi
 if [ -z $BRANCH ]; then
     BRANCH="main"
 fi
-if [ -n $KNOT_EXTENSION_TARGETS && -n $KNOT_EXTENSION_TIMES] then
+if [ -n $KNOT_EXTENSION_TARGETS && -n $KNOT_EXTENSION_TIMES]; then
     KNOT_EXTENSION_FLAG="--knot-extension-targets $KNOT_EXTENSION_TARGETS --knot-extension-times $KNOT_EXTENSION_TIMES"
 fi
 if [ -n $HIDDEN_LAYER_SIZES ]; then
