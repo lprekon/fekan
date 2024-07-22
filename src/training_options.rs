@@ -13,7 +13,7 @@ pub struct TrainingOptions {
     pub learning_rate: f64,
     /// The lengths to which the knot vectors should be extended. Extension will happen before the epochs specified in `knot_extension_times`
     pub knot_extension_targets: Option<Vec<usize>>,
-    /// The epochs (zero-indexed) after which to extend the knots. Must be sorted in ascending order and equal in length to `knot_extension_targets`
+    /// The epochs (one-indexed) after which to extend the knots. Must be sorted in ascending order and equal in length to `knot_extension_targets`
     pub knot_extension_times: Option<Vec<usize>>,
     /// the number of threads to use when training the model. If <= 1, training will be single-threaded.
     pub num_threads: usize,
@@ -27,7 +27,7 @@ impl TrainingOptions {
     /// * `knot_adaptivity` - the adaptivity of the knots when updating them. See [`crate::kan_layer::KanLayer::update_knots_from_samples`] for more information about this process.
     /// * `learning_rate` - the learning rate of the model
     /// * `knot_extension_targets` - The lengths to which the knot vectors should be extended. Extension will happen before the epochs specified in `knot_extension_times`. If both `knot_extension_targets` and `knot_extension_times` are None, no extension will occur. If Some, must be equal in length to `knot_extension_times`. See [`crate::kan_layer::KanLayer::set_knot_length`] for more information about this process.
-    /// * `knot_extension_times` - The epochs (zero-indexed) before which to extend the knots. Must be equal in length to `knot_extension_targets`
+    /// * `knot_extension_times` - The epochs (one-indexed) before which to extend the knots. Must be equal in length to `knot_extension_targets`
     /// * `num_threads` - the number of threads to use when training the model.
     /// # Errors
     /// Returns an error if `knot_extension_targets` is Some and `knot_extension_times` is None, or vice versa, or if the lengths of `knot_extension_targets` and `knot_extension_times` are not equal.
@@ -98,7 +98,7 @@ impl TrainingOptions {
     /// set a knot extension plan. See [`crate::kan_layer::KanLayer::set_knot_length`] for more information about this process.
     /// # Arguments
     /// * `knot_extension_targets` - The lengths to which the knot vectors should be extended. Extension will happen before the epochs specified in `knot_extension_times`. If both `knot_extension_targets` and `knot_extension_times` are None, no extension will occur. If Some, must be equal in length to `knot_extension_times`. See [`crate::kan_layer::KanLayer::set_knot_length`] for more information about this process.
-    /// * `knot_extension_times` - The epochs (zero-indexed) before which to extend the knots. Must be equal in length to `knot_extension_targets`
+    /// * `knot_extension_times` - The epochs (one-indexed) before which to extend the knots. Must be equal in length to `knot_extension_targets`
     pub fn set_knot_extension_plan(
         &mut self,
         knot_extension_targets: Vec<usize>,
@@ -122,7 +122,7 @@ impl TrainingOptions {
         self.knot_extension_targets.as_deref()
     }
 
-    /// get the epochs (zero-indexed) after which to extend the knots, if set. Must be equal in length to `knot_extension_targets`
+    /// get the epochs (one-indexed) after which to extend the knots, if set. Must be equal in length to `knot_extension_targets`
     pub fn knot_extension_times(&self) -> Option<&[usize]> {
         self.knot_extension_times.as_deref()
     }

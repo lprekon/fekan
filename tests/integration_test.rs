@@ -1,13 +1,15 @@
 use fekan::{
     kan::{Kan, KanOptions, ModelType},
-    train_model,
+    preset_knot_ranges, train_model,
     training_observer::TrainingObserver,
     training_options::TrainingOptions,
     validate_model, Sample,
 };
+
 use rand::{thread_rng, Rng};
 
 mod classification {
+
     use super::*;
     /// Build a model and train it on the function f(x, y, z) = x + y + z > 0. Tests that the trained validation loss is less than the untrained validation loss
     #[test]
@@ -41,15 +43,17 @@ mod classification {
             model_type: ModelType::Classification,
             class_map: None,
         });
+
         let untrained_validation_loss =
             validate_model(&validation_data, &mut untrained_model, &TestObserver::new());
+        preset_knot_ranges(&mut untrained_model, &training_data).unwrap();
         let mut trained_model = train_model(
             untrained_model,
             &training_data,
             fekan::EachEpoch::ValidateModel(&validation_data),
             &TestObserver::new(),
             TrainingOptions {
-                num_epochs: 50,
+                num_epochs: 100,
                 ..TrainingOptions::default()
             },
         )
@@ -93,6 +97,7 @@ mod regression {
         });
         let untrained_validation_loss =
             validate_model(&validation_data, &mut untrained_model, &TestObserver::new());
+        preset_knot_ranges(&mut untrained_model, &training_data).unwrap();
         let training_result = train_model(
             untrained_model,
             &training_data,
@@ -147,6 +152,7 @@ mod regression {
 
         let untrained_validation_loss =
             validate_model(&validation_data, &mut untrained_model, &TestObserver::new());
+        preset_knot_ranges(&mut untrained_model, &training_data).unwrap();
         let mut trained_model = train_model(
             untrained_model,
             &training_data,

@@ -27,7 +27,7 @@
 //! where each layer uses degree-4 [B-splines](https://en.wikipedia.org/wiki/B-spline) with 5 coefficients (AKA control points):
 //! ```
 //! use fekan::kan::{Kan, KanOptions, ModelType};
-//! use fekan::{Sample, TrainingOptions, EachEpoch};
+//! use fekan::{Sample, training_options::TrainingOptions, EachEpoch};
 //! use tempfile::tempfile;
 //!
 //!
@@ -122,15 +122,16 @@ impl Sample {
 /// # Example
 /// train a model, using the provided [EmptyObserver] to ignore all training events:
 /// ```
-/// use fekan::{train_model, Sample, TrainingOptions, EmptyObserver, EachEpoch};
+/// use fekan::{train_model, Sample, training_options::TrainingOptions, EmptyObserver, EachEpoch};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
 /// # use fekan::TrainingError;
 ///
 /// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression, class_map: None};
 /// let untrained_model = Kan::new(&some_model_options);
-/// let training_data: Vec<Sample> = Vec::new();
+/// let mut training_data: Vec<Sample> = Vec::new();
 ///
 /// /* Load training data */
+/// # training_data.push(Sample::new(vec![1.0, 2.0], 3.0));
 ///
 /// let trained_model = train_model(
 ///     untrained_model,
@@ -143,7 +144,7 @@ impl Sample {
 ///
 /// Train a model, testing it against the validation data after each epoch, and catching the results with a custom struct that implements [TrainingObserver]:
 /// ```
-/// use fekan::{train_model, Sample, TrainingOptions, EachEpoch};
+/// use fekan::{train_model, Sample, training_options::TrainingOptions, EachEpoch};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
 /// # use fekan::TrainingError;
 /// # use fekan::training_observer::TrainingObserver;
@@ -155,16 +156,19 @@ impl Sample {
 /// # impl TrainingObserver for MyCustomObserver {
 /// #     fn on_epoch_end(&self, epoch: usize, epoch_loss: f64, validation_loss: f64) {}
 /// #     fn on_sample_end(&self) {}
+///       fn on_knot_extension(&self, old_length: usize, new_length: usize) {}
 /// # }
 ///
 /// let untrained_model = Kan::new(&some_model_options);
 ///
 /// let my_observer = MyCustomObserver::new(); // custom type that implements TrainingObserver
 ///
-/// let training_data: Vec<Sample> = Vec::new();
-/// let validation_data: Vec<Sample> = Vec::new();
+/// let mut training_data: Vec<Sample> = Vec::new();
+/// let mut validation_data: Vec<Sample> = Vec::new();
 ///
 /// /* Load training and validation data */
+/// # training_data.push(Sample::new(vec![1.0, 2.0], 3.0));
+/// # validation_data.push(Sample::new(vec![1.0, 2.0], 3.0));
 ///
 /// let trained_model = train_model(
 ///     untrained_model,
@@ -202,7 +206,12 @@ pub fn train_model<T: TrainingObserver>(
     let mut knot_extensions_completed = 0;
     let knot_extension_targets = options.knot_extension_targets().unwrap_or(&[]);
     let knot_extension_times = options.knot_extension_times().unwrap_or(&[]);
-    for epoch in 0..options.num_epochs() {
+
+    // do several "dummy" passes so we can udpate the knots to span the proper ranges before we start training
+    // we need to do one round of pre-setting per layer, since the knot ranges of layer n depend on the output of layer n-1
+    preset_knot_ranges(&mut model, training_data)?;
+    // no start the actual training loop
+    for epoch in 1..=options.num_epochs() {
         let mut epoch_loss = 0.0;
         let mut samples_seen = 0;
         // shuffle the training data
@@ -296,6 +305,29 @@ pub fn train_model<T: TrainingObserver>(
     }
 
     Ok(model)
+}
+
+/// Scan over the training data and adjust model knot ranges. This is equivalent to calling [`Kan::forward`] on each sample in the training data, then calling [`Kan::update_knots_from_samples`] with a `knot_adaptivity` of 0.0.
+/// This presetting helps avoid large amounts of training inputs falling outside the knot ranges, which can cause the model to fail to converge.
+pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(), TrainingError> {
+    Ok(for j in 0..model.layers.len() {
+        for i in 0..preset_data.len() {
+            model
+                .forward(preset_data[i].features().clone())
+                .map_err(|e| TrainingError {
+                    source: e,
+                    epoch: 0,
+                    sample: i,
+                })?;
+        }
+        model
+            .update_knots_from_samples(0.0)
+            .map_err(|e| TrainingError {
+                source: e,
+                epoch: 0,
+                sample: j * preset_data.len(),
+            })?; // we only want to get the proper input ranges - we're not worried about high-frequency resolution
+    })
 }
 
 /// Calculates the loss of the model on the provided validation data. If the model is a classification model, the cross entropy loss is calculated.
