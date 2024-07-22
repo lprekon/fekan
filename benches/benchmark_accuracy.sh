@@ -51,7 +51,7 @@ cargo install fekan --path . --features "serialization"
 
 cd benches
 
-LOG_FILE="$BENCHMARK\_accuracy_$BRANCH.log"
+LOG_FILE="${BENCHMARK}_accuracy_$BRANCH.log"
 touch $LOG_FILE
 # tag the log file with the git hash
 echo $(git rev-parse HEAD) > $LOG_FILE
@@ -59,7 +59,7 @@ echo $(git rev-parse HEAD) > $LOG_FILE
 DATA_FILE=$(mktemp)".json"
 trap "rm -f $DATA_FILE" EXIT
 pip3 install -r requirements.txt
-python3 generate_$BENCHMARK\_data.py 1000000 > $DATA_FILE
+python3 generate_${BENCHMARK}_data.py 1000000 > $DATA_FILE
 
 fekan build regressor \
     --data $DATA_FILE \
