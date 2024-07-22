@@ -185,6 +185,18 @@ fn bench_update_knots_from_samples(b: &mut Bencher) {
 }
 
 #[bench]
+fn bench_set_knot_length(b: &mut Bencher) {
+    let mut layer = big_layer_small_spline();
+    for _ in 0..100 {
+        let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
+            .map(|_| thread_rng().gen())
+            .collect();
+        let _ = layer.forward(&input);
+    }
+    b.iter(|| layer.set_knot_length(100));
+}
+
+#[bench]
 fn bench_forward_then_backward(b: &mut Bencher) {
     let mut layer = big_layer_small_spline();
     let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
