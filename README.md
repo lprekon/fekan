@@ -123,14 +123,14 @@ Load and use a trained classification model
 # To-Do list
 `fekan` is fully functional, but there are a number of improvements to make
 - Parity with [Liu et. al](https://arxiv.org/abs/2404.19756)
-    - [ ] grid extension
-    - [ ] Adjust coefficients on grid update to match previous function
+    - [x] grid extension
+    - [x] Adjust coefficients on grid update to match previous function
     - [ ] pruning un-needed nodes
     - [ ] smybolification
     - [ ] visualization
     - [ ] train via methods other than SGD (Adam, LBFGS)
 - Speed
-    - [ ] support multi-threading
+    - [x] support multi-threading
     - [ ] support SIMD/parallel computation
 
 ## License
