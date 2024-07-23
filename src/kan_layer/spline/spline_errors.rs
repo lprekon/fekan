@@ -62,3 +62,58 @@ impl fmt::Display for UpdateSplineKnotsError {
 }
 
 impl std::error::Error for UpdateSplineKnotsError {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum MergeSplinesError {
+    MismatchedDegreeError {
+        pos: usize,
+        expected: usize,
+        actual: usize,
+    },
+    MismatchedControlPointCountError {
+        pos: usize,
+        expected: usize,
+        actual: usize,
+    },
+    MismatchedKnotCountError {
+        pos: usize,
+        expected: usize,
+        actual: usize,
+    },
+}
+
+impl std::fmt::Display for MergeSplinesError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            MergeSplinesError::MismatchedDegreeError {
+                pos,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "spline at position {} has degree {}, but expected degree {}",
+                pos, actual, expected
+            ),
+            MergeSplinesError::MismatchedControlPointCountError {
+                pos,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "spline at position {} has {} control points, but expected {}",
+                pos, actual, expected
+            ),
+            MergeSplinesError::MismatchedKnotCountError {
+                pos,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "spline at position {} has {} knots, but expected {}",
+                pos, actual, expected
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MergeSplinesError {}

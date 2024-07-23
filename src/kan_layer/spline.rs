@@ -412,6 +412,56 @@ pub(crate) fn linspace(min: f64, max: f64, num: usize) -> Vec<f64> {
     knots
 }
 
+/// merge a slice of splines into a single spline by averaging the control points and knots
+/// # Errors
+/// * returns [`MergeSplinesError::MismatchedDegreeError`] if the splines have different degrees
+/// * returns [`MergeSplinesError::MismatchedControlPointCountError`] if the splines have different numbers of control points
+/// * returns [`MergeSplinesError::MismatchedKnotCountError`] if the splines have different numbers of knots
+pub(crate) fn merge_splines(splines: &[Spline]) -> Result<Spline, MergeSplinesError> {
+    let expected_degree = splines[0].degree;
+    let expected_knot_count = splines[0].knots.len();
+    let expected_control_point_count = splines[0].control_points.len();
+    let num_splines = splines.len();
+    let mut control_points = vec![0.0; expected_control_point_count];
+    let mut knots = vec![0.0; expected_knot_count];
+    for (idx, spline) in splines.iter().enumerate() {
+        if spline.degree != expected_degree {
+            return Err(MergeSplinesError::MismatchedDegreeError {
+                pos: idx,
+                expected: expected_degree,
+                actual: spline.degree,
+            });
+        }
+        if spline.control_points.len() != expected_control_point_count {
+            return Err(MergeSplinesError::MismatchedControlPointCountError {
+                pos: idx,
+                expected: expected_control_point_count,
+                actual: spline.control_points.len(),
+            });
+        }
+        if spline.knots.len() != expected_knot_count {
+            return Err(MergeSplinesError::MismatchedKnotCountError {
+                pos: idx,
+                expected: expected_knot_count,
+                actual: spline.knots.len(),
+            });
+        }
+        for i in 0..expected_control_point_count {
+            control_points[i] += spline.control_points[i];
+        }
+        for i in 0..expected_knot_count {
+            knots[i] += spline.knots[i];
+        }
+    }
+    for i in 0..expected_control_point_count {
+        control_points[i] /= num_splines as f64;
+    }
+    for i in 0..expected_knot_count {
+        knots[i] /= num_splines as f64;
+    }
+    Ok(Spline::new(expected_degree, control_points, knots).unwrap())
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -678,6 +728,89 @@ mod tests {
             / sample_size as f64)
             .sqrt();
         assert_almost_eq!(rmse as f64, 0., 1e-1); // it doesn't work as well as the other way around, but it still works
+    }
+
+    #[test]
+    fn test_merge_splines() {
+        let spline1 = Spline::new(
+            3,
+            vec![1.0, 2.0, 3.0],
+            vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        )
+        .unwrap();
+        let spline2 = Spline::new(
+            3,
+            vec![2.0, 3.0, -4.0],
+            vec![-1.0, 1.0, 2.0, 5.0, 6.0, 7.0, 8.0],
+        )
+        .unwrap();
+        let splines = vec![spline1, spline2];
+        let new_spline = merge_splines(&splines).unwrap();
+        let expected_spline = Spline::new(
+            3,
+            vec![1.5, 2.5, -0.5],
+            vec![-0.5, 1.0, 2.0, 4.0, 5.0, 6.0, 7.0],
+        )
+        .unwrap();
+        assert_eq!(new_spline, expected_spline);
+    }
+
+    #[test]
+    fn test_merge_splines_mismatched_degree() {
+        let spline1 =
+            Spline::new(2, vec![1.0, 2.0, 3.0], vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
+        let spline2 =
+            Spline::new(1, vec![2.0, 3.0, -4.0], vec![-1.0, 1.0, 2.0, 5.0, 6.0, 7.0]).unwrap();
+        let splines = vec![spline1, spline2];
+        let result = merge_splines(&splines);
+        assert!(matches!(
+            result,
+            Err(MergeSplinesError::MismatchedDegreeError { .. })
+        ));
+    }
+
+    #[test]
+    fn test_merge_splines_mismatched_control_points() {
+        let spline1 = Spline::new(
+            3,
+            vec![1.0, 2.0, 3.0],
+            vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        )
+        .unwrap();
+        let spline2 = Spline::new(
+            3,
+            vec![2.0, 3.0, -4.0, 0.0],
+            vec![-1.0, 1.0, 2.0, 5.0, 5.5, 6.0, 6.5, 7.0],
+        )
+        .unwrap();
+        let splines = vec![spline1, spline2];
+        let result = merge_splines(&splines);
+        assert!(matches!(
+            result,
+            Err(MergeSplinesError::MismatchedControlPointCountError { .. })
+        ));
+    }
+
+    #[test]
+    fn test_merge_splines_mismatched_knots() {
+        let spline1 = Spline::new(
+            3,
+            vec![1.0, 2.0, 3.0],
+            vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        )
+        .unwrap();
+        let spline2 = Spline::new(
+            3,
+            vec![2.0, 3.0, -4.0],
+            vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 6.5],
+        )
+        .unwrap();
+        let splines = vec![spline1, spline2];
+        let result = merge_splines(&splines);
+        assert!(matches!(
+            result,
+            Err(MergeSplinesError::MismatchedKnotCountError { .. })
+        ));
     }
 
     #[test]
