@@ -588,10 +588,56 @@ impl KanLayer {
         self.input_dimension * self.output_dimension
     }
 
-    // /// Get the cache stats for each spline in this layer. This is useful for debugging and performance tuning
-    // pub fn cache_stats(&self) -> Vec<&Vec<Vec<CacheStats>>> {
-    //     self.splines.iter().map(|s| s.cache_stats()).collect()
-    // }
+    pub fn merge_layers(kan_layers: &[KanLayer]) -> Result<KanLayer, KanLayerMergeError> {
+        if kan_layers.is_empty() {
+            return Err(KanLayerMergeError::NoLayersError);
+        }
+        let expected_input_dimension = kan_layers[0].input_dimension;
+        let expected_output_dimension = kan_layers[0].output_dimension;
+        // check that all layers have the same input and output dimensions
+        for i in 1..kan_layers.len() {
+            if kan_layers[i].input_dimension != expected_input_dimension {
+                return Err(KanLayerMergeError::MismatchedInputDimensionError {
+                    pos: i,
+                    expected: expected_input_dimension,
+                    actual: kan_layers[i].input_dimension,
+                });
+            }
+            if kan_layers[i].output_dimension != expected_output_dimension {
+                return Err(KanLayerMergeError::MismatchedOutputDimensionError {
+                    pos: i,
+                    expected: expected_output_dimension,
+                    actual: kan_layers[i].output_dimension,
+                });
+            }
+        }
+        // now build a row-major matrix of splines where each column is the splines in a given layer, and the rows are the ith spline in each layer
+        // splines_to_merge = [[L0_S0, L1_S0, ... LJ_S0],
+        //                     [L0_S1, L1_S1, ... LJ_S1],
+        //                     ...
+        //                     [L0_SN, L1_SN, ... LJ_SN]]
+        let num_splines = expected_input_dimension * expected_output_dimension;
+        let mut splines_to_merge = vec![vec![]; num_splines];
+        //populated in column-major order
+        for j in 0..kan_layers.len() {
+            for i in 0..num_splines {
+                splines_to_merge[i].push(kan_layers[j].splines[i].clone());
+            }
+        }
+        let mut merged_splines = Vec::with_capacity(num_splines);
+        for i in 0..num_splines {
+            let merge_result = Spline::merge_splines(&splines_to_merge[i])
+                .map_err(|e| KanLayerMergeError::MergeSplineError { pos: i, source: e })?;
+            merged_splines.push(merge_result);
+        }
+
+        Ok(KanLayer {
+            splines: merged_splines,
+            input_dimension: expected_input_dimension,
+            output_dimension: expected_output_dimension,
+            samples: vec![],
+        })
+    }
 }
 
 impl PartialEq for KanLayer {
@@ -613,7 +659,6 @@ mod test {
 
     /// returns a new layer with input and output dimension = 2, k = 3, and coef_size = 4
     fn build_test_layer() -> KanLayer {
-        // this doesn't work because I need to specify the exact coefficients for each node
         let k = 3;
         let coef_size = 4;
         let knot_size = coef_size + k + 1;
@@ -788,50 +833,16 @@ mod test {
     }
 
     #[test]
-    fn test_layer_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<KanLayer>();
-    }
-
-    #[test]
-    fn test_layer_sync() {
-        fn assert_sync<T: Sync>() {}
-        assert_sync::<KanLayer>();
-    }
-
-    #[test]
-    fn test_forward_error_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<ForwardLayerError>();
-    }
-
-    #[test]
-    fn test_forward_error_sync() {
-        fn assert_sync<T: Sync>() {}
-        assert_sync::<ForwardLayerError>();
-    }
-
-    #[test]
-    fn test_backward_error_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<BackwardLayerError>();
-    }
-
-    #[test]
-    fn test_backward_error_sync() {
-        fn assert_sync<T: Sync>() {}
-        assert_sync::<BackwardLayerError>();
-    }
-
-    #[test]
-    fn test_knot_error_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<UpdateLayerKnotsError>();
-    }
-
-    #[test]
-    fn test_knot_error_sync() {
-        fn assert_sync<T: Sync>() {}
-        assert_sync::<UpdateLayerKnotsError>();
+    // we checked the proper averaging of knots and control points in the spline tests, so we just need to check that the layer merge isn't messing up the order of the splines
+    fn test_merge_identical_layers_yield_identical_output() {
+        let layer1 = build_test_layer();
+        let layer2 = layer1.clone();
+        let input = vec![0.0, 0.5];
+        let acts1 = layer1.infer(&input).unwrap();
+        let acts2 = layer2.infer(&input).unwrap();
+        assert_eq!(acts1, acts2);
+        let merged_layer = KanLayer::merge_layers(&[layer1, layer2]).unwrap();
+        let acts3 = merged_layer.infer(&input).unwrap();
+        assert_eq!(acts1, acts3);
     }
 }

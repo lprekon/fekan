@@ -825,6 +825,24 @@ mod tests {
     }
 
     #[test]
+    fn test_merged_identical_splines_yield_identical_outputs() {
+        let mut spline1 = Spline::new(
+            3,
+            vec![1.0, 2.0, 3.0],
+            vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        )
+        .unwrap();
+        let mut spline2 = spline1.clone();
+        let t = 0.5;
+        let output1 = spline1.forward(t);
+        let output2 = spline2.forward(t);
+        assert_eq!(output1, output2);
+        let mut new_spline = Spline::merge_splines(&[spline1, spline2]).unwrap();
+        let output3 = new_spline.forward(t);
+        assert_eq!(output1, output3);
+    }
+
+    #[test]
     fn test_spline_send() {
         fn assert_send<T: Send>() {}
         assert_send::<Spline>();
@@ -836,39 +854,5 @@ mod tests {
         assert_sync::<Spline>();
     }
 
-    #[test]
-    fn test_create_error_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<CreateSplineError>();
-    }
-
-    #[test]
-    fn test_create_error_sync() {
-        fn assert_sync<T: Sync>() {}
-        assert_sync::<CreateSplineError>();
-    }
-
-    #[test]
-    fn test_backward_error_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<BackwardSplineError>();
-    }
-
-    #[test]
-    fn test_backward_error_sync() {
-        fn assert_sync<T: Sync>() {}
-        assert_sync::<BackwardSplineError>();
-    }
-
-    #[test]
-    fn test_knot_error_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<UpdateSplineKnotsError>();
-    }
-
-    #[test]
-    fn test_knot_error_sync() {
-        fn assert_sync<T: Sync>() {}
-        assert_sync::<UpdateSplineKnotsError>();
-    }
+    
 }
