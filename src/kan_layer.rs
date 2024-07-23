@@ -611,7 +611,7 @@ impl KanLayer {
     /// # fn train_layer(layer: KanLayer, data: &[Sample]) -> KanLayer {layer}
     /// let my_layer = KanLayer::new(&layer_options);
     /// let partially_trained_layers: Vec<KanLayer> = thread::scope(|s|{
-    ///     let chunk_size = training_data.len() / num_training_threads;
+    ///     let chunk_size = f32::ceil(training_data.len() as f32 / num_training_threads as f32) as usize; // round up, since .chunks() gives up-to chunk_size chunks. This way to don't leave any data on the cutting room floor
     ///     let handles: Vec<_> = training_data.chunks(chunk_size).map(|training_data_chunk|{
     ///         let clone_layer = my_layer.clone();
     ///         s.spawn(move ||{

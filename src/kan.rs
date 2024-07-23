@@ -420,7 +420,7 @@ impl Kan {
     /// # fn my_train_model_function(model: Kan, data: &[Sample]) -> Kan {model}
     /// let mut my_model = Kan::new(&model_options);
     /// let partially_trained_models: Vec<Kan> = thread::scope(|s|{
-    ///     let chunk_size = training_data.len() / num_training_threads;
+    ///     let chunk_size = f32::ceil(training_data.len() as f32 / num_training_threads as f32) as usize; // round up, since .chunks() gives up-to chunk_size chunks. This way to don't leave any data on the cutting room floor
     ///     let handles: Vec<_> = training_data.chunks(chunk_size).map(|training_data_chunk|{
     ///         let clone_model = my_model.clone();
     ///         s.spawn(move ||{
