@@ -80,6 +80,7 @@ pub(crate) enum MergeSplinesError {
         expected: usize,
         actual: usize,
     },
+    NoSplinesError,
 }
 
 impl std::fmt::Display for MergeSplinesError {
@@ -112,6 +113,7 @@ impl std::fmt::Display for MergeSplinesError {
                 "spline at position {} has {} knots, but expected {}",
                 pos, actual, expected
             ),
+            MergeSplinesError::NoSplinesError => write!(f, "no splines to merge"),
         }
     }
 }

@@ -414,10 +414,14 @@ pub(crate) fn linspace(min: f64, max: f64, num: usize) -> Vec<f64> {
 
 /// merge a slice of splines into a single spline by averaging the control points and knots
 /// # Errors
+/// * returns [`MergeSplinesError::NoSplinesError`] if the input slice is empty
 /// * returns [`MergeSplinesError::MismatchedDegreeError`] if the splines have different degrees
 /// * returns [`MergeSplinesError::MismatchedControlPointCountError`] if the splines have different numbers of control points
 /// * returns [`MergeSplinesError::MismatchedKnotCountError`] if the splines have different numbers of knots
 pub(crate) fn merge_splines(splines: &[Spline]) -> Result<Spline, MergeSplinesError> {
+    if splines.len() == 0 {
+        return Err(MergeSplinesError::NoSplinesError);
+    }
     let expected_degree = splines[0].degree;
     let expected_knot_count = splines[0].knots.len();
     let expected_control_point_count = splines[0].control_points.len();
@@ -811,6 +815,13 @@ mod tests {
             result,
             Err(MergeSplinesError::MismatchedKnotCountError { .. })
         ));
+    }
+
+    #[test]
+    fn test_merge_splines_empty_spline() {
+        let splines = vec![];
+        let result = merge_splines(&splines);
+        assert!(matches!(result, Err(MergeSplinesError::NoSplinesError)));
     }
 
     #[test]
