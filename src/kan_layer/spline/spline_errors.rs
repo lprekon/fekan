@@ -63,7 +63,7 @@ impl fmt::Display for UpdateSplineKnotsError {
 
 impl std::error::Error for UpdateSplineKnotsError {}
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum MergeSplinesError {
     MismatchedDegreeError {
         pos: usize,
@@ -119,3 +119,43 @@ impl std::fmt::Display for MergeSplinesError {
 }
 
 impl std::error::Error for MergeSplinesError {}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn test_create_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<CreateSplineError>();
+    }
+
+    #[test]
+    fn test_create_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<CreateSplineError>();
+    }
+
+    #[test]
+    fn test_backward_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<BackwardSplineError>();
+    }
+
+    #[test]
+    fn test_backward_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<BackwardSplineError>();
+    }
+
+    #[test]
+    fn test_knot_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<UpdateSplineKnotsError>();
+    }
+
+    #[test]
+    fn test_knot_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<UpdateSplineKnotsError>();
+    }
+}

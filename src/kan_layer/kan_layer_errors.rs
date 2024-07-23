@@ -116,3 +116,112 @@ impl std::fmt::Display for UpdateLayerKnotsError {
 }
 
 impl std::error::Error for UpdateLayerKnotsError {}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum KanLayerMergeError {
+    NoLayersError,
+    MismatchedInputDimensionError {
+        pos: usize,
+        expected: usize,
+        actual: usize,
+    },
+    MismatchedOutputDimensionError {
+        pos: usize,
+        expected: usize,
+        actual: usize,
+    },
+    MergeSplineError {
+        pos: usize,
+        source: MergeSplinesError,
+    },
+}
+
+impl std::fmt::Display for KanLayerMergeError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            KanLayerMergeError::NoLayersError => {
+                write!(f, "no layers to merge")
+            }
+            KanLayerMergeError::MismatchedInputDimensionError {
+                pos,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "mismatched input dimension at {}. Expected {}, got {}",
+                    pos, expected, actual
+                )
+            }
+            KanLayerMergeError::MismatchedOutputDimensionError {
+                pos,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "mismatched output dimension at pos {}. Expected {}, got {}",
+                    pos, expected, actual
+                )
+            }
+            KanLayerMergeError::MergeSplineError { pos, source } => {
+                write!(f, "error merging splines at {}. {}", pos, source)
+            }
+        }
+    }
+}
+
+impl std::error::Error for KanLayerMergeError {}
+
+#[cfg(test)]
+mod test {
+    use super::super::KanLayer;
+    use super::*;
+    #[test]
+    fn test_layer_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<KanLayer>();
+    }
+
+    #[test]
+    fn test_layer_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<KanLayer>();
+    }
+
+    #[test]
+    fn test_forward_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<ForwardLayerError>();
+    }
+
+    #[test]
+    fn test_forward_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<ForwardLayerError>();
+    }
+
+    #[test]
+    fn test_backward_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<BackwardLayerError>();
+    }
+
+    #[test]
+    fn test_backward_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<BackwardLayerError>();
+    }
+
+    #[test]
+    fn test_knot_error_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<UpdateLayerKnotsError>();
+    }
+
+    #[test]
+    fn test_knot_error_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<UpdateLayerKnotsError>();
+    }
+}
