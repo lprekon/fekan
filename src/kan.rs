@@ -1,5 +1,6 @@
 use crate::kan_layer::{
-    BackwardLayerError, ForwardLayerError, KanLayer, KanLayerOptions, UpdateLayerKnotsError,
+    kan_layer_errors::{BackwardLayerError, ForwardLayerError, UpdateLayerKnotsError},
+    KanLayer, KanLayerOptions,
 };
 use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
