@@ -588,23 +588,58 @@ impl KanLayer {
         self.input_dimension * self.output_dimension
     }
 
-    pub fn merge_layers(kan_layers: &[KanLayer]) -> Result<KanLayer, KanLayerMergeError> {
+    /// Create a new KanLayer by merging the splines of multiple KanLayers. Splines are merged by averaging their knots and control points.
+    /// `new_layer.splines[0] = spline_merge([layer1.splines[0], layer2.splines[0], ...])`, etc. The output of the merged layer is not necessarily the average of the outputs of the input layers.
+    /// # Errors
+    /// * Returns a [`KanLayerMergeError::NoLayersError`] if `kan_layers` is empty
+    /// * Returns a [`KanLayerMergeError::MismatchedInputDimensionError`] if the input dimensions of the layers in `kan_layers` are not all equal
+    /// * Returns a [`KanLayerMergeError::MismatchedOutputDimensionError`] if the output dimensions of the layers in `kan_layers` are not all equal
+    /// * Returns a [`KanLayerMergeError::MergeSplineError`] if there is an error merging the splines of the layers, caused by the splines having different degrees or different numbers of control points or knots from each other
+    /// # Examples
+    /// ```
+    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
+    /// use std::thread;
+    /// # use fekan::Sample;
+    /// # let layer_options = KanLayerOptions {
+    /// #    input_dimension: 2,
+    /// #    output_dimension: 4,
+    /// #    degree: 5,
+    /// #    coef_size: 6
+    /// # };
+    /// # let num_training_threads = 1;
+    /// # let training_data = vec![Sample::new(vec![], 0.0)];
+    /// # fn train_layer(layer: KanLayer, data: &[Sample]) -> KanLayer {layer}
+    /// let my_layer = KanLayer::new(&layer_options);
+    /// let partially_trained_layers: Vec<KanLayer> = thread::scope(|s|{
+    ///     let chunk_size = training_data.len() / num_training_threads;
+    ///     let handles: Vec<_> = training_data.chunks(chunk_size).map(|training_data_chunk|{
+    ///         let clone_layer = my_layer.clone();
+    ///         s.spawn(move ||{
+    ///             train_layer(clone_layer, training_data_chunk)
+    ///         })
+    ///     }).collect();
+    ///     handles.into_iter().map(|handle| handle.join().unwrap()).collect()
+    /// });
+    /// let fully_trained_layer = KanLayer::merge_layers(&partially_trained_layers)?;
+    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::MergeLayerError>(())
+    /// ```
+    pub fn merge_layers(kan_layers: &[KanLayer]) -> Result<KanLayer, MergeLayerError> {
         if kan_layers.is_empty() {
-            return Err(KanLayerMergeError::NoLayersError);
+            return Err(MergeLayerError::NoLayersError);
         }
         let expected_input_dimension = kan_layers[0].input_dimension;
         let expected_output_dimension = kan_layers[0].output_dimension;
         // check that all layers have the same input and output dimensions
         for i in 1..kan_layers.len() {
             if kan_layers[i].input_dimension != expected_input_dimension {
-                return Err(KanLayerMergeError::MismatchedInputDimensionError {
+                return Err(MergeLayerError::MismatchedInputDimensionError {
                     pos: i,
                     expected: expected_input_dimension,
                     actual: kan_layers[i].input_dimension,
                 });
             }
             if kan_layers[i].output_dimension != expected_output_dimension {
-                return Err(KanLayerMergeError::MismatchedOutputDimensionError {
+                return Err(MergeLayerError::MismatchedOutputDimensionError {
                     pos: i,
                     expected: expected_output_dimension,
                     actual: kan_layers[i].output_dimension,
@@ -626,8 +661,37 @@ impl KanLayer {
         }
         let mut merged_splines = Vec::with_capacity(num_splines);
         for i in 0..num_splines {
-            let merge_result = Spline::merge_splines(&splines_to_merge[i])
-                .map_err(|e| KanLayerMergeError::MergeSplineError { pos: i, source: e })?;
+            let merge_result =
+                Spline::merge_splines(&splines_to_merge[i]).map_err(|e| match e {
+                    MergeSplinesError::MismatchedDegreeError {
+                        pos: _,
+                        actual,
+                        expected,
+                    } => MergeLayerError::MismatchedDegreeError {
+                        pos: i,
+                        actual,
+                        expected,
+                    },
+                    MergeSplinesError::MismatchedKnotCountError {
+                        pos: _,
+                        actual,
+                        expected,
+                    } => MergeLayerError::MismatchedKnotCountError {
+                        pos: i,
+                        actual,
+                        expected,
+                    },
+                    MergeSplinesError::MismatchedControlPointCountError {
+                        pos: _,
+                        actual,
+                        expected,
+                    } => MergeLayerError::MismatchedControlPointCountError {
+                        pos: i,
+                        actual,
+                        expected,
+                    },
+                    MergeSplinesError::NoSplinesError => MergeLayerError::EmptyLayerError,
+                })?;
             merged_splines.push(merge_result);
         }
 

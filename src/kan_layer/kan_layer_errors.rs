@@ -117,61 +117,129 @@ impl std::fmt::Display for UpdateLayerKnotsError {
 
 impl std::error::Error for UpdateLayerKnotsError {}
 
+/// Errors that can occur when merging multiple layers into a single layer
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum KanLayerMergeError {
+pub enum MergeLayerError {
+    /// no layers were provided to merge
     NoLayersError,
+    /// the input dimension of the layer at the given position did not match the input dimension of the first layer
     MismatchedInputDimensionError {
+        /// the position of the layer whose input dimension differed
         pos: usize,
+        /// the expected input dimension - i.e the input dimension of the first layer
         expected: usize,
+        /// the actual input dimension of the layer at the given position
         actual: usize,
     },
+    /// the output dimension of the layer at the given position did not match the output dimension of the first layer
     MismatchedOutputDimensionError {
+        /// the position of the layer whose output dimension differed
         pos: usize,
+        /// the expected output dimension - i.e the output dimension of the first layer
         expected: usize,
+        /// the actual output dimension of the layer at the given position
         actual: usize,
     },
-    MergeSplineError {
+    /// The degrees of the splines in the layers differed
+    MismatchedDegreeError {
+        /// the position of the layer whose splines had a different degree
         pos: usize,
-        source: MergeSplinesError,
+        /// the expected degree - i.e the degree of the first layer
+        expected: usize,
+        /// the actual degree of the splines in the layer at the given position
+        actual: usize,
     },
+    /// The number of control points in the splines in the layers differed
+    MismatchedControlPointCountError {
+        /// the position of the layer whose splines had a different number of control points
+        pos: usize,
+        /// the expected number of control points - i.e the number of control points in the splines of the first layer
+        expected: usize,
+        /// the actual number of control points in the splines of the layer at the given position
+        actual: usize,
+    },
+    /// The number of knots in the splines in the layers differed
+    MismatchedKnotCountError {
+        /// the position of the layer whose splines had a different number of knots
+        pos: usize,
+        /// the expected number of knots - i.e the number of knots in the splines of the first layer
+        expected: usize,
+        /// the actual number of knots in the splines of the layer at the given position
+        actual: usize,
+    },
+    /// The layers provided to merge had no splines. equivalent to input_dimension == 0 or output_dimension == 0
+    EmptyLayerError,
 }
 
-impl std::fmt::Display for KanLayerMergeError {
+impl std::fmt::Display for MergeLayerError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            KanLayerMergeError::NoLayersError => {
+            MergeLayerError::NoLayersError => {
                 write!(f, "no layers to merge")
             }
-            KanLayerMergeError::MismatchedInputDimensionError {
+            MergeLayerError::MismatchedInputDimensionError {
                 pos,
                 expected,
                 actual,
             } => {
                 write!(
                     f,
-                    "mismatched input dimension at {}. Expected {}, got {}",
+                    "mismatched input dimension at layer {}. Expected {}, got {}",
                     pos, expected, actual
                 )
             }
-            KanLayerMergeError::MismatchedOutputDimensionError {
+            MergeLayerError::MismatchedOutputDimensionError {
                 pos,
                 expected,
                 actual,
             } => {
                 write!(
                     f,
-                    "mismatched output dimension at pos {}. Expected {}, got {}",
+                    "mismatched output dimension at layer {}. Expected {}, got {}",
                     pos, expected, actual
                 )
             }
-            KanLayerMergeError::MergeSplineError { pos, source } => {
-                write!(f, "error merging splines at {}. {}", pos, source)
+            MergeLayerError::MismatchedControlPointCountError {
+                pos,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "mismatched spline control point count at layer {}. Expected {}, got {}",
+                    pos, expected, actual
+                )
+            }
+            MergeLayerError::MismatchedDegreeError {
+                pos,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "mismatched spline degree at layer {}. Expected {}, got {}",
+                    pos, expected, actual
+                )
+            }
+            MergeLayerError::MismatchedKnotCountError {
+                pos,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "mismatched spline knot count at layer {}. Expected {}, got {}",
+                    pos, expected, actual
+                )
+            }
+            MergeLayerError::EmptyLayerError => {
+                write!(f, "no splines to merge")
             }
         }
     }
 }
 
-impl std::error::Error for KanLayerMergeError {}
+impl std::error::Error for MergeLayerError {}
 
 #[cfg(test)]
 mod test {
