@@ -1,5 +1,7 @@
 use crate::kan_layer::{
-    kan_layer_errors::{BackwardLayerError, ForwardLayerError, UpdateLayerKnotsError},
+    kan_layer_errors::{
+        BackwardLayerError, ForwardLayerError, MergeLayerError, UpdateLayerKnotsError,
+    },
     KanLayer, KanLayerOptions,
 };
 use rayon::ThreadPool;
@@ -397,10 +399,118 @@ impl Kan {
         self.layers[0].knot_length()
     }
 
-    // /// Get the cache statistics for a particular layer layer
-    // pub fn layer_cache_stats(&self, layer: usize) -> Vec<&Vec<Vec<CacheStats>>> {
-    //     self.layers[layer].cache_stats()
-    // }
+    /// Create a new model by merging multiple models together. Models must be of the same type and have the same number of layers, and all layers must be mergable (see [`KanLayer::merge_layers`])
+    /// # Errors
+    /// * Returns an error if the models are not mergable. See [`Kan::models_mergable`] for more information
+    /// * Returns an error if any layer encounters an error during the merge. See [`MergeLayerError`] for more information
+    /// # Example
+    /// ```
+    /// use fekan::{kan::{Kan, KanOptions, ModelType}, Sample};
+    /// use std::thread;
+    /// # let model_options = KanOptions {
+    /// #    input_size: 5,
+    /// #    layer_sizes: vec![4, 3],
+    /// #    degree: 3,
+    /// #    coef_size: 6,
+    /// #    model_type: ModelType::Regression,
+    /// #    class_map: None,
+    /// };
+    /// # let num_training_threads = 1;
+    /// # let training_data = vec![Sample::new(vec![], 0.0)];
+    /// # fn my_train_model_function(model: Kan, data: &[Sample]) -> Kan {model}
+    /// let mut my_model = Kan::new(&model_options);
+    /// let partially_trained_models: Vec<Kan> = thread::scope(|s|{
+    ///     let chunk_size = training_data.len() / num_training_threads;
+    ///     let handles: Vec<_> = training_data.chunks(chunk_size).map(|training_data_chunk|{
+    ///         let clone_model = my_model.clone();
+    ///         s.spawn(move ||{
+    ///             my_train_model_function(clone_model, training_data_chunk) // `my_train_model_function` is a stand-in for whatever function you're using to train the model - not actually defined in this crate
+    ///         })
+    ///     }).collect();
+    ///     handles.into_iter().map(|handle| handle.join().unwrap()).collect()
+    /// });
+    /// let fully_trained_model = Kan::merge_models(&partially_trained_models)?;
+    /// # Ok::<(), fekan::kan::MergeModelError>(())
+    /// ```
+    ///
+    pub fn merge_models(models: &[Kan]) -> Result<Kan, MergeModelError> {
+        Self::models_mergable(models)?; // check if the models are mergable
+
+        let mut merged_layers = Vec::new();
+        for layer_idx in 0..models[0].layers.len() {
+            let layers_to_merge: Vec<KanLayer> = models
+                .iter()
+                .map(|model| model.layers[layer_idx].clone())
+                .collect();
+            let merged_layer =
+                KanLayer::merge_layers(&layers_to_merge).map_err(|e| MergeModelError {
+                    cause: MergeModelErrorType::LayerMergeError,
+                    source: Some(e),
+                    index: layer_idx,
+                })?;
+            merged_layers.push(merged_layer);
+        }
+
+        let merged_model = Kan {
+            layers: merged_layers,
+            model_type: models[0].model_type,
+            class_map: models[0].class_map.clone(),
+        };
+        Ok(merged_model)
+    }
+
+    /// Check if the given models can be merged using [Kan::merge_models]. Returns Ok(()) if the models are mergable, an error otherwise
+    /// # Errors
+    /// Returns an error if any of the models:
+    /// * have different model types (e.g. classification vs regression)
+    /// * have different numbers of layers
+    /// * have different class maps (if the models are classification models)
+    /// or if the input slice is empty
+    pub fn models_mergable(models: &[Kan]) -> Result<(), MergeModelError> {
+        if models.is_empty() {
+            return Err(MergeModelError {
+                cause: MergeModelErrorType::EmptyModelsError,
+                source: None,
+                index: 0,
+            });
+        }
+        let expected_model_type = models[0].model_type;
+        let expected_class_map = models[0].class_map.clone();
+        let expected_layer_count = models[0].layers.len();
+        for idx in 1..models.len() {
+            if models[idx].model_type != expected_model_type {
+                return Err(MergeModelError {
+                    cause: MergeModelErrorType::MismatchedModelTypeError {
+                        expected: expected_model_type,
+                        actual: models[idx].model_type,
+                    },
+                    source: None,
+                    index: 0,
+                });
+            }
+            if models[idx].layers.len() != expected_layer_count {
+                return Err(MergeModelError {
+                    cause: MergeModelErrorType::MismatchedLayerCountError {
+                        expected: expected_layer_count,
+                        actual: models[idx].layers.len(),
+                    },
+                    source: None,
+                    index: 0,
+                });
+            }
+            if models[idx].class_map != expected_class_map {
+                return Err(MergeModelError {
+                    cause: MergeModelErrorType::MismatchedClassMapError {
+                        expected: expected_class_map,
+                        actual: models[idx].class_map.clone(),
+                    },
+                    source: None,
+                    index: 0,
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 impl PartialEq for Kan {
@@ -409,7 +519,58 @@ impl PartialEq for Kan {
     }
 }
 
-/// An error that occurs when a Kan model encounters an error in one of its layers
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// An error ocurring during an attempt to merge multiple Kan models
+pub struct MergeModelError {
+    cause: MergeModelErrorType,
+    source: Option<MergeLayerError>,
+    index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum MergeModelErrorType {
+    MismatchedModelTypeError {
+        expected: ModelType,
+        actual: ModelType,
+    },
+    MismatchedClassMapError {
+        expected: Option<Vec<String>>,
+        actual: Option<Vec<String>>,
+    },
+    EmptyModelsError,
+    MismatchedLayerCountError {
+        expected: usize,
+        actual: usize,
+    },
+    LayerMergeError,
+}
+
+impl std::fmt::Display for MergeModelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let source_string = if let Some(source) = &self.source {
+            format!(": {}", source)
+        } else {
+            "".to_string()
+        };
+        write!(
+            f,
+            "layer {} encountered merge error {}",
+            self.index, source_string
+        )
+    }
+}
+
+impl std::error::Error for MergeModelError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // don't fully understand why this `match` works but just returning `self.source` doesn't, but that's the way it is
+        match &self.source {
+            Some(source) => Some(source),
+            None => None,
+        }
+    }
+}
+
+/// An error ocurring during the operation of a Kan model
 ///
 /// Displaying the error will show the index of the layer that encountered the error, and the error itself
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -504,6 +665,27 @@ mod test {
         let error = vec![0.5, 0.4, 0.5];
         let result = first_kan.backward(error).unwrap();
         assert_eq!(result.len(), options.input_size);
+    }
+
+    #[test]
+    fn test_merge_identical_models_yields_identical_output() {
+        let kan_config = KanOptions {
+            input_size: 3,
+            layer_sizes: vec![4, 2, 3],
+            degree: 3,
+            coef_size: 4,
+            model_type: ModelType::Classification,
+            class_map: None,
+        };
+        let first_kan = Kan::new(&kan_config);
+        let second_kan = first_kan.clone();
+        let input = vec![0.5, 0.4, 0.5];
+        let first_result = first_kan.infer(input.clone()).unwrap();
+        let second_result = second_kan.infer(input.clone()).unwrap();
+        assert_eq!(first_result, second_result);
+        let merged_kan = Kan::merge_models(&[first_kan, second_kan]).unwrap();
+        let merged_result = merged_kan.infer(input).unwrap();
+        assert_eq!(first_result, merged_result);
     }
 
     #[test]

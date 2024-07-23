@@ -1,5 +1,5 @@
 #![warn(missing_docs)]
-#![warn(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::broken_intra_doc_links)]
 
 //! A library to build and train Kolmogorov-Arnold neural networks.
 //!

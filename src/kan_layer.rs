@@ -615,7 +615,7 @@ impl KanLayer {
     ///     let handles: Vec<_> = training_data.chunks(chunk_size).map(|training_data_chunk|{
     ///         let clone_layer = my_layer.clone();
     ///         s.spawn(move ||{
-    ///             train_layer(clone_layer, training_data_chunk)
+    ///             train_layer(clone_layer, training_data_chunk) // `train_layer` is a stand-in for whatever function you're using to train the layer - not actually defined in this crate
     ///         })
     ///     }).collect();
     ///     handles.into_iter().map(|handle| handle.join().unwrap()).collect()
