@@ -3,6 +3,7 @@
 use super::spline::{spline_errors::SplineError, Spline};
 use std::fmt::{self, Formatter};
 
+/// Represents any error returned from a KanLayer method or static function
 #[derive(Debug, PartialEq, Clone)]
 pub struct KanLayerError {
     error_kind: KanLayerErrorType,

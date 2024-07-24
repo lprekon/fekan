@@ -21,7 +21,6 @@ cargo run --features serialization -- build regressor --data "$DATA_FILE" \
    --hidden-layer-sizes "5" \
    --learning-rate 0.01 \
    --validate-each-epoch \
-   --num-threads 4 \
    --no-save \
    --degree 3 \
    --knot-extension-targets 10,20,50 \

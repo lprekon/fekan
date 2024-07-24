@@ -44,8 +44,7 @@ mod classification {
             class_map: None,
         });
 
-        let untrained_validation_loss =
-            validate_model(&validation_data, &mut untrained_model, &TestObserver::new());
+        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
         preset_knot_ranges(&mut untrained_model, &training_data).unwrap();
         let mut trained_model = train_model(
             untrained_model,
@@ -54,12 +53,12 @@ mod classification {
             &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 100,
+                num_threads: 8,
                 ..TrainingOptions::default()
             },
         )
         .unwrap();
-        let validation_loss =
-            validate_model(&validation_data, &mut trained_model, &TestObserver::new());
+        let validation_loss = validate_model(&validation_data, &mut trained_model);
         assert!(
         validation_loss < untrained_validation_loss,
         "Validation loss did not decrease after training. Before training: {}, After training: {}",
@@ -95,8 +94,7 @@ mod regression {
             model_type: ModelType::Regression,
             class_map: None,
         });
-        let untrained_validation_loss =
-            validate_model(&validation_data, &mut untrained_model, &TestObserver::new());
+        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
         preset_knot_ranges(&mut untrained_model, &training_data).unwrap();
         let training_result = train_model(
             untrained_model,
@@ -105,6 +103,7 @@ mod regression {
             &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 50,
+                num_threads: 8,
                 ..TrainingOptions::default()
             },
         );
@@ -112,8 +111,7 @@ mod regression {
             panic!("Error training model: {:#?}", e);
         }
         let mut trained_model = training_result.unwrap();
-        let validation_loss =
-            validate_model(&validation_data, &mut trained_model, &TestObserver::new());
+        let validation_loss = validate_model(&validation_data, &mut trained_model);
         assert!(
         validation_loss < untrained_validation_loss,
         "Validation loss did not decrease after training. Before training: {}, After training: {}",
@@ -150,8 +148,7 @@ mod regression {
             class_map: None,
         });
 
-        let untrained_validation_loss =
-            validate_model(&validation_data, &mut untrained_model, &TestObserver::new());
+        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
         preset_knot_ranges(&mut untrained_model, &training_data).unwrap();
         let mut trained_model = train_model(
             untrained_model,
@@ -160,12 +157,12 @@ mod regression {
             &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 50,
+                num_threads: 8,
                 ..TrainingOptions::default()
             },
         )
         .unwrap();
-        let validation_loss =
-            validate_model(&validation_data, &mut trained_model, &TestObserver::new());
+        let validation_loss = validate_model(&validation_data, &mut trained_model);
         assert!(
         validation_loss < untrained_validation_loss,
         "Validation loss did not decrease after training. Before training: {}, After training: {}",
@@ -188,10 +185,6 @@ impl TrainingObserver for TestObserver {
             "Epoch: {}, Epoch Loss: {}, Validation Loss: {}",
             epoch, epoch_loss, validation_loss
         );
-    }
-
-    fn on_sample_end(&self) {
-        // do nothing
     }
 
     fn on_knot_extension(&self, old_length: usize, new_length: usize) {

@@ -85,37 +85,37 @@ fn bench_forward_small_layer_big_spline(b: &mut Bencher) {
     });
 }
 
-fn run_top_concurrent(b: &mut Bencher, mut layer: KanLayer, input_layer_size: usize) {
-    let input: Vec<f64> = (0..input_layer_size).map(|_| thread_rng().gen()).collect();
-    let thread_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .unwrap();
-    b.iter(|| {
-        // run multiple times per iteration so cache improvements will show.
-        for _ in 0..2 {
-            let _ = layer.forward_concurrent(&input, &thread_pool);
-        }
-    });
-}
+// fn run_top_concurrent(b: &mut Bencher, mut layer: KanLayer, input_layer_size: usize) {
+//     let input: Vec<f64> = (0..input_layer_size).map(|_| thread_rng().gen()).collect();
+//     let thread_pool = rayon::ThreadPoolBuilder::new()
+//         .num_threads(4)
+//         .build()
+//         .unwrap();
+//     b.iter(|| {
+//         // run multiple times per iteration so cache improvements will show.
+//         for _ in 0..2 {
+//             let _ = layer.forward_concurrent(&input, &thread_pool);
+//         }
+//     });
+// }
 
-#[bench]
-fn bench_forward_top_concurrent_big_layer_small_spline(b: &mut Bencher) {
-    let layer = big_layer_small_spline();
-    run_top_concurrent(b, layer, INPUT_DIMENSION_BIG);
-}
+// #[bench]
+// fn bench_forward_top_concurrent_big_layer_small_spline(b: &mut Bencher) {
+//     let layer = big_layer_small_spline();
+//     run_top_concurrent(b, layer, INPUT_DIMENSION_BIG);
+// }
 
-#[bench]
-fn bench_forward_top_concurrent_small_layer_big_spline(b: &mut Bencher) {
-    let layer = small_layer_big_spline();
-    run_top_concurrent(b, layer, INPUT_DIMENSION_SMALL)
-}
+// #[bench]
+// fn bench_forward_top_concurrent_small_layer_big_spline(b: &mut Bencher) {
+//     let layer = small_layer_big_spline();
+//     run_top_concurrent(b, layer, INPUT_DIMENSION_SMALL)
+// }
 
-#[bench]
-fn bench_forward_top_concurrent_big_layer_big_spline(b: &mut Bencher) {
-    let layer = big_layer_big_spline();
-    run_top_concurrent(b, layer, INPUT_DIMENSION_BIG);
-}
+// #[bench]
+// fn bench_forward_top_concurrent_big_layer_big_spline(b: &mut Bencher) {
+//     let layer = big_layer_big_spline();
+//     run_top_concurrent(b, layer, INPUT_DIMENSION_BIG);
+// }
 
 #[bench]
 fn bench_backward(b: &mut Bencher) {
@@ -135,27 +135,27 @@ fn bench_backward(b: &mut Bencher) {
     });
 }
 
-#[bench]
-fn bench_backward_concurrent(b: &mut Bencher) {
-    let thread_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .unwrap();
-    let mut layer = big_layer_big_spline();
-    let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
-        .map(|_| thread_rng().gen())
-        .collect();
-    let _ = layer.forward(&input);
-    let error: Vec<f64> = (0..OUTPUT_DIMENSION_BIG)
-        .map(|_| thread_rng().gen())
-        .collect();
-    b.iter(|| {
-        // run multiple times per iteration so cache improvements will show
-        for _ in 0..2 {
-            let _ = layer.backward_concurrent(&error, &thread_pool);
-        }
-    });
-}
+// #[bench]
+// fn bench_backward_concurrent(b: &mut Bencher) {
+//     let thread_pool = rayon::ThreadPoolBuilder::new()
+//         .num_threads(4)
+//         .build()
+//         .unwrap();
+//     let mut layer = big_layer_big_spline();
+//     let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
+//         .map(|_| thread_rng().gen())
+//         .collect();
+//     let _ = layer.forward(&input);
+//     let error: Vec<f64> = (0..OUTPUT_DIMENSION_BIG)
+//         .map(|_| thread_rng().gen())
+//         .collect();
+//     b.iter(|| {
+//         // run multiple times per iteration so cache improvements will show
+//         for _ in 0..2 {
+//             let _ = layer.backward_concurrent(&error, &thread_pool);
+//         }
+//     });
+// }
 
 #[bench]
 fn bench_update(b: &mut Bencher) {

@@ -262,14 +262,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                     train_args.validation_split,
                     &classifier_args.classes,
                 )?;
-
-                let (passed_validation_data, observer_ticks) = determine_validation_data_and_ticks(
-                    &train_args,
-                    &validation_data,
-                    &training_data,
-                );
-                let training_observer =
-                    TrainingProgress::new(observer_ticks as u64, cli.log_output);
+                let passed_validation_data = match train_args.validate_each_epoch {
+                    true => EachEpoch::ValidateModel(&validation_data),
+                    false => EachEpoch::DoNotValidateModel,
+                };
+                let progress_observer =
+                    TrainingProgress::new(train_args.num_epochs as u64, cli.log_output);
 
                 // build our list of layer sizes, which should equal all the hidden layers specified by the user, plus the output layer
                 // `layers` only needs to be mutable while we build it, then should be immutable after that. Using a closure to build it accomplishes this nicely
@@ -299,20 +297,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                     untrained_model,
                     &training_data,
                     passed_validation_data,
-                    &training_observer,
+                    &progress_observer,
                     training_options,
                 )?;
                 if !train_args.validate_each_epoch {
                     // we didn't validate each epoch, so we need to validate the model now
-                    let validation_loss =
-                        validate_model(&validation_data, &mut trained_model, &training_observer);
-                    training_observer.into_inner().println(format!(
+                    let validation_loss = validate_model(&validation_data, &mut trained_model);
+                    progress_observer.into_inner().println(format!(
                         "{} Final validation Loss: {}",
                         chrono::Local::now(),
                         validation_loss
                     ));
                 } else {
-                    training_observer
+                    progress_observer
                         .into_inner()
                         .finish_with_message("Training complete");
                 }
@@ -333,13 +330,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let (training_data, validation_data) =
                     load_regression_data(&train_args.data_file, train_args.validation_split)?;
 
-                let (passed_validation_data, observer_ticks) = determine_validation_data_and_ticks(
-                    &train_args,
-                    &validation_data,
-                    &training_data,
-                );
-                let training_observer =
-                    TrainingProgress::new(observer_ticks as u64, cli.log_output);
+                let passed_validation_data = match train_args.validate_each_epoch {
+                    true => EachEpoch::ValidateModel(&validation_data),
+                    false => EachEpoch::DoNotValidateModel,
+                };
+                let progress_observer =
+                    TrainingProgress::new(train_args.num_epochs as u64, cli.log_output);
 
                 // build our list of layer sizes, which should equal all the hidden layers specified by the user, plus the output layer
                 let layers = {
@@ -368,21 +364,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                     untrained_model,
                     &training_data,
                     passed_validation_data,
-                    &training_observer,
+                    &progress_observer,
                     training_options,
                 )?;
 
                 if !train_args.validate_each_epoch {
                     // we didn't validate each epoch, so we need to validate the model now
-                    let validation_loss =
-                        validate_model(&validation_data, &mut trained_model, &training_observer);
-                    training_observer.into_inner().println(format!(
+                    let validation_loss = validate_model(&validation_data, &mut trained_model);
+                    progress_observer.into_inner().println(format!(
                         "{} Final validation Loss: {}",
                         chrono::Local::now(),
                         validation_loss
                     ));
                 } else {
-                    training_observer
+                    progress_observer
                         .into_inner()
                         .finish_with_message("Training complete");
                 }
@@ -415,37 +410,31 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let (training_data, validation_data) = load_result?;
 
                     // if the user wants the model validated each epoch, pass the validation data to the training function and included the counts in the training observer.
-                    let (passed_validation_data, observer_ticks) =
-                        determine_validation_data_and_ticks(
-                            &train_args,
-                            &validation_data,
-                            &training_data,
-                        );
-                    let training_observer =
-                        TrainingProgress::new(observer_ticks as u64, cli.log_output);
+                    let passed_validation_data = match train_args.validate_each_epoch {
+                        true => EachEpoch::ValidateModel(&validation_data),
+                        false => EachEpoch::DoNotValidateModel,
+                    };
+                    let progress_observer =
+                        TrainingProgress::new(train_args.num_epochs as u64, cli.log_output);
 
                     // run the training loop on the model
                     let mut trained_model = train_model(
                         loaded_model,
                         &training_data,
                         passed_validation_data,
-                        &training_observer,
+                        &progress_observer,
                         training_options,
                     )?;
                     if !train_args.validate_each_epoch {
                         // we didn't validate each epoch, so we need to validate the model now
-                        let validation_loss = validate_model(
-                            &validation_data,
-                            &mut trained_model,
-                            &training_observer,
-                        );
-                        training_observer.into_inner().println(format!(
+                        let validation_loss = validate_model(&validation_data, &mut trained_model);
+                        progress_observer.into_inner().println(format!(
                             "{} Final validation Loss: {}",
                             chrono::Local::now(),
                             validation_loss
                         ));
                     } else {
-                        training_observer
+                        progress_observer
                             .into_inner()
                             .finish_with_message("Training complete");
                     }
@@ -482,25 +471,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-}
-
-fn determine_validation_data_and_ticks<'a>(
-    train_args: &TrainArgs,
-    validation_data: &'a [Sample],
-    training_data: &[Sample],
-) -> (EachEpoch<'a>, usize) {
-    let (passed_validation_data, observer_ticks) = if train_args.validate_each_epoch {
-        (
-            EachEpoch::ValidateModel(&validation_data),
-            (training_data.len() + validation_data.len()) * train_args.num_epochs,
-        )
-    } else {
-        (
-            EachEpoch::DoNotValidateModel,
-            training_data.len() * train_args.num_epochs + validation_data.len(),
-        )
-    };
-    (passed_validation_data, observer_ticks)
 }
 
 fn serialize_model(
@@ -577,9 +547,6 @@ impl TrainingProgress {
 }
 
 impl TrainingObserver for TrainingProgress {
-    fn on_sample_end(&self) {
-        self.pb.inc(1);
-    }
     fn on_epoch_end(&self, epoch: usize, epoch_loss: f64, validation_loss: f64) {
         self.pb.println(format!(
             "{} Epoch {}: Training Loss: {}, Validation Loss: {}",
@@ -597,6 +564,7 @@ impl TrainingObserver for TrainingProgress {
                 validation_loss
             );
         }
+        self.pb.inc(1);
     }
 
     fn on_knot_extension(&self, old_length: usize, new_length: usize) {

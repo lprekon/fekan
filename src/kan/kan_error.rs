@@ -1,8 +1,9 @@
+//! Error types relating to the creation and manipulation of [`Kan`](crate::kan::Kan)s
 use crate::kan_layer::kan_layer_errors::KanLayerError;
 
 use super::ModelType;
 
-/// An error ocurring during the operation of a Kan model
+/// An error ocurring during the operation of a Kan model. Most model errors are caused by errors in the layers of the model, but some errors can occur when attempting to merge models
 ///
 /// Displaying the error will show the index of the layer that encountered the error, and the error itself
 #[derive(Debug, Clone, PartialEq)]
@@ -39,7 +40,8 @@ enum KanErrorType {
 }
 
 impl KanError {
-    pub fn forward(source: KanLayerError, layer_index: usize) -> Self {
+    /// Create a new `KanError` indicating that an error occurred while conducting a forward pass
+    pub(crate) fn forward(source: KanLayerError, layer_index: usize) -> Self {
         Self {
             error_kind: KanErrorType::Forward,
             source: Some(source),
@@ -47,7 +49,8 @@ impl KanError {
         }
     }
 
-    pub fn backward(source: KanLayerError, layer_index: usize) -> Self {
+    /// Create a new `KanError` indicating that an error occurred while conducting a backward pass
+    pub(crate) fn backward(source: KanLayerError, layer_index: usize) -> Self {
         Self {
             error_kind: KanErrorType::Backward,
             source: Some(source),
@@ -55,7 +58,8 @@ impl KanError {
         }
     }
 
-    pub fn update_knots(source: KanLayerError, layer_index: usize) -> Self {
+    /// Create a new `KanError` indicating that an error occurred while updating the model knots
+    pub(crate) fn update_knots(source: KanLayerError, layer_index: usize) -> Self {
         Self {
             error_kind: KanErrorType::UpdateKnots,
             source: Some(source),
@@ -63,7 +67,8 @@ impl KanError {
         }
     }
 
-    pub fn set_knot_length(source: KanLayerError, layer_index: usize) -> Self {
+    /// Create a new `KanError` indicating that an error occurred while setting the knot length
+    pub(crate) fn set_knot_length(source: KanLayerError, layer_index: usize) -> Self {
         Self {
             error_kind: KanErrorType::SetKnotLength,
             source: Some(source),
@@ -71,7 +76,12 @@ impl KanError {
         }
     }
 
-    pub fn merge_mismatched_model_type(pos: usize, expected: ModelType, actual: ModelType) -> Self {
+    /// Create a new `KanError` indicating that an error occurred while merging models due to a mismatch in model type
+    pub(crate) fn merge_mismatched_model_type(
+        pos: usize,
+        expected: ModelType,
+        actual: ModelType,
+    ) -> Self {
         Self {
             error_kind: KanErrorType::MergeMismatchedModelType {
                 pos,
@@ -83,7 +93,8 @@ impl KanError {
         }
     }
 
-    pub fn merge_unmergable_layers(source: KanLayerError, layer_index: usize) -> Self {
+    /// Create a new `KanError` indicating that an error occurred while merging models due to unmergable layers
+    pub(crate) fn merge_unmergable_layers(source: KanLayerError, layer_index: usize) -> Self {
         Self {
             error_kind: KanErrorType::MergeUnmergableLayers,
             source: Some(source),
@@ -91,7 +102,8 @@ impl KanError {
         }
     }
 
-    pub fn merge_mismatched_class_map(
+    /// Create a new `KanError` indicating that an error occurred while merging models due to a mismatch in class map
+    pub(crate) fn merge_mismatched_class_map(
         pos: usize,
         expected: Option<Vec<String>>,
         actual: Option<Vec<String>>,
@@ -107,7 +119,8 @@ impl KanError {
         }
     }
 
-    pub fn merge_mismatched_depth_model(pos: usize, expected: usize, actual: usize) -> Self {
+    /// Create a new `KanError` indicating that an error occurred while merging models due to a mismatch in depth
+    pub(crate) fn merge_mismatched_depth_model(pos: usize, expected: usize, actual: usize) -> Self {
         Self {
             error_kind: KanErrorType::MergeMismatchedDepthModel {
                 pos,
