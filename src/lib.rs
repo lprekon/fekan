@@ -128,7 +128,7 @@ impl Sample {
 /// ```
 /// use fekan::{train_model, Sample, training_options::TrainingOptions, EmptyObserver, EachEpoch};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
-/// # use fekan::TrainingError;
+/// # use fekan::training_error::TrainingError;
 ///
 /// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression, class_map: None};
 /// let untrained_model = Kan::new(&some_model_options);
@@ -150,7 +150,7 @@ impl Sample {
 /// ```
 /// use fekan::{train_model, Sample, training_options::TrainingOptions, EachEpoch};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
-/// # use fekan::TrainingError;
+/// # use fekan::training_error::TrainingError;
 /// # use fekan::training_observer::TrainingObserver;
 /// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression, class_map: None};
 /// # struct MyCustomObserver {}

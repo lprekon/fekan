@@ -125,7 +125,7 @@ impl KanLayer {
     /// let preacts = vec![0.0, 0.5, 0.5];
     /// let acts = my_layer.forward(&preacts)?;
     /// assert_eq!(acts.len(), output_dimension);
-    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::ForwardLayerError>(())
+    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
     pub fn forward(&mut self, preactivation: &[f64]) -> Result<Vec<f64>, KanLayerError> {
         self.forward_preamble(preactivation)?;
@@ -256,7 +256,7 @@ impl KanLayer {
     /// my_layer.update_knots_from_samples(0.0).unwrap(); // we don't have enough samples to calculate quantiles, so we have to keep the knots uniformly distributed. In practice, this function should be called every few hundred forward passes or so
     /// let new_acts = my_layer.forward(&sample1).unwrap();
     /// assert!(new_acts.iter().all(|x| *x != 0.0)); // the knot range now covers the samples, so the activations should be non-zero
-    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::UpdateLayerKnotsError>(())
+    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f64) -> Result<(), KanLayerError> {
         if self.samples.is_empty() {
@@ -306,7 +306,7 @@ impl KanLayer {
     /// my_layer.clear_samples();
     /// let update_result = my_layer.update_knots_from_samples(0.0);
     /// assert!(update_result.is_err()); // we've cleared the samples, so we can't update the knot vectors
-    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::ForwardLayerError>(())
+    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     pub fn clear_samples(&mut self) {
         self.samples.clear();
     }
@@ -628,7 +628,7 @@ impl KanLayer {
     ///     handles.into_iter().map(|handle| handle.join().unwrap()).collect()
     /// });
     /// let fully_trained_layer = KanLayer::merge_layers(&partially_trained_layers)?;
-    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::MergeLayerError>(())
+    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
     pub fn merge_layers(kan_layers: &[KanLayer]) -> Result<KanLayer, KanLayerError> {
         if kan_layers.is_empty() {

@@ -177,7 +177,7 @@ impl Kan {
     ///
     /// # Example
     /// ```
-    /// use fekan::kan::{Kan, KanOptions, ModelType};
+    /// use fekan::kan::{Kan, KanOptions, ModelType, kan_error::KanError};
     /// let input_size = 5;
     /// let output_size = 3;
     /// let options = KanOptions {
@@ -194,7 +194,7 @@ impl Kan {
     /// let output = model.forward(input)?;
     /// assert_eq!(output.len(), output_size);
     /// /* interpret the output as you like, for example as logits in a classifier, or as predicted value in a regressor */
-    /// # Ok::<(), fekan::kan::KanError>(())
+    /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     pub fn forward(&mut self, input: Vec<f64>) -> Result<Vec<f64>, KanError> {
         let mut preacts = input;
@@ -259,7 +259,7 @@ impl Kan {
     ///
     /// # Example
     /// ```
-    /// use fekan::kan::{Kan, KanOptions, ModelType};
+    /// use fekan::kan::{Kan, KanOptions, ModelType, kan_error::KanError};
     ///
     /// let options = KanOptions {
     ///     input_size: 5,
@@ -274,7 +274,7 @@ impl Kan {
     /// let input = vec![0.5, 0.4, 0.5, 0.5, 0.4];
     /// let output = model.forward(input)?;
     /// /* interpret the output as you like, for example as logits */
-    /// # Ok::<(), fekan::kan::KanError>(())
+    /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     pub fn backward(&mut self, error: Vec<f64>) -> Result<Vec<f64>, KanError> {
         let mut error: Vec<f64> = error;
@@ -392,7 +392,7 @@ impl Kan {
     /// * Returns an error if any layer encounters an error during the merge. See [`MergeLayerError`] for more information
     /// # Example
     /// ```
-    /// use fekan::{kan::{Kan, KanOptions, ModelType}, Sample};
+    /// use fekan::{kan::{Kan, KanOptions, ModelType, kan_error::KanError}, Sample};
     /// use std::thread;
     /// # let model_options = KanOptions {
     /// #    input_size: 5,
@@ -417,7 +417,7 @@ impl Kan {
     ///     handles.into_iter().map(|handle| handle.join().unwrap()).collect()
     /// });
     /// let fully_trained_model = Kan::merge_models(&partially_trained_models)?;
-    /// # Ok::<(), fekan::kan::MergeModelError>(())
+    /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     ///
     pub fn merge_models(models: &[Kan]) -> Result<Kan, KanError> {
