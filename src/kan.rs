@@ -1,7 +1,9 @@
-use crate::kan_layer::{
-    BackwardLayerError, ForwardLayerError, KanLayer, KanLayerOptions, UpdateLayerKnotsError,
-};
-use rayon::ThreadPool;
+pub mod kan_error;
+
+use kan_error::KanError;
+
+use crate::kan_layer::{KanLayer, KanLayerOptions};
+
 use serde::{Deserialize, Serialize};
 
 /// A full neural network model, consisting of multiple Kolmogorov-Arnold layers
@@ -46,6 +48,15 @@ pub enum ModelType {
     Classification,
     /// For models design to predict a continuous value. For example, predicting the price of a house
     Regression,
+}
+
+impl std::fmt::Display for ModelType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ModelType::Classification => write!(f, "Classification"),
+            ModelType::Regression => write!(f, "Regression"),
+        }
+    }
 }
 
 impl Kan {
@@ -162,11 +173,11 @@ impl Kan {
     ///
     /// # Errors
     /// returns a [KanError] if any layer returns an error.
-    /// See [crate::kan_layer::KanLayer::forward] and [crate::kan_layer::LayerError] for more information
+    /// See [crate::kan_layer::KanLayer::forward] for more information
     ///
     /// # Example
     /// ```
-    /// use fekan::kan::{Kan, KanOptions, ModelType};
+    /// use fekan::kan::{Kan, KanOptions, ModelType, kan_error::KanError};
     /// let input_size = 5;
     /// let output_size = 3;
     /// let options = KanOptions {
@@ -183,17 +194,14 @@ impl Kan {
     /// let output = model.forward(input)?;
     /// assert_eq!(output.len(), output_size);
     /// /* interpret the output as you like, for example as logits in a classifier, or as predicted value in a regressor */
-    /// # Ok::<(), fekan::kan::KanError>(())
+    /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     pub fn forward(&mut self, input: Vec<f64>) -> Result<Vec<f64>, KanError> {
         let mut preacts = input;
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             let result = layer.forward(&preacts);
             if let Err(e) = result {
-                return Err(KanError {
-                    source: ErrorOperation::Forward(e),
-                    index: idx,
-                });
+                return Err(KanError::forward(e, idx));
             }
             let output = result.unwrap();
             preacts = output;
@@ -201,26 +209,26 @@ impl Kan {
         Ok(preacts)
     }
 
-    /// as [Kan::forward], but uses a thread pool to multi-thread the forward pass
-    pub fn forward_concurrent(
-        &mut self,
-        input: Vec<f64>,
-        thread_pool: &ThreadPool,
-    ) -> Result<Vec<f64>, KanError> {
-        let mut preacts = input;
-        for (idx, layer) in self.layers.iter_mut().enumerate() {
-            let result = layer.forward_concurrent(&preacts, thread_pool);
-            if let Err(e) = result {
-                return Err(KanError {
-                    source: ErrorOperation::Forward(e),
-                    index: idx,
-                });
-            }
-            let output = result.unwrap();
-            preacts = output;
-        }
-        Ok(preacts)
-    }
+    // /// as [Kan::forward], but uses a thread pool to multi-thread the forward pass
+    // pub fn forward_concurrent(
+    //     &mut self,
+    //     input: Vec<f64>,
+    //     thread_pool: &ThreadPool,
+    // ) -> Result<Vec<f64>, KanError> {
+    //     let mut preacts = input;
+    //     for (idx, layer) in self.layers.iter_mut().enumerate() {
+    //         let result = layer.forward_concurrent(&preacts, thread_pool);
+    //         if let Err(e) = result {
+    //             return Err(KanError {
+    //                 source: ErrorOperation::Forward(e),
+    //                 index: idx,
+    //             });
+    //         }
+    //         let output = result.unwrap();
+    //         preacts = output;
+    //     }
+    //     Ok(preacts)
+    // }
 
     /// as [Kan::forward], but does not accumulate any internal state
     ///
@@ -233,10 +241,7 @@ impl Kan {
         for (idx, layer) in self.layers.iter().enumerate() {
             let result = layer.infer(&preacts);
             if let Err(e) = result {
-                return Err(KanError {
-                    source: ErrorOperation::Forward(e),
-                    index: idx,
-                });
+                return Err(KanError::forward(e, idx));
             }
             let output = result.unwrap();
             preacts = output;
@@ -250,11 +255,11 @@ impl Kan {
     ///
     /// # Errors
     /// returns an error if any layer returns an error.
-    /// See [crate::kan_layer::KanLayer::backward] and [crate::kan_layer::LayerError] for more information
+    /// See [crate::kan_layer::KanLayer::backward] for more information
     ///
     /// # Example
     /// ```
-    /// use fekan::kan::{Kan, KanOptions, ModelType};
+    /// use fekan::kan::{Kan, KanOptions, ModelType, kan_error::KanError};
     ///
     /// let options = KanOptions {
     ///     input_size: 5,
@@ -269,50 +274,41 @@ impl Kan {
     /// let input = vec![0.5, 0.4, 0.5, 0.5, 0.4];
     /// let output = model.forward(input)?;
     /// /* interpret the output as you like, for example as logits */
-    /// # Ok::<(), fekan::kan::KanError>(())
+    /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     pub fn backward(&mut self, error: Vec<f64>) -> Result<Vec<f64>, KanError> {
-        let mut error = error;
+        let mut error: Vec<f64> = error;
         for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
-            let backward_result = layer.backward(&error);
-            match backward_result {
-                Ok(result) => {
-                    error = result;
-                }
-                Err(e) => {
-                    return Err(KanError {
-                        source: ErrorOperation::Backward(e),
-                        index: idx,
-                    });
-                }
-            }
+            error = layer
+                .backward(&error)
+                .map_err(|e| KanError::backward(e, idx))?;
         }
         Ok(error)
     }
 
-    /// as [Kan::backward], but uses a thread pool to multi-thread the backward pass
-    pub fn backward_concurrent(
-        &mut self,
-        error: Vec<f64>,
-        thread_pool: &ThreadPool,
-    ) -> Result<Vec<f64>, KanError> {
-        let mut error = error;
-        for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
-            let backward_result = layer.backward_concurrent(&error, thread_pool);
-            match backward_result {
-                Ok(result) => {
-                    error = result;
-                }
-                Err(e) => {
-                    return Err(KanError {
-                        source: ErrorOperation::Backward(e),
-                        index: idx,
-                    });
-                }
-            }
-        }
-        Ok(error)
-    }
+    // /// as [Kan::backward], but uses a thread pool to multi-thread the backward pass
+    // pub fn backward_concurrent(
+    //     &mut self,
+    //     error: Vec<f64>,
+    //     thread_pool: &ThreadPool,
+    // ) -> Result<Vec<f64>, KanError> {
+    //     let mut error = error;
+    //     for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
+    //         let backward_result = layer.backward_concurrent(&error, thread_pool);
+    //         match backward_result {
+    //             Ok(result) => {
+    //                 error = result;
+    //             }
+    //             Err(e) => {
+    //                 return Err(KanError {
+    //                     source: ErrorOperation::Backward(e),
+    //                     index: idx,
+    //                 });
+    //             }
+    //         }
+    //     }
+    //     Ok(error)
+    // }
 
     /// calls each layer's [`crate::kan_layer::KanLayer::update`] method with the given learning rate
     pub fn update(&mut self, learning_rate: f64) {
@@ -356,10 +352,7 @@ impl Kan {
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f64) -> Result<(), KanError> {
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             if let Err(e) = layer.update_knots_from_samples(knot_adaptivity) {
-                return Err(KanError {
-                    source: ErrorOperation::UpdateKnots(e),
-                    index: idx,
-                });
+                return Err(KanError::update_knots(e, idx));
             }
         }
         return Ok(());
@@ -379,10 +372,7 @@ impl Kan {
     pub fn set_knot_length(&mut self, knot_length: usize) -> Result<(), KanError> {
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             if let Err(e) = layer.set_knot_length(knot_length) {
-                return Err(KanError {
-                    source: ErrorOperation::UpdateKnots(e),
-                    index: idx,
-                });
+                return Err(KanError::set_knot_length(e, idx));
             }
         }
         Ok(())
@@ -396,66 +386,114 @@ impl Kan {
         self.layers[0].knot_length()
     }
 
-    // /// Get the cache statistics for a particular layer layer
-    // pub fn layer_cache_stats(&self, layer: usize) -> Vec<&Vec<Vec<CacheStats>>> {
-    //     self.layers[layer].cache_stats()
-    // }
+    /// Create a new model by merging multiple models together. Models must be of the same type and have the same number of layers, and all layers must be mergable (see [`KanLayer::merge_layers`])
+    /// # Errors
+    /// * Returns an error if the models are not mergable. See [`Kan::models_mergable`] for more information
+    /// * Returns an error if any layer encounters an error during the merge. See [`MergeLayerError`] for more information
+    /// # Example
+    /// ```
+    /// use fekan::{kan::{Kan, KanOptions, ModelType, kan_error::KanError}, Sample};
+    /// use std::thread;
+    /// # let model_options = KanOptions {
+    /// #    input_size: 5,
+    /// #    layer_sizes: vec![4, 3],
+    /// #    degree: 3,
+    /// #    coef_size: 6,
+    /// #    model_type: ModelType::Regression,
+    /// #    class_map: None,
+    /// };
+    /// # let num_training_threads = 1;
+    /// # let training_data = vec![Sample::new(vec![], 0.0)];
+    /// # fn my_train_model_function(model: Kan, data: &[Sample]) -> Kan {model}
+    /// let mut my_model = Kan::new(&model_options);
+    /// let partially_trained_models: Vec<Kan> = thread::scope(|s|{
+    ///     let chunk_size = f32::ceil(training_data.len() as f32 / num_training_threads as f32) as usize; // round up, since .chunks() gives up-to chunk_size chunks. This way to don't leave any data on the cutting room floor
+    ///     let handles: Vec<_> = training_data.chunks(chunk_size).map(|training_data_chunk|{
+    ///         let clone_model = my_model.clone();
+    ///         s.spawn(move ||{
+    ///             my_train_model_function(clone_model, training_data_chunk) // `my_train_model_function` is a stand-in for whatever function you're using to train the model - not actually defined in this crate
+    ///         })
+    ///     }).collect();
+    ///     handles.into_iter().map(|handle| handle.join().unwrap()).collect()
+    /// });
+    /// let fully_trained_model = Kan::merge_models(&partially_trained_models)?;
+    /// # Ok::<(), fekan::kan::kan_error::KanError>(())
+    /// ```
+    ///
+    pub fn merge_models(models: &[Kan]) -> Result<Kan, KanError> {
+        Self::models_mergable(models)?; // check if the models are mergable
+
+        let mut merged_layers = Vec::new();
+        for layer_idx in 0..models[0].layers.len() {
+            let layers_to_merge: Vec<KanLayer> = models
+                .iter()
+                .map(|model| model.layers[layer_idx].clone())
+                .collect();
+            let merged_layer = KanLayer::merge_layers(&layers_to_merge)
+                .map_err(|e| KanError::merge_unmergable_layers(e, layer_idx))?;
+            merged_layers.push(merged_layer);
+        }
+
+        let merged_model = Kan {
+            layers: merged_layers,
+            model_type: models[0].model_type,
+            class_map: models[0].class_map.clone(),
+        };
+        Ok(merged_model)
+    }
+
+    /// Check if the given models can be merged using [Kan::merge_models]. Returns Ok(()) if the models are mergable, an error otherwise
+    /// # Errors
+    /// Returns an error if any of the models:
+    /// * have different model types (e.g. classification vs regression)
+    /// * have different numbers of layers
+    /// * have different class maps (if the models are classification models)
+    /// or if the input slice is empty
+    pub fn models_mergable(models: &[Kan]) -> Result<(), KanError> {
+        // this will be handled by the merge_layers method as a NoLayers error
+        // if models.is_empty() {
+        //     return Err(KanError {
+        //         source: KanLayerError {
+        //             error_kind: KanLayerErrorType::MergeNoLayers,
+        //             source: None,
+        //             spline_idx: None,
+        //         },
+        //         index: 0,
+        //     });
+        // }
+        let expected_model_type = models[0].model_type;
+        let expected_class_map = models[0].class_map.clone();
+        let expected_layer_count = models[0].layers.len();
+        for idx in 1..models.len() {
+            if models[idx].model_type != expected_model_type {
+                return Err(KanError::merge_mismatched_model_type(
+                    idx,
+                    expected_model_type,
+                    models[idx].model_type,
+                ));
+            }
+            if models[idx].class_map != expected_class_map {
+                return Err(KanError::merge_mismatched_class_map(
+                    idx,
+                    expected_class_map.clone(),
+                    models[idx].class_map.clone(),
+                ));
+            }
+            if models[idx].layers.len() != expected_layer_count {
+                return Err(KanError::merge_mismatched_depth_model(
+                    idx,
+                    expected_layer_count,
+                    models[idx].layers.len(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl PartialEq for Kan {
     fn eq(&self, other: &Self) -> bool {
         self.layers == other.layers && self.model_type == other.model_type
-    }
-}
-
-/// An error that occurs when a Kan model encounters an error in one of its layers
-///
-/// Displaying the error will show the index of the layer that encountered the error, and the error itself
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct KanError {
-    /// the error that occurred
-    source: ErrorOperation,
-    /// the index of the layer that encountered the error
-    index: usize,
-}
-
-#[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ErrorOperation {
-    Forward(ForwardLayerError),
-    Backward(BackwardLayerError),
-    UpdateKnots(UpdateLayerKnotsError),
-}
-
-impl std::fmt::Display for ErrorOperation {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            ErrorOperation::Forward(e) => e.fmt(f),
-            ErrorOperation::Backward(e) => e.fmt(f),
-            ErrorOperation::UpdateKnots(e) => e.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for ErrorOperation {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ErrorOperation::Forward(e) => Some(e),
-            ErrorOperation::Backward(e) => Some(e),
-            ErrorOperation::UpdateKnots(e) => Some(e),
-        }
-    }
-}
-
-impl std::fmt::Display for KanError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "layer {} encountered error {}", self.index, self.source)
-    }
-}
-
-impl std::error::Error for KanError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
     }
 }
 
@@ -503,6 +541,27 @@ mod test {
         let error = vec![0.5, 0.4, 0.5];
         let result = first_kan.backward(error).unwrap();
         assert_eq!(result.len(), options.input_size);
+    }
+
+    #[test]
+    fn test_merge_identical_models_yields_identical_output() {
+        let kan_config = KanOptions {
+            input_size: 3,
+            layer_sizes: vec![4, 2, 3],
+            degree: 3,
+            coef_size: 4,
+            model_type: ModelType::Classification,
+            class_map: None,
+        };
+        let first_kan = Kan::new(&kan_config);
+        let second_kan = first_kan.clone();
+        let input = vec![0.5, 0.4, 0.5];
+        let first_result = first_kan.infer(input.clone()).unwrap();
+        let second_result = second_kan.infer(input.clone()).unwrap();
+        assert_eq!(first_result, second_result);
+        let merged_kan = Kan::merge_models(&[first_kan, second_kan]).unwrap();
+        let merged_result = merged_kan.infer(input).unwrap();
+        assert_eq!(first_result, merged_result);
     }
 
     #[test]

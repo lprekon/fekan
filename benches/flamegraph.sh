@@ -16,5 +16,5 @@ build regressor \
 --knot-extension-times 4 \
 --learning-rate 0.01 \
 --validate-each-epoch  \
---num-threads 1 
+--num-threads 8
 sudo cargo clean

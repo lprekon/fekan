@@ -1,5 +1,5 @@
 #![warn(missing_docs)]
-#![warn(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::broken_intra_doc_links)]
 
 //! A library to build and train Kolmogorov-Arnold neural networks.
 //!
@@ -63,16 +63,20 @@
 pub mod kan;
 /// Contains the struct [`KanLayer`](crate::kan_layer::KanLayer), which represents a single layer of a Kolmogorov-Arnold Network.
 pub mod kan_layer;
+/// Contains the struct [`TrainingError`] representing an error encountered during training.
+pub mod training_error;
 /// Provides a trait for observing the training process during [`crate::train_model`].
 pub mod training_observer;
 /// Options for training a model with [`crate::train_model`].
 pub mod training_options;
 
-use kan::{Kan, KanError, ModelType};
+use std::thread;
+
+use kan::{Kan, ModelType};
 use rand::thread_rng;
-use rayon::ThreadPoolBuilder;
 use serde::{Deserialize, Serialize};
 use shuffle::{fy, shuffler::Shuffler};
+use training_error::TrainingError;
 use training_observer::TrainingObserver;
 use training_options::TrainingOptions;
 
@@ -124,7 +128,7 @@ impl Sample {
 /// ```
 /// use fekan::{train_model, Sample, training_options::TrainingOptions, EmptyObserver, EachEpoch};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
-/// # use fekan::TrainingError;
+/// # use fekan::training_error::TrainingError;
 ///
 /// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression, class_map: None};
 /// let untrained_model = Kan::new(&some_model_options);
@@ -146,7 +150,7 @@ impl Sample {
 /// ```
 /// use fekan::{train_model, Sample, training_options::TrainingOptions, EachEpoch};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
-/// # use fekan::TrainingError;
+/// # use fekan::training_error::TrainingError;
 /// # use fekan::training_observer::TrainingObserver;
 /// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression, class_map: None};
 /// # struct MyCustomObserver {}
@@ -155,7 +159,6 @@ impl Sample {
 /// # }
 /// # impl TrainingObserver for MyCustomObserver {
 /// #     fn on_epoch_end(&self, epoch: usize, epoch_loss: f64, validation_loss: f64) {}
-/// #     fn on_sample_end(&self) {}
 ///       fn on_knot_extension(&self, old_length: usize, new_length: usize) {}
 /// # }
 ///
@@ -189,18 +192,6 @@ pub fn train_model<T: TrainingObserver>(
 ) -> Result<Kan, TrainingError> {
     // TRAINING
 
-    // build the thread pool, if required
-    let thread_pool = if options.num_threads() > 1 {
-        Some(
-            ThreadPoolBuilder::new()
-                .num_threads(options.num_threads())
-                .build()
-                .expect("Failed to build thread pool"),
-        )
-    } else {
-        None
-    };
-
     let mut randomness = thread_rng();
     let mut fys = fy::FisherYates::default();
     let mut knot_extensions_completed = 0;
@@ -210,76 +201,146 @@ pub fn train_model<T: TrainingObserver>(
     // do several "dummy" passes so we can udpate the knots to span the proper ranges before we start training
     // we need to do one round of pre-setting per layer, since the knot ranges of layer n depend on the output of layer n-1
     preset_knot_ranges(&mut model, training_data)?;
-    // no start the actual training loop
+    // now start the actual training loop
+    // if the number of threads is <= 1, run the training loop in a single thread
+
     for epoch in 1..=options.num_epochs() {
         let mut epoch_loss = 0.0;
         let mut samples_seen = 0;
         // shuffle the training data
-        let mut shuffled_pointers: Vec<&Sample> = training_data.iter().collect();
-        fys.shuffle(&mut shuffled_pointers, &mut randomness)
+        let mut shuffled_data = training_data.to_vec();
+        fys.shuffle(&mut shuffled_data, &mut randomness)
             .expect("Shuffling can't fail");
-
-        // run over each sample in the training data for each epoch
-        for sample in shuffled_pointers {
-            samples_seen += 1;
-            // run over each sample in the training data for each epoch
-            let forward_result = match thread_pool.as_ref() {
-                Some(thread_pool) => {
-                    model.forward_concurrent(sample.features.clone(), &thread_pool)
-                }
-                None => model.forward(sample.features().clone()),
-            };
-            let output = forward_result.map_err(|e| TrainingError {
+        // multi-threaded training
+        if options.num_threads > 1 {
+            let chunk_size =
+                f32::ceil(shuffled_data.len() as f32 / options.num_threads() as f32) as usize;
+            let multithreaded_training: Result<Vec<(Kan, f64)>, TrainingError> = // I love that Result implements FromIterator, so Vec<Result<T,E>> gets automatically converted to Result<Vec<T>, E>
+            thread::scope(|s| {
+                let handles: Vec<_> = training_data
+                    .chunks(chunk_size)
+                    .map(|training_data_chunk| {
+                        let cloned_model = model.clone();
+                        s.spawn(move || {
+                            let mut model = cloned_model;
+                            let mut chunk_loss = 0.0;
+                            let mut chunk_samples_seen = 0;
+                            for sample in training_data_chunk {
+                                chunk_samples_seen += 1;
+                                // forward
+                                let logits =
+                                    model.forward(sample.clone().features).map_err(|e| {
+                                        TrainingError {
+                                            source: e,
+                                            epoch,
+                                            sample: chunk_samples_seen,
+                                        }
+                                    })?;
+                                // backward
+                                let (loss, gradient) = match model.model_type() {
+                                    ModelType::Classification => calculate_nll_loss_and_gradient(
+                                        &logits,
+                                        sample.label as usize,
+                                    ),
+                                    ModelType::Regression => {
+                                        let (loss, dlogit) = calculate_huber_loss_and_gradient(
+                                            logits[0],
+                                            sample.label,
+                                        );
+                                        (loss, vec![dlogit])
+                                    }
+                                };
+                                chunk_loss += loss;
+                                model.backward(gradient).map_err(|e| TrainingError {
+                                    source: e,
+                                    epoch,
+                                    sample: chunk_samples_seen,
+                                })?;
+                                // update
+                                model.update(options.learning_rate);
+                                model.zero_gradients();
+                                // update the knots if necessary
+                                if chunk_samples_seen % options.knot_update_interval == 0 {
+                                    model
+                                        .update_knots_from_samples(options.knot_adaptivity)
+                                        .map_err(|e| TrainingError {
+                                            source: e,
+                                            epoch,
+                                            sample: chunk_samples_seen,
+                                        })?;
+                                    model.clear_samples();
+                                }
+                            }
+                            Ok((model, chunk_loss))
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().unwrap())
+                    .collect()
+            });
+            // recombine the models and losses
+            let multithreaded_training_result = multithreaded_training?;
+            let (partially_trained_models, chunk_losses): (Vec<Kan>, Vec<f64>) =
+                multithreaded_training_result.into_iter().unzip();
+            model = Kan::merge_models(&partially_trained_models).map_err(|e| TrainingError {
                 source: e,
                 epoch,
-                sample: samples_seen,
+                sample: 0,
             })?;
-            let (loss, dlogits) = match model.model_type() {
-                ModelType::Classification => {
-                    calculate_nll_loss_and_gradient(&output, sample.label as usize)
-                }
-                ModelType::Regression => {
-                    let (loss, dlogit) =
-                        calculate_huber_loss_and_gradient(output[0], sample.label as f64); //TODO allow different delta values
-                    (loss, vec![dlogit])
-                }
-            };
-            epoch_loss += loss;
-            // pass the error back through the model
-            let backward_result = match thread_pool.as_ref() {
-                Some(thread_pool) => model.backward_concurrent(dlogits, &thread_pool),
-                None => model.backward(dlogits),
-            };
 
-            let _ = backward_result.map_err(|e| TrainingError {
-                source: e,
-                epoch,
-                sample: samples_seen,
-            })?;
-            model.update(options.learning_rate()); // TODO implement momentum
-            model.zero_gradients();
-            // update the knots if necessary
-            if samples_seen % options.knot_update_interval() == 0
-                && samples_seen < training_data.len() - model.knot_length()
-            // don't update knots at the end of an epoch, as it prevents grid extension
-            {
-                let _ = model
-                    .update_knots_from_samples(options.knot_adaptivity())
+            epoch_loss = chunk_losses.iter().sum::<f64>() / training_data.len() as f64;
+        }
+        // end multi-threaded code
+        // single-thread-specific training
+        else {
+            for sample in shuffled_data.iter() {
+                samples_seen += 1;
+                // forward
+                let logits = model
+                    .forward(sample.clone().features)
                     .map_err(|e| TrainingError {
                         source: e,
                         epoch,
                         sample: samples_seen,
                     })?;
-                model.clear_samples();
+                // backward
+                let (loss, gradient) = match model.model_type() {
+                    ModelType::Classification => {
+                        calculate_nll_loss_and_gradient(&logits, sample.label as usize)
+                    }
+                    ModelType::Regression => {
+                        let (loss, dlogit) =
+                            calculate_huber_loss_and_gradient(logits[0], sample.label);
+                        (loss, vec![dlogit])
+                    }
+                };
+                epoch_loss += loss;
+                model.backward(gradient).map_err(|e| TrainingError {
+                    source: e,
+                    epoch,
+                    sample: samples_seen,
+                })?;
+                // update
+                model.update(options.learning_rate);
+                model.zero_gradients();
+                // update the knots if necessary
+                if samples_seen % options.knot_update_interval == 0 {
+                    model
+                        .update_knots_from_samples(options.knot_adaptivity)
+                        .map_err(|e| TrainingError {
+                            source: e,
+                            epoch,
+                            sample: samples_seen,
+                        })?;
+                    model.clear_samples();
+                }
             }
-
-            training_observer.on_sample_end();
-        }
-
-        epoch_loss /= training_data.len() as f64;
+        } // end single-thread-specific code
         let validation_loss = match validate {
             EachEpoch::ValidateModel(validation_data) => {
-                validate_model(validation_data, &mut model, training_observer)
+                validate_model(validation_data, &mut model)
             }
             EachEpoch::DoNotValidateModel => f64::NAN,
         };
@@ -292,6 +353,10 @@ pub fn train_model<T: TrainingObserver>(
         {
             let target_length = knot_extension_targets[knot_extensions_completed];
             let old_length = model.knot_length();
+            // get some samples for knot extension
+            for i in 0..(2 * old_length) {
+                model.forward(shuffled_data[i].features.clone()).unwrap();
+            }
             model
                 .set_knot_length(target_length)
                 .map_err(|e| TrainingError {
@@ -333,12 +398,7 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
 /// Calculates the loss of the model on the provided validation data. If the model is a classification model, the cross entropy loss is calculated.
 /// If the model is a regression model, the mean squared error is calculated.
 ///
-/// Calls the [`TrainingObserver::on_sample_end`] method of the provided observer after each sample is processed.
-pub fn validate_model<T: TrainingObserver>(
-    validation_data: &[Sample],
-    model: &mut Kan,
-    observer: &T,
-) -> f64 {
+pub fn validate_model(validation_data: &[Sample], model: &mut Kan) -> f64 {
     let mut validation_loss = 0.0;
 
     for sample in validation_data {
@@ -354,7 +414,6 @@ pub fn validate_model<T: TrainingObserver>(
             }
         };
         validation_loss += loss;
-        observer.on_sample_end();
     }
     validation_loss /= validation_data.len() as f64;
 
@@ -436,41 +495,9 @@ impl TrainingObserver for EmptyObserver {
     fn on_epoch_end(&self, _epoch: usize, _epoch_loss: f64, _validation_loss: f64) {
         // do nothing
     }
-    fn on_sample_end(&self) {
-        // do nothing
-    }
 
     fn on_knot_extension(&self, _old_length: usize, _new_length: usize) {
         // do nothing
-    }
-}
-
-/// Indicates that an error was encountered during training
-///
-/// If displayed, this error will show the epoch and sample at which the error was encountered, as well as the [KanError] that caused the error.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct TrainingError {
-    /// The error that caused the training error
-    pub source: KanError,
-    /// The epoch at which the error was encountered
-    pub epoch: usize,
-    /// The sample within the epoch at which the error was encountered
-    pub sample: usize,
-}
-
-impl std::fmt::Display for TrainingError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "epoch {} sample {} encountered error {}",
-            self.epoch, self.sample, self.source
-        )
-    }
-}
-
-impl std::error::Error for TrainingError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
     }
 }
 
