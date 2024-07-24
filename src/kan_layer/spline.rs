@@ -40,11 +40,11 @@ impl Spline {
         degree: usize,
         control_points: Vec<f64>,
         knots: Vec<f64>,
-    ) -> Result<Self, CreateSplineError> {
+    ) -> Result<Self, SplineError> {
         let size = control_points.len();
         let min_required_knots = size + degree + 1;
         if knots.len() < min_required_knots {
-            return Err(CreateSplineError::TooFewKnotsError {
+            return Err(SplineError::TooFewKnots {
                 expected: min_required_knots,
                 actual: knots.len(),
             });
@@ -97,15 +97,10 @@ impl Spline {
     /// uses the memoized activations from the most recent forward pass
     ///
     /// # Errors
-    /// * Returns [`BackwardSplineError::BackwardBeforeForwardError`] if called before a forward pass
-    /// * Returns [`BackwardSplineError::ReceivedNanError`] if the passed `error` value is `NaN`
-    /// * Returns [`BackwardSplineError::GradientIsNanError`] if any of the calculated gradients are `NaN`
-    pub(super) fn backward(&mut self, error: f64) -> Result<f64, BackwardSplineError> {
+    /// * Returns [`SplineError::BackwardBeforeForward`] if called before a forward pass
+    pub(super) fn backward(&mut self, error: f64) -> Result<f64, SplineError> {
         if let None = self.last_t {
-            return Err(BackwardSplineError::BackwardBeforeForwardError);
-        }
-        if error.is_nan() {
-            return Err(BackwardSplineError::ReceivedNanError);
+            return Err(SplineError::BackwardBeforeForward);
         }
         let last_t = self.last_t.unwrap();
 
@@ -223,12 +218,9 @@ impl Spline {
     /// set the length of the knot vector to `knot_length` by linearly interpolating between the first and last knot.
     /// calculates a new set of control points using least squares regression over any and all cached activations. Clears the cache after use.
     /// # Errors
-    /// * returns [`UpdateSplineKnotsError::ActivationsEmptyError`] if the activations cache is empty. The most likely cause of this is calling `set_knot_length`  after initializing the spline or calling `update_knots_from_samples`, without first calling `forward` at least once.
-    /// * returns [`UpdateSplineKnotsError::NansInControlPointsError`] if the calculated control points contain `NaN` values
-    pub(super) fn set_knot_length(
-        &mut self,
-        knot_length: usize,
-    ) -> Result<(), UpdateSplineKnotsError> {
+    /// * returns [`SplineError::ActivationsEmpty`] if the activations cache is empty. The most likely cause of this is calling `set_knot_length`  after initializing the spline or calling `update_knots_from_samples`, without first calling `forward` at least once.
+    /// * returns [`SplineError::NansInControlPoints`] if the calculated control points contain `NaN` values
+    pub(super) fn set_knot_length(&mut self, knot_length: usize) -> Result<(), SplineError> {
         let new_knots = linspace(self.knots[0], self.knots[self.knots.len() - 1], knot_length);
         // build regressor matrix
         let mut something = self
@@ -238,7 +230,7 @@ impl Spline {
             .map(|((i, _k, t), b)| (*i, f64::from_bits(*t), *b))
             .collect::<Vec<_>>();
         if something.is_empty() {
-            return Err(UpdateSplineKnotsError::ActivationsEmptyError);
+            return Err(SplineError::ActivationsEmpty);
         }
         // put the activations in the correct order. We want each row of the final matrix to be all the basis functions for a single value of t, but since the nalgebra constructors take
         // inputs in column major order, we build the transpose of the matrix we actually want, and sort by 't' first, then 'i'.
@@ -282,7 +274,9 @@ impl Spline {
         // update parameters
         self.control_points = solution.iter().map(|v| *v).collect();
         if self.control_points.iter().any(|c| c.is_nan()) {
-            return Err(UpdateSplineKnotsError::NansInControlPointsError);
+            return Err(SplineError::NansInControlPoints {
+                offending_spline: self.clone(),
+            });
         }
         self.knots = new_knots;
         // reset state
@@ -303,13 +297,13 @@ impl Spline {
 
     /// merge a slice of splines into a single spline by averaging the control points and knots
     /// # Errors
-    /// * returns [`MergeSplinesError::NoSplinesError`] if the input slice is empty
-    /// * returns [`MergeSplinesError::MismatchedDegreeError`] if the splines have different degrees
-    /// * returns [`MergeSplinesError::MismatchedControlPointCountError`] if the splines have different numbers of control points
-    /// * returns [`MergeSplinesError::MismatchedKnotCountError`] if the splines have different numbers of knots
-    pub(crate) fn merge_splines(splines: &[Spline]) -> Result<Spline, MergeSplinesError> {
+    /// * returns [`SplineError::MergeNoSplines`] if the input slice is empty
+    /// * returns [`SplineError::MergeMismatchedDegree`] if the splines have different degrees
+    /// * returns [`SplineError::MergeMismatchedControlPointCount`] if the splines have different numbers of control points
+    /// * returns [`SplineError::MergeMismatchedKnotCount`] if the splines have different numbers of knots
+    pub(crate) fn merge_splines(splines: &[Spline]) -> Result<Spline, SplineError> {
         if splines.len() == 0 {
-            return Err(MergeSplinesError::NoSplinesError);
+            return Err(SplineError::MergeNoSplines);
         }
         let expected_degree = splines[0].degree;
         let expected_knot_count = splines[0].knots.len();
@@ -319,21 +313,21 @@ impl Spline {
         let mut knots = vec![0.0; expected_knot_count];
         for (idx, spline) in splines.iter().enumerate() {
             if spline.degree != expected_degree {
-                return Err(MergeSplinesError::MismatchedDegreeError {
+                return Err(SplineError::MergeMismatchedDegree {
                     pos: idx,
                     expected: expected_degree,
                     actual: spline.degree,
                 });
             }
             if spline.control_points.len() != expected_control_point_count {
-                return Err(MergeSplinesError::MismatchedControlPointCountError {
+                return Err(SplineError::MergeMismatchedControlPointCount {
                     pos: idx,
                     expected: expected_control_point_count,
                     actual: spline.control_points.len(),
                 });
             }
             if spline.knots.len() != expected_knot_count {
-                return Err(MergeSplinesError::MismatchedKnotCountError {
+                return Err(SplineError::MergeMismatchedKnotCount {
                     pos: idx,
                     expected: expected_knot_count,
                     actual: spline.knots.len(),
@@ -769,7 +763,7 @@ mod tests {
         let result = Spline::merge_splines(&splines);
         assert!(matches!(
             result,
-            Err(MergeSplinesError::MismatchedDegreeError { .. })
+            Err(SplineError::MergeMismatchedDegree { .. })
         ));
     }
 
@@ -791,7 +785,7 @@ mod tests {
         let result = Spline::merge_splines(&splines);
         assert!(matches!(
             result,
-            Err(MergeSplinesError::MismatchedControlPointCountError { .. })
+            Err(SplineError::MergeMismatchedControlPointCount { .. })
         ));
     }
 
@@ -813,7 +807,7 @@ mod tests {
         let result = Spline::merge_splines(&splines);
         assert!(matches!(
             result,
-            Err(MergeSplinesError::MismatchedKnotCountError { .. })
+            Err(SplineError::MergeMismatchedKnotCount { .. })
         ));
     }
 
@@ -821,7 +815,7 @@ mod tests {
     fn test_merge_splines_empty_spline() {
         let splines = vec![];
         let result = Spline::merge_splines(&splines);
-        assert!(matches!(result, Err(MergeSplinesError::NoSplinesError)));
+        assert!(matches!(result, Err(SplineError::MergeNoSplines)));
     }
 
     #[test]
@@ -853,6 +847,4 @@ mod tests {
         fn assert_sync<T: Sync>() {}
         assert_sync::<Spline>();
     }
-
-    
 }

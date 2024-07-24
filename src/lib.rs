@@ -68,7 +68,7 @@ pub mod training_observer;
 /// Options for training a model with [`crate::train_model`].
 pub mod training_options;
 
-use kan::{Kan, KanError, ModelType};
+pub mod training_error;
 use rand::thread_rng;
 use rayon::ThreadPoolBuilder;
 use serde::{Deserialize, Serialize};
@@ -442,35 +442,6 @@ impl TrainingObserver for EmptyObserver {
 
     fn on_knot_extension(&self, _old_length: usize, _new_length: usize) {
         // do nothing
-    }
-}
-
-/// Indicates that an error was encountered during training
-///
-/// If displayed, this error will show the epoch and sample at which the error was encountered, as well as the [KanError] that caused the error.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct TrainingError {
-    /// The error that caused the training error
-    pub source: KanError,
-    /// The epoch at which the error was encountered
-    pub epoch: usize,
-    /// The sample within the epoch at which the error was encountered
-    pub sample: usize,
-}
-
-impl std::fmt::Display for TrainingError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "epoch {} sample {} encountered error {}",
-            self.epoch, self.sample, self.source
-        )
-    }
-}
-
-impl std::error::Error for TrainingError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
     }
 }
 

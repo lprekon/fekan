@@ -1,10 +1,9 @@
-use crate::kan_layer::{
-    kan_layer_errors::{
-        BackwardLayerError, ForwardLayerError, MergeLayerError, UpdateLayerKnotsError,
-    },
-    KanLayer, KanLayerOptions,
-};
-use rayon::ThreadPool;
+pub mod kan_error;
+
+use kan_error::KanError;
+
+use crate::kan_layer::{KanLayer, KanLayerOptions};
+
 use serde::{Deserialize, Serialize};
 
 /// A full neural network model, consisting of multiple Kolmogorov-Arnold layers
@@ -49,6 +48,15 @@ pub enum ModelType {
     Classification,
     /// For models design to predict a continuous value. For example, predicting the price of a house
     Regression,
+}
+
+impl std::fmt::Display for ModelType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ModelType::Classification => write!(f, "Classification"),
+            ModelType::Regression => write!(f, "Regression"),
+        }
+    }
 }
 
 impl Kan {
@@ -165,7 +173,7 @@ impl Kan {
     ///
     /// # Errors
     /// returns a [KanError] if any layer returns an error.
-    /// See [crate::kan_layer::KanLayer::forward] and [crate::kan_layer::LayerError] for more information
+    /// See [crate::kan_layer::KanLayer::forward] for more information
     ///
     /// # Example
     /// ```
@@ -193,10 +201,7 @@ impl Kan {
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             let result = layer.forward(&preacts);
             if let Err(e) = result {
-                return Err(KanError {
-                    source: ErrorOperation::Forward(e),
-                    index: idx,
-                });
+                return Err(KanError::forward(e, idx));
             }
             let output = result.unwrap();
             preacts = output;
@@ -204,26 +209,26 @@ impl Kan {
         Ok(preacts)
     }
 
-    /// as [Kan::forward], but uses a thread pool to multi-thread the forward pass
-    pub fn forward_concurrent(
-        &mut self,
-        input: Vec<f64>,
-        thread_pool: &ThreadPool,
-    ) -> Result<Vec<f64>, KanError> {
-        let mut preacts = input;
-        for (idx, layer) in self.layers.iter_mut().enumerate() {
-            let result = layer.forward_concurrent(&preacts, thread_pool);
-            if let Err(e) = result {
-                return Err(KanError {
-                    source: ErrorOperation::Forward(e),
-                    index: idx,
-                });
-            }
-            let output = result.unwrap();
-            preacts = output;
-        }
-        Ok(preacts)
-    }
+    // /// as [Kan::forward], but uses a thread pool to multi-thread the forward pass
+    // pub fn forward_concurrent(
+    //     &mut self,
+    //     input: Vec<f64>,
+    //     thread_pool: &ThreadPool,
+    // ) -> Result<Vec<f64>, KanError> {
+    //     let mut preacts = input;
+    //     for (idx, layer) in self.layers.iter_mut().enumerate() {
+    //         let result = layer.forward_concurrent(&preacts, thread_pool);
+    //         if let Err(e) = result {
+    //             return Err(KanError {
+    //                 source: ErrorOperation::Forward(e),
+    //                 index: idx,
+    //             });
+    //         }
+    //         let output = result.unwrap();
+    //         preacts = output;
+    //     }
+    //     Ok(preacts)
+    // }
 
     /// as [Kan::forward], but does not accumulate any internal state
     ///
@@ -236,10 +241,7 @@ impl Kan {
         for (idx, layer) in self.layers.iter().enumerate() {
             let result = layer.infer(&preacts);
             if let Err(e) = result {
-                return Err(KanError {
-                    source: ErrorOperation::Forward(e),
-                    index: idx,
-                });
+                return Err(KanError::forward(e, idx));
             }
             let output = result.unwrap();
             preacts = output;
@@ -253,7 +255,7 @@ impl Kan {
     ///
     /// # Errors
     /// returns an error if any layer returns an error.
-    /// See [crate::kan_layer::KanLayer::backward] and [crate::kan_layer::LayerError] for more information
+    /// See [crate::kan_layer::KanLayer::backward] for more information
     ///
     /// # Example
     /// ```
@@ -275,47 +277,38 @@ impl Kan {
     /// # Ok::<(), fekan::kan::KanError>(())
     /// ```
     pub fn backward(&mut self, error: Vec<f64>) -> Result<Vec<f64>, KanError> {
-        let mut error = error;
+        let mut error: Vec<f64> = error;
         for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
-            let backward_result = layer.backward(&error);
-            match backward_result {
-                Ok(result) => {
-                    error = result;
-                }
-                Err(e) => {
-                    return Err(KanError {
-                        source: ErrorOperation::Backward(e),
-                        index: idx,
-                    });
-                }
-            }
+            error = layer
+                .backward(&error)
+                .map_err(|e| KanError::backward(e, idx))?;
         }
         Ok(error)
     }
 
-    /// as [Kan::backward], but uses a thread pool to multi-thread the backward pass
-    pub fn backward_concurrent(
-        &mut self,
-        error: Vec<f64>,
-        thread_pool: &ThreadPool,
-    ) -> Result<Vec<f64>, KanError> {
-        let mut error = error;
-        for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
-            let backward_result = layer.backward_concurrent(&error, thread_pool);
-            match backward_result {
-                Ok(result) => {
-                    error = result;
-                }
-                Err(e) => {
-                    return Err(KanError {
-                        source: ErrorOperation::Backward(e),
-                        index: idx,
-                    });
-                }
-            }
-        }
-        Ok(error)
-    }
+    // /// as [Kan::backward], but uses a thread pool to multi-thread the backward pass
+    // pub fn backward_concurrent(
+    //     &mut self,
+    //     error: Vec<f64>,
+    //     thread_pool: &ThreadPool,
+    // ) -> Result<Vec<f64>, KanError> {
+    //     let mut error = error;
+    //     for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
+    //         let backward_result = layer.backward_concurrent(&error, thread_pool);
+    //         match backward_result {
+    //             Ok(result) => {
+    //                 error = result;
+    //             }
+    //             Err(e) => {
+    //                 return Err(KanError {
+    //                     source: ErrorOperation::Backward(e),
+    //                     index: idx,
+    //                 });
+    //             }
+    //         }
+    //     }
+    //     Ok(error)
+    // }
 
     /// calls each layer's [`crate::kan_layer::KanLayer::update`] method with the given learning rate
     pub fn update(&mut self, learning_rate: f64) {
@@ -359,10 +352,7 @@ impl Kan {
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f64) -> Result<(), KanError> {
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             if let Err(e) = layer.update_knots_from_samples(knot_adaptivity) {
-                return Err(KanError {
-                    source: ErrorOperation::UpdateKnots(e),
-                    index: idx,
-                });
+                return Err(KanError::update_knots(e, idx));
             }
         }
         return Ok(());
@@ -382,10 +372,7 @@ impl Kan {
     pub fn set_knot_length(&mut self, knot_length: usize) -> Result<(), KanError> {
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             if let Err(e) = layer.set_knot_length(knot_length) {
-                return Err(KanError {
-                    source: ErrorOperation::UpdateKnots(e),
-                    index: idx,
-                });
+                return Err(KanError::set_knot_length(e, idx));
             }
         }
         Ok(())
@@ -433,7 +420,7 @@ impl Kan {
     /// # Ok::<(), fekan::kan::MergeModelError>(())
     /// ```
     ///
-    pub fn merge_models(models: &[Kan]) -> Result<Kan, MergeModelError> {
+    pub fn merge_models(models: &[Kan]) -> Result<Kan, KanError> {
         Self::models_mergable(models)?; // check if the models are mergable
 
         let mut merged_layers = Vec::new();
@@ -442,12 +429,8 @@ impl Kan {
                 .iter()
                 .map(|model| model.layers[layer_idx].clone())
                 .collect();
-            let merged_layer =
-                KanLayer::merge_layers(&layers_to_merge).map_err(|e| MergeModelError {
-                    cause: MergeModelErrorType::LayerMergeError,
-                    source: Some(e),
-                    index: layer_idx,
-                })?;
+            let merged_layer = KanLayer::merge_layers(&layers_to_merge)
+                .map_err(|e| KanError::merge_unmergable_layers(e, layer_idx))?;
             merged_layers.push(merged_layer);
         }
 
@@ -466,47 +449,42 @@ impl Kan {
     /// * have different numbers of layers
     /// * have different class maps (if the models are classification models)
     /// or if the input slice is empty
-    pub fn models_mergable(models: &[Kan]) -> Result<(), MergeModelError> {
-        if models.is_empty() {
-            return Err(MergeModelError {
-                cause: MergeModelErrorType::EmptyModelsError,
-                source: None,
-                index: 0,
-            });
-        }
+    pub fn models_mergable(models: &[Kan]) -> Result<(), KanError> {
+        // this will be handled by the merge_layers method as a NoLayers error
+        // if models.is_empty() {
+        //     return Err(KanError {
+        //         source: KanLayerError {
+        //             error_kind: KanLayerErrorType::MergeNoLayers,
+        //             source: None,
+        //             spline_idx: None,
+        //         },
+        //         index: 0,
+        //     });
+        // }
         let expected_model_type = models[0].model_type;
         let expected_class_map = models[0].class_map.clone();
         let expected_layer_count = models[0].layers.len();
         for idx in 1..models.len() {
             if models[idx].model_type != expected_model_type {
-                return Err(MergeModelError {
-                    cause: MergeModelErrorType::MismatchedModelTypeError {
-                        expected: expected_model_type,
-                        actual: models[idx].model_type,
-                    },
-                    source: None,
-                    index: 0,
-                });
-            }
-            if models[idx].layers.len() != expected_layer_count {
-                return Err(MergeModelError {
-                    cause: MergeModelErrorType::MismatchedLayerCountError {
-                        expected: expected_layer_count,
-                        actual: models[idx].layers.len(),
-                    },
-                    source: None,
-                    index: 0,
-                });
+                return Err(KanError::merge_mismatched_model_type(
+                    idx,
+                    expected_model_type,
+                    models[idx].model_type,
+                ));
             }
             if models[idx].class_map != expected_class_map {
-                return Err(MergeModelError {
-                    cause: MergeModelErrorType::MismatchedClassMapError {
-                        expected: expected_class_map,
-                        actual: models[idx].class_map.clone(),
-                    },
-                    source: None,
-                    index: 0,
-                });
+                return Err(KanError::merge_mismatched_class_map(
+                    idx,
+                    expected_class_map.clone(),
+                    models[idx].class_map.clone(),
+                ));
+            }
+            if models[idx].layers.len() != expected_layer_count {
+                return Err(KanError::merge_mismatched_depth_model(
+                    idx,
+                    expected_layer_count,
+                    models[idx].layers.len(),
+                ));
             }
         }
         Ok(())
@@ -516,108 +494,6 @@ impl Kan {
 impl PartialEq for Kan {
     fn eq(&self, other: &Self) -> bool {
         self.layers == other.layers && self.model_type == other.model_type
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// An error ocurring during an attempt to merge multiple Kan models
-pub struct MergeModelError {
-    cause: MergeModelErrorType,
-    source: Option<MergeLayerError>,
-    index: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum MergeModelErrorType {
-    MismatchedModelTypeError {
-        expected: ModelType,
-        actual: ModelType,
-    },
-    MismatchedClassMapError {
-        expected: Option<Vec<String>>,
-        actual: Option<Vec<String>>,
-    },
-    EmptyModelsError,
-    MismatchedLayerCountError {
-        expected: usize,
-        actual: usize,
-    },
-    LayerMergeError,
-}
-
-impl std::fmt::Display for MergeModelError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let source_string = if let Some(source) = &self.source {
-            format!(": {}", source)
-        } else {
-            "".to_string()
-        };
-        write!(
-            f,
-            "layer {} encountered merge error {}",
-            self.index, source_string
-        )
-    }
-}
-
-impl std::error::Error for MergeModelError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        // don't fully understand why this `match` works but just returning `self.source` doesn't, but that's the way it is
-        match &self.source {
-            Some(source) => Some(source),
-            None => None,
-        }
-    }
-}
-
-/// An error ocurring during the operation of a Kan model
-///
-/// Displaying the error will show the index of the layer that encountered the error, and the error itself
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct KanError {
-    /// the error that occurred
-    source: ErrorOperation,
-    /// the index of the layer that encountered the error
-    index: usize,
-}
-
-#[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ErrorOperation {
-    Forward(ForwardLayerError),
-    Backward(BackwardLayerError),
-    UpdateKnots(UpdateLayerKnotsError),
-}
-
-impl std::fmt::Display for ErrorOperation {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            ErrorOperation::Forward(e) => e.fmt(f),
-            ErrorOperation::Backward(e) => e.fmt(f),
-            ErrorOperation::UpdateKnots(e) => e.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for ErrorOperation {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ErrorOperation::Forward(e) => Some(e),
-            ErrorOperation::Backward(e) => Some(e),
-            ErrorOperation::UpdateKnots(e) => Some(e),
-        }
-    }
-}
-
-impl std::fmt::Display for KanError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "layer {} encountered error {}", self.index, self.source)
-    }
-}
-
-impl std::error::Error for KanError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
     }
 }
 
