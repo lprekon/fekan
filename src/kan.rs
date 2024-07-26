@@ -24,18 +24,18 @@ pub struct Kan {
 ///
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct KanOptions {
-    /// the number of input features the model should except
+    /// the number of input features the model should accept
     pub input_size: usize,
     /// the sizes of the layers to use in the model, including the output layer
     pub layer_sizes: Vec<usize>,
     /// the degree of the b-splines to use in each layer
     pub degree: usize,
-    /// the number of coefficients to use in each layer
+    /// the number of coefficients to use in the b-splines in each layer
     pub coef_size: usize,
-    /// the type of model to create. This field is metadata and does not affect the operation of the model, though it is used elsewhere in the crate. See [`fekan::train_model()`](crate::train_model) for an example
+    /// the type of model to create. This field is metadata and does not affect the operation of the model, though it is used by [`fekan::train_model()`](crate::train_model) to determine the proper loss function
     pub model_type: ModelType,
     /// A list of human-readable names for the output nodes.
-    /// The length of this vector should be equal to the number of output nodes in the model, or behavior is undefined
+    /// The length of this vector should be equal to the number of output nodes in the model (the last number in `layer_sizes`), or else behavior is undefined
     pub class_map: Option<Vec<String>>,
 }
 
@@ -63,13 +63,13 @@ impl Kan {
     /// creates a new Kan model with the given hyperparameters
     ///
     /// # Example
-    /// Create a regression model with 5 input features, 2 hidden layers of size 4 and 3, and 1 output feature, using degree 3 b-splines with 6 coefficients
+    /// Create a regression model with 5 input features, 2 hidden layers of size 4 and 3, and 1 output feature, using degree 3 b-splines with 6 coefficients per spline
     /// ```
     /// use fekan::kan::{Kan, KanOptions, ModelType};
     ///
     /// let options = KanOptions {
     ///     input_size: 5,
-    ///     layer_sizes: vec![4, 3],
+    ///     layer_sizes: vec![4, 3, 1],
     ///     degree: 3,
     ///     coef_size: 6,
     ///     model_type: ModelType::Regression,
@@ -111,21 +111,44 @@ impl Kan {
     /// Returns None if the label is not found in the model's class map, or if the model does not have a class map
     ///
     /// # Example
+    /// creating a model with a class map
     /// ```
     /// use fekan::kan::{Kan, KanOptions, ModelType};
-    /// let class_map = vec!["cat".to_string(), "dog".to_string()];
+    /// let my_class_map = vec!["cat".to_string(), "dog".to_string()];
     /// let options = KanOptions {
     ///     input_size: 5,
     ///     layer_sizes: vec![4, 2],
     ///     degree: 3,
     ///     coef_size: 6,
     ///     model_type: ModelType::Regression,
-    ///     class_map: Some(class_map),
+    ///     class_map: Some(my_class_map),
     /// };
     /// let model = Kan::new(&options);
     /// assert_eq!(model.label_to_node("cat"), Some(0));
     /// assert_eq!(model.label_to_node("dog"), Some(1));
     /// assert_eq!(model.label_to_node("fish"), None);
+    /// ```
+    /// Using a model's class map during training to determine the index of node that should have had the highest value
+    /// ```
+    /// # use fekan::kan::{Kan, KanOptions, ModelType};
+    /// # let my_class_map = vec!["cat".to_string(), "dog".to_string()];
+    /// # let options = KanOptions {
+    /// #    input_size: 5,
+    /// #    layer_sizes: vec![4, 2],
+    /// #    degree: 3,
+    /// #    coef_size: 6,
+    /// #    model_type: ModelType::Regression,
+    /// #    class_map: Some(my_class_map),
+    /// # };
+    /// # let mut model = Kan::new(&options);
+    /// # let feature_data = vec![0.5, 0.4, 0.5, 0.5, 0.4];
+    /// # let label = "cat";
+    /// # fn cross_entropy_loss(output: Vec<f64>, expected_highest_node: usize) -> f64 {0.0}
+    /// /* within your custom training function */
+    /// let logits: Vec<f64> = model.forward(feature_data)?;
+    /// let expected_highest_node: usize = model.label_to_node(label).unwrap();
+    /// let loss: f64 = cross_entropy_loss(logits, expected_highest_node);
+    /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     pub fn label_to_node(&self, label: &str) -> Option<usize> {
         if let Some(class_map) = &self.class_map {
@@ -135,7 +158,7 @@ impl Kan {
         }
     }
 
-    /// Returns the label of the output node that corresponds to the given index.
+    /// Returns the label for the output node at the given index.
     ///
     /// Returns None if the index is out of bounds, or if the model does not have a class map
     ///
@@ -156,7 +179,27 @@ impl Kan {
     /// assert_eq!(model.node_to_label(1), Some("dog"));
     /// assert_eq!(model.node_to_label(2), None);
     /// ```
-    ///
+    /// Using a model's class map during inference to interpret the output of a classifier
+    /// ```
+    /// # use fekan::kan::{Kan, KanOptions, ModelType};
+    /// # let my_class_map = vec!["cat".to_string(), "dog".to_string()];
+    /// # let options = KanOptions {
+    /// #    input_size: 5,
+    /// #    layer_sizes: vec![4, 2],
+    /// #    degree: 3,
+    /// #    coef_size: 6,
+    /// #    model_type: ModelType::Regression,
+    /// #    class_map: Some(my_class_map),
+    /// # };
+    /// # let model = Kan::new(&options);
+    /// # let feature_data = vec![0.5, 0.4, 0.5, 0.5, 0.4];
+    /// /* using an already trained model... */
+    /// let logits: Vec<f64> = model.infer(feature_data)?;
+    /// let highest_node: usize = logits.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap().0;
+    /// let label: &str = model.node_to_label(highest_node).unwrap();
+    /// println!("The model predicts the input is a {}", label);
+    /// Ok::<(), fekan::kan::kan_error::KanError>(())
+    /// ```
     pub fn node_to_label(&self, node: usize) -> Option<&str> {
         if let Some(class_map) = &self.class_map {
             class_map.get(node).map(|x| x.as_str())
@@ -165,15 +208,15 @@ impl Kan {
         }
     }
 
-    /// passes the input to the [`crate::kan_layer::KanLayer::forward`] method of the first layer,
-    /// then calls the `forward` method of each subsequent layer with the output of the previous layer,
+    /// Forward-propogate the input through the model, by calling [`KanLayer::forward`] method of the first layer on the input,
+    /// then calling the `forward` method of each subsequent layer with the output of the previous layer,
     /// returning the output of the final layer.
     ///
-    /// For inference or validation, use [`Kan::infer`] instead, as it's more efficient
+    /// This method accumulates internal state in the model needed for training. For inference or validation, use [`Kan::infer`], which does not accumulate state and is more efficient
     ///
     /// # Errors
-    /// returns a [KanError] if any layer returns an error.
-    /// See [crate::kan_layer::KanLayer::forward] for more information
+    /// returns a [`KanError`] if any layer returns an error.
+    /// See [`KanLayer::forward`] for more information
     ///
     /// # Example
     /// ```
@@ -230,12 +273,14 @@ impl Kan {
     //     Ok(preacts)
     // }
 
-    /// as [Kan::forward], but does not accumulate any internal state
+    /// as [`Kan::forward`], but does not accumulate any internal state
     ///
-    /// This method should be used during inference or validation, when the model is not being trained
+    /// This method should be used when the model is not being trained, for example during inference or validation: when you won't be backpropogating, this method is faster uses less memory than [`Kan::forward`]
     ///
     /// # Errors
     /// returns a [KanError] if any layer returns an error.
+    /// # Example
+    /// see [`Kan::forward`] for an example
     pub fn infer(&self, input: Vec<f64>) -> Result<Vec<f64>, KanError> {
         let mut preacts = input;
         for (idx, layer) in self.layers.iter().enumerate() {
@@ -249,31 +294,42 @@ impl Kan {
         Ok(preacts)
     }
 
-    /// passes the error to the [crate::kan_layer::KanLayer::backward] method of the last layer,
-    /// then calls the `backward` method of each subsequent layer with the output of the previous layer,
-    /// returning the error returned by first layer. For a multi-threaded version of this method, see [Kan::backward_concurrent]
+    /// Back-propogate the gradient through the model, internally accumulating the gradients of the model's parameters, to be applied later with [`Kan::update`]
     ///
     /// # Errors
     /// returns an error if any layer returns an error.
-    /// See [crate::kan_layer::KanLayer::backward] for more information
+    /// See [`KanLayer::backward`] for more information
     ///
     /// # Example
     /// ```
     /// use fekan::kan::{Kan, KanOptions, ModelType, kan_error::KanError};
     ///
-    /// let options = KanOptions {
-    ///     input_size: 5,
-    ///     layer_sizes: vec![4, 3],
-    ///     degree: 3,
-    ///     coef_size: 6,
-    ///     model_type: ModelType::Regression,
-    ///     class_map: None,
-    /// };
+    /// # let options = KanOptions {
+    /// #    input_size: 5,
+    /// #    layer_sizes: vec![4, 3],
+    /// #    degree: 3,
+    /// #    coef_size: 6,
+    /// #    model_type: ModelType::Regression,
+    /// #    class_map: None,
+    /// # };
     /// let mut model = Kan::new(&options);
     ///
-    /// let input = vec![0.5, 0.4, 0.5, 0.5, 0.4];
-    /// let output = model.forward(input)?;
-    /// /* interpret the output as you like, for example as logits */
+    /// # fn calculate_gradient(output: Vec<f64>, label: f64) -> Vec<f64> {0.0}
+    /// # let learning_rate = 0.1
+    /// # let features = vec![0.5, 0.4, 0.5, 0.5, 0.4];
+    /// # let label = 0;
+    /// let output = model.forward(features)?;
+    /// let gradient = calculate_gradient(output, label as f64);
+    /// let _ = model.backward(gradient)?; // the input gradient can be disregarded here.
+    ///
+    /// /*
+    /// * The model has stored the gradients for it's parameters internally.
+    /// * We can add conduct as many forward/backward pass-pairs as we like to accumulate gradient,
+    /// * until we're ready to update the paramaters.
+    /// */
+    ///
+    /// model.update(learning_rate); // update the parameters of the model based on the accumulated gradients here
+    /// model.zero_gradients(); // zero the gradients for the next batch of training data
     /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     pub fn backward(&mut self, error: Vec<f64>) -> Result<Vec<f64>, KanError> {
@@ -310,23 +366,25 @@ impl Kan {
     //     Ok(error)
     // }
 
-    /// calls each layer's [`crate::kan_layer::KanLayer::update`] method with the given learning rate
+    /// Update the model's parameters based on the gradients that have been accumulated with [`Kan::backward`].
+    /// # Example
+    /// see [`Kan::backward`]
     pub fn update(&mut self, learning_rate: f64) {
         for layer in self.layers.iter_mut() {
             layer.update(learning_rate);
         }
     }
 
-    /// calls each layer's [`crate::kan_layer::KanLayer::zero_gradients`] method
+    /// Zero the internal gradients of the model's parameters
+    /// # Example
+    /// see [`Kan::backward`]
     pub fn zero_gradients(&mut self) {
         for layer in self.layers.iter_mut() {
             layer.zero_gradients();
         }
     }
 
-    /// returns the total number of parameters in the model, inlcuding untrained parameters
-    ///
-    /// see [`crate::kan_layer::KanLayer::parameter_count`] for more information
+    /// get the total number of parameters in the model, inlcuding untrained parameters. See [`KanLayer::parameter_count`] for more information
     pub fn parameter_count(&self) -> usize {
         self.layers
             .iter()
@@ -334,9 +392,7 @@ impl Kan {
             .sum()
     }
 
-    /// returns the total number of trainable parameters in the model
-    ///
-    /// see [`crate::kan_layer::KanLayer::trainable_parameter_count`] for more information
+    /// get the total number of trainable parameters in the model. See [`KanLayer::trainable_parameter_count`] for more information
     pub fn trainable_parameter_count(&self) -> usize {
         self.layers
             .iter()
@@ -344,11 +400,14 @@ impl Kan {
             .sum()
     }
 
-    /// Update the knots in each layer based on the samples that have been passed through the model
+    /// Update the ranges spanned by the B-spline knots in the model, using samples accumulated by recent [`Kan::forward`] calls.
     ///
+    /// see [`KanLayer::update_knots_from_samples`] for more information
     /// # Errors
-    /// returns a [KanError] if any layer returns an error. see [`crate::kan_layer::KanLayer::update_knots_from_samples`] for more information
+    /// returns a [KanError] if any layer returns an error.
     ///
+    /// # Example
+    /// see [`KanLayer::update_knots_from_samples`] for examples
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f64) -> Result<(), KanError> {
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             if let Err(e) = layer.update_knots_from_samples(knot_adaptivity) {
@@ -358,9 +417,9 @@ impl Kan {
         return Ok(());
     }
 
-    /// Clear the samples from each layer
+    /// Clear the cached samples used by [`Kan::update_knots_from_samples`]
     ///
-    /// see [`crate::kan_layer::KanLayer::clear_samples`] for more information
+    /// see [`KanLayer::clear_samples`] for more information
     pub fn clear_samples(&mut self) {
         for layer in self.layers.iter_mut() {
             layer.clear_samples();
@@ -368,7 +427,7 @@ impl Kan {
     }
 
     /// Set the size of the knot vector used in all splines in this model
-    /// see [KanLayer::set_knot_length](crate::kan_layer::KanLayer::set_knot_length) for more information
+    /// see [`KanLayer::set_knot_length`] for more information
     pub fn set_knot_length(&mut self, knot_length: usize) -> Result<(), KanError> {
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             if let Err(e) = layer.set_knot_length(knot_length) {
@@ -388,9 +447,11 @@ impl Kan {
 
     /// Create a new model by merging multiple models together. Models must be of the same type and have the same number of layers, and all layers must be mergable (see [`KanLayer::merge_layers`])
     /// # Errors
-    /// * Returns an error if the models are not mergable. See [`Kan::models_mergable`] for more information
-    /// * Returns an error if any layer encounters an error during the merge. See [`MergeLayerError`] for more information
+    /// Returns a [`KanError`] if:
+    /// * the models are not mergable. See [`Kan::models_mergable`] for more information
+    /// * any layer encounters an error during the merge. See [`KanLayer::merge_layers`] for more information
     /// # Example
+    /// Train multiple copies of the model on different data in different threads, then merge the trained models together
     /// ```
     /// use fekan::{kan::{Kan, KanOptions, ModelType, kan_error::KanError}, Sample};
     /// use std::thread;
@@ -442,9 +503,9 @@ impl Kan {
         Ok(merged_model)
     }
 
-    /// Check if the given models can be merged using [Kan::merge_models]. Returns Ok(()) if the models are mergable, an error otherwise
+    /// Check if the given models can be merged using [`Kan::merge_models`]. Returns Ok(()) if the models are mergable, an error otherwise
     /// # Errors
-    /// Returns an error if any of the models:
+    /// Returns a [`KanError`] if any of the models:
     /// * have different model types (e.g. classification vs regression)
     /// * have different numbers of layers
     /// * have different class maps (if the models are classification models)

@@ -10,8 +10,8 @@ use fekan::{
     kan::{Kan, KanOptions, ModelType},
     train_model,
     training_observer::TrainingObserver,
-    training_options::{TrainingOptions, TrainingOptionsError},
-    validate_model, EachEpoch, Sample,
+    training_options::{EachEpoch, TrainingOptions, TrainingOptionsError},
+    validate_model, Sample,
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -197,29 +197,30 @@ enum WhyCommands {
     },
 }
 
-impl TryFrom<TrainArgs> for TrainingOptions {
-    type Error = TrainingOptionsError;
+// impl TryFrom<TrainArgs> for TrainingOptions {
+//     type Error = TrainingOptionsError;
 
-    fn try_from(args: TrainArgs) -> Result<Self, Self::Error> {
-        TrainingOptions::new(
-            args.num_epochs,
-            args.knot_update_interval,
-            args.knot_adaptivity,
-            args.learning_rate,
-            args.knot_extension_targets,
-            args.knot_extension_times,
-            available_parallelism()
-                .expect("Could not determine number of threads")
-                .get(),
-        )
-    }
-}
+//     fn try_from(args: TrainArgs) -> Result<Self, Self::Error> {
+//         TrainingOptions::new(
+//             args.num_epochs,
+//             args.knot_update_interval,
+//             args.knot_adaptivity,
+//             args.learning_rate,
+//             args.knot_extension_targets,
+//             args.knot_extension_times,
+//             available_parallelism()
+//                 .expect("Could not determine number of threads")
+//                 .get(),
+//         )
+//     }
+// }
 
 impl TrainArgs {
-    fn build_training_options(
+    fn build_training_options<'a>(
         &self,
         num_threads: usize,
-    ) -> Result<TrainingOptions, TrainingOptionsError> {
+        validation_data: &'a [Sample],
+    ) -> Result<TrainingOptions<'a>, TrainingOptionsError> {
         TrainingOptions::new(
             self.num_epochs,
             self.knot_update_interval,
@@ -228,6 +229,10 @@ impl TrainArgs {
             self.knot_extension_targets.clone(),
             self.knot_extension_times.clone(),
             num_threads,
+            match self.validate_each_epoch {
+                true => EachEpoch::ValidateModel(validation_data),
+                false => EachEpoch::DoNotValidateModel,
+            },
         )
     }
 }
@@ -262,10 +267,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     train_args.validation_split,
                     &classifier_args.classes,
                 )?;
-                let passed_validation_data = match train_args.validate_each_epoch {
-                    true => EachEpoch::ValidateModel(&validation_data),
-                    false => EachEpoch::DoNotValidateModel,
-                };
                 let progress_observer =
                     TrainingProgress::new(train_args.num_epochs as u64, cli.log_output);
 
@@ -290,13 +291,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                     class_map: Some(classifier_args.classes),
                 });
 
-                let training_options = train_args.build_training_options(num_threads)?;
+                let training_options =
+                    train_args.build_training_options(num_threads, &validation_data)?;
 
                 // run the training loop on the model
                 let mut trained_model = train_model(
                     untrained_model,
                     &training_data,
-                    passed_validation_data,
                     &progress_observer,
                     training_options,
                 )?;
@@ -330,10 +331,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let (training_data, validation_data) =
                     load_regression_data(&train_args.data_file, train_args.validation_split)?;
 
-                let passed_validation_data = match train_args.validate_each_epoch {
-                    true => EachEpoch::ValidateModel(&validation_data),
-                    false => EachEpoch::DoNotValidateModel,
-                };
                 let progress_observer =
                     TrainingProgress::new(train_args.num_epochs as u64, cli.log_output);
 
@@ -357,13 +354,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                     class_map: regressor_args.labels,
                 });
 
-                let training_options = train_args.build_training_options(num_threads)?;
+                let training_options =
+                    train_args.build_training_options(num_threads, &validation_data)?;
 
                 // run the training loop on the model
                 let mut trained_model = train_model(
                     untrained_model,
                     &training_data,
-                    passed_validation_data,
                     &progress_observer,
                     training_options,
                 )?;
@@ -393,7 +390,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             match load_args.command {
                 WhyCommands::Train(train_args) => {
-                    let training_options = train_args.build_training_options(num_threads)?;
                     let load_result = match loaded_model.model_type() {
                         ModelType::Classification => load_classification_data(
                             &train_args.data_file,
@@ -408,12 +404,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                         }
                     };
                     let (training_data, validation_data) = load_result?;
+                    let training_options =
+                        train_args.build_training_options(num_threads, &validation_data)?;
 
                     // if the user wants the model validated each epoch, pass the validation data to the training function and included the counts in the training observer.
-                    let passed_validation_data = match train_args.validate_each_epoch {
-                        true => EachEpoch::ValidateModel(&validation_data),
-                        false => EachEpoch::DoNotValidateModel,
-                    };
+
                     let progress_observer =
                         TrainingProgress::new(train_args.num_epochs as u64, cli.log_output);
 
@@ -421,7 +416,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let mut trained_model = train_model(
                         loaded_model,
                         &training_data,
-                        passed_validation_data,
                         &progress_observer,
                         training_options,
                     )?;

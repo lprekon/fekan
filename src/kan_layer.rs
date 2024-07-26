@@ -53,7 +53,7 @@ impl KanLayer {
     /// All incoming edges will be created with a degree `degree` B-spline and `coef_size` control points.
     ///
     /// All B-splines areinitialized with coefficients drawn from astandard normal distribution, and with
-    /// `degree + coef_size + 1` knots evenly spaced between -1.0 and 1.0.
+    /// `degree + coef_size + 1` knots evenly spaced between -1.0 and 1.0. Because knots are always initialized to span the range [-1, 1], make sure you call [`KanLayer::update_knots_from_samples`] regularly during training, or at least after a good portion of the training data has been passed through the model, to ensure that the layer's supported input range covers the range spanned by the training data.
     /// # Examples
     /// ```
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
@@ -99,7 +99,7 @@ impl KanLayer {
     //     self.nodes.len() * self.nodes[0].0.len()
     // }
 
-    /// calculate the activations of the nodes in this layer given the preactivations. For a multi-threaded version of this function, see [`KanLayer::forward_concurrent`]
+    /// calculate the activations of the nodes in this layer given the preactivations.
     /// This operation mutates internal state, which will be read in [`KanLayer::backward()`] and [`KanLayer::update_knots_from_samples()`]
     ///
     /// `preactivation.len()` must be equal to the layer's `input_dimension`
@@ -198,10 +198,12 @@ impl KanLayer {
 
     /// as [KanLayer::forward], but does not accumulate any internal state
     ///
-    /// This method should be used during inference or validation, when the model is not being trained
+    /// This method should be used when the model is not being trained, for example during inference or validation: when you won't be backpropogating, this method is faster uses less memory than [`KanLayer::forward`]
     ///
     /// # Errors
-    /// Returns an [`LayerError`] if the length of `preactivation` is not equal to the input_dimension this layer, or if the activations contain NaNs.
+    /// Returns a [`KanLayerError`] if...
+    /// * the length of `preactivation` is not equal to the input_dimension this layer
+    /// * the output would contain NaNs.
 
     pub fn infer(&self, preactivation: &[f64]) -> Result<Vec<f64>, KanLayerError> {
         if preactivation.len() != self.input_dimension {
@@ -233,7 +235,7 @@ impl KanLayer {
     /// when `knot_adaptivity` is 1, the new knots will be placed at the quantiles of the samples. 0 < `knot_adaptivity` < 1 will interpolate between these two extremes.
     ///
     /// ## Warning
-    /// calling this function with `knot_adaptivity = 1` can result in a large number of knots being placed at the same value, which can cause NaNs in the activations. See [`LayerError`] for more information
+    /// calling this function with `knot_adaptivity = 1` can result in a large number of knots being placed at the same value, which can cause [`KanLayer::forward`] to output NaNs. In practice, `knot_adaptivity` should be set to something like 0.1, but anything < 1.0 should be fine
     ///
     /// calling this function with fewer samples than the number of knots in a spline AND `knot_adaptivity` > 0 results in undefined behavior
     ///
@@ -241,10 +243,37 @@ impl KanLayer {
     /// Returns an error if the layer has no memoized samples, which most likely means that [`KanLayer::forward`] has not been called since initialization or the last call to [`KanLayer::clear_samples`]
     ///
     /// # Examples
-    /// Update the knot vectors for a layer to cover the range of the samples. In practice, this function should be called every hundred forward passes or so
+    ///
+    /// Update the knots of a model every few samples during training, to make sure that the supported input range of a given layer covers the output range of the previous layer.
     /// ```
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
-    /// # let some_layer_options = KanLayerOptions {input_dimension: 2,output_dimension: 4,degree: 5, coef_size: 6};
+    ///
+    /// # let input_size = 5;
+    /// # let output_size = 3;
+    /// # let layer_options = KanLayerOptions {input_dimension: 5,output_dimension: 4,degree: 5, coef_size: 6}
+    /// # fn calculate_gradient(output: Vec<f64>, label: f64) -> Vec<f64> {vec![0.0; output.len()]}
+    /// # let training_data = vec![(vec![0.5, 0.4, 0.5, 0.5, 0.4], 1.0), (vec![0.4, 0.5, 0.4, 0.5, 0.4], 0.0), (vec![0.5, 0.5, 0.5, 0.5, 0.5], 1.0)];
+    /// let mut my_layer = Kan::new(&options);
+    /// # let knot_update_interval = 2;
+    /// for (idx, (feature_vec, label)) in training_data.iter().enumerate() {
+    ///     let output = model.forward(feature_vec)?;
+    ///     let gradient = calculate_gradient(output, label);
+    ///     let _ = model.backward(gradient)?;
+    ///     model.update(0.1); // updating the model's parameters changes the output range of the b-splines that make up the model
+    ///     if idx % knot_update_interval == 0 {
+    ///         model.update_knots_from_samples(0.1)?; // updating the knots adjusts the input range of the b-splines to match the output range of the previous layer
+    ///     }
+    /// }
+    /// # Ok::<(), fekan::kan::kan_error::KanError>(())
+    ///```
+    /// Note on the above example: even in this example, where range of input to the layer is the range of values in the training data and does not change during training, it's still important to update the knots at least once, after a good portion of the training data has been passed through, to ensure that the layer's supported input range covers the range spanned by the training data.
+    /// KanLayer knots are initialized to span the range [-1, 1], so if the training data is outside that range, the activations will be 0.0 until the knots are updated.
+    ///
+    ///
+    /// The below example shows why regularly updating the knots is important - especially early in training, before the model starts to converge when its parameters are changing rapidly
+    /// ```
+    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
+    /// # let some_layer_options = ;
     /// let mut my_layer = KanLayer::new(&some_layer_options);
     /// let sample1 = vec![100f64, -100f64];
     /// let sample2 = vec![-100f64, 100f64];
@@ -311,15 +340,17 @@ impl KanLayer {
         self.samples.clear();
     }
 
-    /// Given a vector of error values for the nodes in this layer, backpropogate the error through the layer, updating the internal gradients for the incoming edges
-    /// and return the error for the previous layer. Use [`KanLayer::backward_concurrent`] for a multi-threaded version of this function
+    /// Given a vector of gradient values for the nodes in this layer, backpropogate the error through the layer, updating the internal gradients for the incoming edges
+    /// and return the error for the previous layer.
     ///
     /// This function relies on mutated inner state and should be called after [`KanLayer::forward`].
     ///
     /// Calculated gradients are stored internally, and only applied during [`KanLayer::update`].
     ///
     /// # Errors
-    /// Returns a [`LayerError`] if the length of `error` is not equal to the number of nodes in this layer, or if `backward` is called before `forward`
+    /// Returns a [`KanLayerError`] if...
+    /// * the length of `gradient` is not equal to the number of nodes in this layer (i.e this layer's output dimension)
+    /// * this method is called before [`KanLayer::forward`]
     ///
     /// # Examples
     /// Backpropgate the error through a two-layer network, and update the gradients
@@ -350,14 +381,14 @@ impl KanLayer {
     /// second_layer.zero_gradients();
     /// /* continue training */
     /// ```
-    pub fn backward(&mut self, error: &[f64]) -> Result<Vec<f64>, KanLayerError> {
-        if error.len() != self.output_dimension {
+    pub fn backward(&mut self, gradient: &[f64]) -> Result<Vec<f64>, KanLayerError> {
+        if gradient.len() != self.output_dimension {
             return Err(KanLayerError::missized_gradient(
-                error.len(),
+                gradient.len(),
                 self.output_dimension,
             ));
         }
-        if error.iter().any(|f| f.is_nan()) {
+        if gradient.iter().any(|f| f.is_nan()) {
             return Err(KanLayerError::nans_in_gradient());
         }
 
@@ -366,7 +397,7 @@ impl KanLayer {
             // every `input_dimension` splines belong to the same node, and thus will use the same error value.
             // "Distribute" the error at a given node among all incoming edges
             let error_at_edge_output =
-                error[i / self.input_dimension] / self.input_dimension as f64;
+                gradient[i / self.input_dimension] / self.input_dimension as f64;
             let error_at_edge_input = self.splines[i]
                 .backward(error_at_edge_output)
                 .map_err(|e| KanLayerError::backward_before_forward(e, i))?;
@@ -375,7 +406,7 @@ impl KanLayer {
         Ok(input_error)
     }
 
-    /// as [KanLayer::backward], but divides the work among the passed thread pool
+    // /// as [KanLayer::backward], but divides the work among the passed thread pool
     // pub fn backward_concurrent(
     //     &mut self,
     //     error: &[f64],
@@ -419,8 +450,7 @@ impl KanLayer {
     /// Generally used multiple times throughout training to increase the number of knots in the spline to increase fidelity of the curve
     /// # Notes
     /// * The number of control points is set to `knot_length - degree - 1`, and the control points are calculated using lstsq over cached samples to approximate the previous curve
-    /// * This method clears the internal cache of samples used to update knots in [`KanLayer::update_knots_from_samples`] (as if [`KanLayer::clear_samples`] was called) so this function and [`update_knots_from_samples`](KanLayer::update_knots_from_samples) should not be called in the same training step (ideally, they should be separated by many training steps - maybe 100 or so)
-    /// * This method clears the internal cache of samples used by [`KanLayer::forward`], so frequent calls to this method may slow down training
+    /// * This method clears the internal cache of samples used to update knots in [`KanLayer::update_knots_from_samples`] (as if [`KanLayer::clear_samples`] was called) so this function and [`update_knots_from_samples`](KanLayer::update_knots_from_samples) should not be called in the same training step (ideally, they should be separated by many training steps - at least as many steps as there are control-points/spline, if not twice that)
     /// # Errors
     /// Returns a [`KanLayerError`] if the layer has no samples in the internal cache . This error is usually caused by calling this function before calling [`KanLayer::forward`], or by not calling [`KanLayer::forward`] between the last call to a cache-clearing function and this function
     /// # Examples
@@ -598,11 +628,13 @@ impl KanLayer {
     /// Create a new KanLayer by merging the splines of multiple KanLayers. Splines are merged by averaging their knots and control points.
     /// `new_layer.splines[0] = spline_merge([layer1.splines[0], layer2.splines[0], ...])`, etc. The output of the merged layer is not necessarily the average of the outputs of the input layers.
     /// # Errors
-    /// * Returns a [`KanLayerMergeError::NoLayersError`] if `kan_layers` is empty
-    /// * Returns a [`KanLayerMergeError::MismatchedInputDimensionError`] if the input dimensions of the layers in `kan_layers` are not all equal
-    /// * Returns a [`KanLayerMergeError::MismatchedOutputDimensionError`] if the output dimensions of the layers in `kan_layers` are not all equal
-    /// * Returns a [`KanLayerMergeError::MergeSplineError`] if there is an error merging the splines of the layers, caused by the splines having different degrees or different numbers of control points or knots from each other
+    /// Returns a [`KanLayerError`] if...
+    /// * `kan_layers` is empty
+    /// * the input dimensions of the layers in `kan_layers` are not all equal
+    /// * the output dimensions of the layers in `kan_layers` are not all equal
+    /// * there is an error merging the splines of the layers, caused by the splines having different: degrees, number of control points, number or knots from each other
     /// # Examples
+    /// Train a layer using multiple threads, then merge the results
     /// ```
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
     /// use std::thread;

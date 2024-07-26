@@ -3,12 +3,10 @@
 
 //! A library to build and train Kolmogorov-Arnold neural networks.
 //!
-//! The `fekan` crate contains utilities to build and train Kolmogorov-Arnold Networks (KANs) in Rust.
-//!
-//! The [kan_layer] module contains the [`kan_layer::KanLayer`] struct, representing a single layer of a KAN,
-//! which can be used to build full KANs or as a layer in other models.
-//!
-//! The crate also contains the [`Kan`] struct, which represents a full KAN model.
+//! The `fekan` crate contains utilities to build and train Kolmogorov-Arnold Networks (KANs) in Rust. Of particular note:
+//! * the [`Kan`] struct, which represents a full KAN model
+//! * the [`train_model`] function, which trains a KAN model
+//! * the [`KanLayer`](crate::kan_layer::KanLayer) struct, which represents a single layer of a KAN, and can be used to build full KANs or as a layer in other models
 //!
 //! ## What is a Kolmogorov-Arnold Network?
 //! Rather than perform a weighted sum of the activations of the previous layer and passing the sum through a fixed non-linear function,
@@ -27,7 +25,7 @@
 //! where each layer uses degree-4 [B-splines](https://en.wikipedia.org/wiki/B-spline) with 5 coefficients (AKA control points):
 //! ```
 //! use fekan::kan::{Kan, KanOptions, ModelType};
-//! use fekan::{Sample, training_options::TrainingOptions, EachEpoch};
+//! use fekan::{Sample, training_options::{TrainingOptions, EachEpoch}};
 //! use tempfile::tempfile;
 //!
 //!
@@ -49,7 +47,7 @@
 //! # let sample_2 = Sample::new(vec![-1.0, 1.0], 0.0);
 //! # let training_data = vec![sample_1, sample_2];
 //!
-//! let trained_model = fekan::train_model(untrained_model, &training_data, EachEpoch::DoNotValidateModel, &fekan::EmptyObserver::new(), TrainingOptions::default())?;
+//! let trained_model = fekan::train_model(untrained_model, &training_data, &fekan::EmptyObserver::new(), TrainingOptions::default())?;
 //!
 //! // save the model
 //! // both Kan and KanLayer implement the serde Serialize trait, so they can be saved to a file using any serde-compatible format
@@ -59,7 +57,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-/// Contains the main struct of the library, the [`Kan`] struct, which represents a full Kolmogorov-Arnold Network.
+/// Contains the main struct of the library - [`Kan`] - which represents a full Kolmogorov-Arnold Network.
 pub mod kan;
 /// Contains the struct [`KanLayer`](crate::kan_layer::KanLayer), which represents a single layer of a Kolmogorov-Arnold Network.
 pub mod kan_layer;
@@ -78,7 +76,7 @@ use serde::{Deserialize, Serialize};
 use shuffle::{fy, shuffler::Shuffler};
 use training_error::TrainingError;
 use training_observer::TrainingObserver;
-use training_options::TrainingOptions;
+use training_options::{EachEpoch, TrainingOptions};
 
 /// A sample of data to be used in training a model.
 ///
@@ -113,7 +111,7 @@ impl Sample {
 ///
 /// This function will report status to the provided [`training_observer`](TrainingObserver).
 ///
-/// This function uses the [ModelType] of the model to determine how to calculate the loss and gradient of the model.
+/// This function uses the [`ModelType`] of the model to determine how to calculate the loss and gradient of the model.
 ///
 /// Returns the trained model if no errors are thrown.
 ///
@@ -124,31 +122,29 @@ impl Sample {
 /// returns a [TrainingError] if the model reports an error at any point during training.
 ///
 /// # Example
-/// train a model, using the provided [EmptyObserver] to ignore all training events:
+/// train a model, using the crate-provided [`EmptyObserver`] to ignore all training events:
 /// ```
-/// use fekan::{train_model, Sample, training_options::TrainingOptions, EmptyObserver, EachEpoch};
+/// use fekan::{train_model, Sample, training_options::TrainingOptions, EmptyObserver};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
 /// # use fekan::training_error::TrainingError;
 ///
 /// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression, class_map: None};
 /// let untrained_model = Kan::new(&some_model_options);
 /// let mut training_data: Vec<Sample> = Vec::new();
-///
 /// /* Load training data */
 /// # training_data.push(Sample::new(vec![1.0, 2.0], 3.0));
 ///
 /// let trained_model = train_model(
 ///     untrained_model,
 ///     &training_data,
-///     EachEpoch::DoNotValidateModel,
 ///     &EmptyObserver::new(),
 ///     TrainingOptions::default())?;
 /// # Ok::<(), TrainingError>(())
 /// ```
 ///
-/// Train a model, testing it against the validation data after each epoch, and catching the results with a custom struct that implements [TrainingObserver]:
+/// Train a model, testing it against the validation data after each epoch, and catching the results with a custom struct that implements [`TrainingObserver`]:
 /// ```
-/// use fekan::{train_model, Sample, training_options::TrainingOptions, EachEpoch};
+/// use fekan::{train_model, Sample, training_options::{TrainingOptions, EachEpoch}};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
 /// # use fekan::training_error::TrainingError;
 /// # use fekan::training_observer::TrainingObserver;
@@ -168,7 +164,6 @@ impl Sample {
 ///
 /// let mut training_data: Vec<Sample> = Vec::new();
 /// let mut validation_data: Vec<Sample> = Vec::new();
-///
 /// /* Load training and validation data */
 /// # training_data.push(Sample::new(vec![1.0, 2.0], 3.0));
 /// # validation_data.push(Sample::new(vec![1.0, 2.0], 3.0));
@@ -176,17 +171,17 @@ impl Sample {
 /// let trained_model = train_model(
 ///     untrained_model,
 ///     &training_data,
-///     EachEpoch::ValidateModel(&validation_data),
 ///     &my_observer,
 ///     TrainingOptions::default())?;
+/// // loss is reported each epoch to the training observer
 /// # Ok::<(), TrainingError>(())
 /// ```
+///
 // TODO implement training multi-variate regression models. I'll need to calculate the loss w.r.t each output node and run backward on each,
 // then call update after all those gradients have been accumulated
 pub fn train_model<T: TrainingObserver>(
     mut model: Kan,
     training_data: &[Sample],
-    validate: EachEpoch,
     training_observer: &T,
     options: TrainingOptions,
 ) -> Result<Kan, TrainingError> {
@@ -195,8 +190,8 @@ pub fn train_model<T: TrainingObserver>(
     let mut randomness = thread_rng();
     let mut fys = fy::FisherYates::default();
     let mut knot_extensions_completed = 0;
-    let knot_extension_targets = options.knot_extension_targets().unwrap_or(&[]);
-    let knot_extension_times = options.knot_extension_times().unwrap_or(&[]);
+    let knot_extension_targets = options.knot_extension_targets.unwrap_or_default();
+    let knot_extension_times = options.knot_extension_times.unwrap_or_default();
 
     // do several "dummy" passes so we can udpate the knots to span the proper ranges before we start training
     // we need to do one round of pre-setting per layer, since the knot ranges of layer n depend on the output of layer n-1
@@ -204,7 +199,7 @@ pub fn train_model<T: TrainingObserver>(
     // now start the actual training loop
     // if the number of threads is <= 1, run the training loop in a single thread
 
-    for epoch in 1..=options.num_epochs() {
+    for epoch in 1..=options.num_epochs {
         let mut epoch_loss = 0.0;
         let mut samples_seen = 0;
         // shuffle the training data
@@ -214,7 +209,7 @@ pub fn train_model<T: TrainingObserver>(
         // multi-threaded training
         if options.num_threads > 1 {
             let chunk_size =
-                f32::ceil(shuffled_data.len() as f32 / options.num_threads() as f32) as usize;
+                f32::ceil(shuffled_data.len() as f32 / options.num_threads as f32) as usize;
             let multithreaded_training: Result<Vec<(Kan, f64)>, TrainingError> = // I love that Result implements FromIterator, so Vec<Result<T,E>> gets automatically converted to Result<Vec<T>, E>
             thread::scope(|s| {
                 let handles: Vec<_> = training_data
@@ -338,7 +333,7 @@ pub fn train_model<T: TrainingObserver>(
                 }
             }
         } // end single-thread-specific code
-        let validation_loss = match validate {
+        let validation_loss = match options.each_epoch {
             EachEpoch::ValidateModel(validation_data) => {
                 validate_model(validation_data, &mut model)
             }
@@ -470,14 +465,6 @@ fn calculate_huber_loss_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
             HUBER_DELTA * diff.signum(),
         )
     }
-}
-
-/// Indicates whether the model should be tested against the validation data set after each epoch
-pub enum EachEpoch<'a> {
-    /// Test the model against the validation data set after each epoch, and report the validation loss through the [TrainingObserver]
-    ValidateModel(&'a [Sample]),
-    /// Do not test the model against the validation data set after each epoch
-    DoNotValidateModel,
 }
 
 // EmptyObserver is basically a singleton, so there's no point in implementing any other common traits

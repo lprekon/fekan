@@ -49,11 +49,11 @@ mod classification {
         let mut trained_model = train_model(
             untrained_model,
             &training_data,
-            fekan::EachEpoch::ValidateModel(&validation_data),
             &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 100,
                 num_threads: 8,
+                each_epoch: fekan::training_options::EachEpoch::ValidateModel(&validation_data),
                 ..TrainingOptions::default()
             },
         )
@@ -99,11 +99,11 @@ mod regression {
         let training_result = train_model(
             untrained_model,
             &training_data,
-            fekan::EachEpoch::ValidateModel(&validation_data), // this way if the test fails, we can see the validation loss over time
             &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 50,
                 num_threads: 8,
+                each_epoch: fekan::training_options::EachEpoch::ValidateModel(&validation_data), // this way if the test fails, we can see the validation loss over time
                 ..TrainingOptions::default()
             },
         );
@@ -153,11 +153,11 @@ mod regression {
         let mut trained_model = train_model(
             untrained_model,
             &training_data,
-            fekan::EachEpoch::ValidateModel(&validation_data),
             &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 50,
                 num_threads: 8,
+                each_epoch: fekan::training_options::EachEpoch::ValidateModel(&validation_data),
                 ..TrainingOptions::default()
             },
         )

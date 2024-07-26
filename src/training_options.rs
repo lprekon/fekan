@@ -1,36 +1,43 @@
 use std::fmt;
 
-/// Used by the [`train_model`] function to determine how the model should be trained. See [`TrainingOptions::new`] for more information about the parameters.
+use crate::Sample;
+
+/// Used by the [`train_model`](crate::train_model) function to determine how the model should be trained.
 #[derive(Clone, PartialEq, Debug)]
-pub struct TrainingOptions {
-    /// number of epochs for which to train, where an epoch is one pass through the training data
+pub struct TrainingOptions<'a> {
+    /// number of epochs for which to train, where an epoch is one complete pass through the training data
     pub num_epochs: usize,
-    /// number of samples to pass through the model before updating the knots. See [kan_layer::KanLayer::update_knots_from_samples] for more information about this process.
+    /// number of samples to pass through the model before updating the knots. See [`KanLayer::update_knots_from_samples`](crate::kan_layer::KanLayer::update_knots_from_samples) for more information about this process.
     pub knot_update_interval: usize,
-    /// the adaptivity of the knots when updating them. See [kan_layer::KanLayer::update_knots_from_samples] for more information about this process.
+    /// the adaptivity of the knots when updating them. See [`KanLayer::update_knots_from_samples`](crate::kan_layer::KanLayer::update_knots_from_samples) for more information about this process.
     pub knot_adaptivity: f64,
-    /// the learning rate of the model
+    /// the learning factor applied to the gradients when updating the model.
     pub learning_rate: f64,
-    /// The lengths to which the knot vectors should be extended. Extension will happen before the epochs specified in `knot_extension_times`
+    /// The lengths to which the knot vectors should be extended. Extension will happen after the epochs specified in `knot_extension_times`
     pub knot_extension_targets: Option<Vec<usize>>,
     /// The epochs (one-indexed) after which to extend the knots. Must be sorted in ascending order and equal in length to `knot_extension_targets`
     pub knot_extension_times: Option<Vec<usize>>,
     /// the number of threads to use when training the model. If <= 1, training will be single-threaded.
     pub num_threads: usize,
+    /// whether to test the model against the validation data set after each epoch
+    pub each_epoch: EachEpoch<'a>,
 }
 
-impl TrainingOptions {
+#[derive(Clone, PartialEq, Debug)]
+/// Indicates whether the model should be tested against the validation data set after each epoch
+pub enum EachEpoch<'a> {
+    /// Test the model against the validation data set after each epoch, and report the validation loss through the provided  [`TrainingObserver`](crate::TrainingObserver) implementation
+    ValidateModel(&'a [Sample]),
+    /// Do not test the model against the validation data set after each epoch
+    DoNotValidateModel,
+}
+
+impl<'a> TrainingOptions<'_> {
     /// Create a new TrainingOptions struct with the given parameters.
-    /// # Arguments
-    /// * `num_epochs` - number of epochs for which to train, where an epoch is one pass through the training data
-    /// * `knot_update_interval` - number of samples to pass through the model before updating the knots. See [`crate::kan_layer::KanLayer::update_knots_from_samples`] for more information about this process.
-    /// * `knot_adaptivity` - the adaptivity of the knots when updating them. See [`crate::kan_layer::KanLayer::update_knots_from_samples`] for more information about this process.
-    /// * `learning_rate` - the learning rate of the model
-    /// * `knot_extension_targets` - The lengths to which the knot vectors should be extended. Extension will happen before the epochs specified in `knot_extension_times`. If both `knot_extension_targets` and `knot_extension_times` are None, no extension will occur. If Some, must be equal in length to `knot_extension_times`. See [`crate::kan_layer::KanLayer::set_knot_length`] for more information about this process.
-    /// * `knot_extension_times` - The epochs (one-indexed) before which to extend the knots. Must be equal in length to `knot_extension_targets`
-    /// * `num_threads` - the number of threads to use when training the model.
     /// # Errors
-    /// Returns an error if `knot_extension_targets` is Some and `knot_extension_times` is None, or vice versa, or if the lengths of `knot_extension_targets` and `knot_extension_times` are not equal.
+    /// Returns [`TrainingOptionsError`] error if...
+    /// * `knot_extension_targets` is Some and `knot_extension_times` is None, or vice versa,
+    /// * the lengths of `knot_extension_targets` and `knot_extension_times` are not equal.
     pub fn new(
         num_epochs: usize,
         knot_update_interval: usize,
@@ -39,7 +46,8 @@ impl TrainingOptions {
         knot_extension_targets: Option<Vec<usize>>,
         knot_extension_times: Option<Vec<usize>>,
         num_threads: usize,
-    ) -> Result<Self, TrainingOptionsError> {
+        each_epoch: EachEpoch<'a>,
+    ) -> Result<TrainingOptions, TrainingOptionsError> {
         if knot_extension_targets.is_some() && knot_extension_times.is_none() {
             return Err(TrainingOptionsError::MissingKnotExtensionTimes);
         }
@@ -72,68 +80,12 @@ impl TrainingOptions {
             knot_extension_targets,
             knot_extension_times: extension_times,
             num_threads,
+            each_epoch,
         })
-    }
-
-    /// get the number of epochs for which to train, where an epoch is one pass through the training data
-    pub fn num_epochs(&self) -> usize {
-        self.num_epochs
-    }
-
-    /// get the number of samples to pass through the model before updating the knots. See [`crate::kan_layer::KanLayer::update_knots_from_samples`] for more information about this process.
-    pub fn knot_update_interval(&self) -> usize {
-        self.knot_update_interval
-    }
-
-    /// get the adaptivity of the knots when updating them. See [`crate::kan_layer::KanLayer::update_knots_from_samples`] for more information about this process.
-    pub fn knot_adaptivity(&self) -> f64 {
-        self.knot_adaptivity
-    }
-
-    /// get the learning rate of the model
-    pub fn learning_rate(&self) -> f64 {
-        self.learning_rate
-    }
-
-    /// set a knot extension plan. See [`crate::kan_layer::KanLayer::set_knot_length`] for more information about this process.
-    /// # Arguments
-    /// * `knot_extension_targets` - The lengths to which the knot vectors should be extended. Extension will happen before the epochs specified in `knot_extension_times`. If both `knot_extension_targets` and `knot_extension_times` are None, no extension will occur. If Some, must be equal in length to `knot_extension_times`. See [`crate::kan_layer::KanLayer::set_knot_length`] for more information about this process.
-    /// * `knot_extension_times` - The epochs (one-indexed) before which to extend the knots. Must be equal in length to `knot_extension_targets`
-    pub fn set_knot_extension_plan(
-        &mut self,
-        knot_extension_targets: Vec<usize>,
-        knot_extension_times: Vec<usize>,
-    ) -> Result<(), TrainingOptionsError> {
-        if knot_extension_targets.len() != knot_extension_times.len() {
-            return Err(TrainingOptionsError::MismatchedKnotExtensionLengths {
-                knot_extension_targets_length: knot_extension_targets.len(),
-                knot_extension_times_length: knot_extension_times.len(),
-            });
-        }
-        self.knot_extension_targets = Some(knot_extension_targets);
-        let mut times = knot_extension_times;
-        times.sort();
-        self.knot_extension_times = Some(times);
-        Ok(())
-    }
-
-    /// get the lengths to which the knot vectors should be extended, if set. Extension will happen after the epochs specified in `knot_extension_times`
-    pub fn knot_extension_targets(&self) -> Option<&[usize]> {
-        self.knot_extension_targets.as_deref()
-    }
-
-    /// get the epochs (one-indexed) after which to extend the knots, if set. Must be equal in length to `knot_extension_targets`
-    pub fn knot_extension_times(&self) -> Option<&[usize]> {
-        self.knot_extension_times.as_deref()
-    }
-
-    /// get the number of threads to use when training the model.
-    pub fn num_threads(&self) -> usize {
-        self.num_threads
     }
 }
 
-impl Default for TrainingOptions {
+impl Default for TrainingOptions<'_> {
     fn default() -> Self {
         TrainingOptions {
             num_epochs: 100,
@@ -143,6 +95,7 @@ impl Default for TrainingOptions {
             knot_extension_targets: None,
             knot_extension_times: None,
             num_threads: 1,
+            each_epoch: EachEpoch::DoNotValidateModel,
         }
     }
 }
