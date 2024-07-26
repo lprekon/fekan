@@ -33,6 +33,9 @@ fi
 if [ -n "$COEFS" ]; then
     COEFS_FLAG="--coefs $COEFS"
 fi
+if [ -n "$KNOT_UPDATE_INTERVAL" ]; then
+    KNOT_UPDATE_INTERVAL_FLAG="--knot-update-interval $KNOT_UPDATE_INTERVAL"
+fi
 
 # grab the latest code
 git clone https://github.com/lprekon/fekan.git
@@ -71,6 +74,7 @@ fekan build regressor \
     $DEGREE_FLAG \
     $COEFS_FLAG \
     $KNOT_EXTENSION_FLAG \
+    $KNOT_UPDATE_INTERVAL_FLAG \
     --learning-rate 0.001 \
     --validate-each-epoch \
     --log-output \
