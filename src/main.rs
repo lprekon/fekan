@@ -2,7 +2,7 @@
 
 //! Does this show up anywhere
 
-use std::{error::Error, fs::File, path::PathBuf, thread::available_parallelism};
+use std::{error::Error, fs::File, path::PathBuf, thread::available_parallelism, time::Duration};
 
 use clap::{ArgGroup, Args, Parser, Subcommand};
 
@@ -532,6 +532,7 @@ impl TrainingProgress {
                 )
                 .unwrap(),
         );
+        pb.enable_steady_tick(Duration::from_millis(100));
         TrainingProgress { pb, should_log }
     }
 
