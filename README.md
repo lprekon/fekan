@@ -73,38 +73,36 @@ The CLI supports reading data from `.pkl`, `.json`, and `.avro` files. Features 
  Build, train and save a full KAN regression model with a 2-dimensional input, 1 hidden layer with 3 nodes, and 1 output node,
  where each layer uses degree-4 [B-splines](https://en.wikipedia.org/wiki/B-spline) with 5 coefficients (AKA control points):
  ```rust
- use fekan::kan::{Kan, KanOptions, ModelType};
- use fekan::{Sample, TrainingOptions, EachEpoch};
- use tempfile::tempfile;
+use fekan::kan::{Kan, KanOptions, ModelType};
+use fekan::{Sample, training_options::{TrainingOptions, EachEpoch}};
+use tempfile::tempfile;
 
+// initialize the model
+let model_options = KanOptions{
+    input_size: 2,
+    layer_sizes: vec![3, 1],
+    degree: 4,
+    coef_size: 5,
+    model_type: ModelType::Regression,
+    class_map: None};
+let mut untrained_model = Kan::new(&model_options);
 
- // initialize the model
- let model_options = KanOptions{
-     input_size: 2,
-     layer_sizes: vec![3, 1],
-     degree: 4,
-     coef_size: 5,
-     model_type: ModelType::Regression,
-     class_map: None // if we wanted a multivariate-regression model with named outputs, those names would go here
-     };
- let mut untrained_model = Kan::new(&model_options);
+// train the model
+let training_data: Vec<Sample> = Vec::new();
+/* Load training data */
+# let sample_1 = Sample::new(vec![1.0, 2.0], 3.0);
+# let sample_2 = Sample::new(vec![-1.0, 1.0], 0.0);
+# let training_data = vec![sample_1, sample_2];
 
- // train the model
- let training_data: Vec<Sample> = Vec::new();
- /* Load training data */
- let sample_1 = Sample::new(vec![1.0, 2.0], 3.0);
- let sample_2 = Sample::new(vec![-1.0, 1.0], 0.0);
- #et training_data = vec![sample_1, sample_2];
+let trained_model = fekan::train_model(untrained_model, &training_data, &fekan::EmptyObserver::new(), TrainingOptions::default())?;
 
- let trained_model = fekan::train_model(untrained_model, &training_data, EachEpoch::DoNotValidateModel, &fekan::EmptyObserver::new(), TrainingOptions::default())?;
-
- // save the model
- // both Kan and KanLayer implement the serde Serialize trait, so they can be saved to a file using any serde-compatible format
- // here we use the ciborium crate to save the model in the CBOR format
- let mut file = tempfile().unwrap();
- ciborium::into_writer(&trained_model, &mut file)?;
- # Ok::<(), Box<dyn std::error::Error>>(())
- ```
+// save the model
+// both Kan and KanLayer implement the serde Serialize trait, so they can be saved to a file using any serde-compatible format
+// here we use the ciborium crate to save the model in the CBOR format
+let mut file = tempfile().unwrap();
+ciborium::into_writer(&trained_model, &mut file)?;
+Ok::<(), Box<dyn std::error::Error>>(())
+```
 
 Load and use a trained classification model
  ```rust
