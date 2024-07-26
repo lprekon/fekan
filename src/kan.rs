@@ -306,7 +306,7 @@ impl Kan {
     ///
     /// # let options = KanOptions {
     /// #    input_size: 5,
-    /// #    layer_sizes: vec![4, 3],
+    /// #    layer_sizes: vec![4, 1],
     /// #    degree: 3,
     /// #    coef_size: 6,
     /// #    model_type: ModelType::Regression,
@@ -314,8 +314,8 @@ impl Kan {
     /// # };
     /// let mut model = Kan::new(&options);
     ///
-    /// # fn calculate_gradient(output: Vec<f64>, label: f64) -> Vec<f64> {0.0}
-    /// # let learning_rate = 0.1
+    /// # fn calculate_gradient(output: Vec<f64>, label: f64) -> Vec<f64> {vec![1.0; output.len()]}
+    /// # let learning_rate = 0.1;
     /// # let features = vec![0.5, 0.4, 0.5, 0.5, 0.4];
     /// # let label = 0;
     /// let output = model.forward(features)?;

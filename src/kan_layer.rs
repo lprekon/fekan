@@ -250,21 +250,21 @@ impl KanLayer {
     ///
     /// # let input_size = 5;
     /// # let output_size = 3;
-    /// # let layer_options = KanLayerOptions {input_dimension: 5,output_dimension: 4,degree: 5, coef_size: 6}
+    /// # let layer_options = KanLayerOptions {input_dimension: 5,output_dimension: 4,degree: 5, coef_size: 6};
     /// # fn calculate_gradient(output: Vec<f64>, label: f64) -> Vec<f64> {vec![0.0; output.len()]}
-    /// # let training_data = vec![(vec![0.5, 0.4, 0.5, 0.5, 0.4], 1.0), (vec![0.4, 0.5, 0.4, 0.5, 0.4], 0.0), (vec![0.5, 0.5, 0.5, 0.5, 0.5], 1.0)];
-    /// let mut my_layer = Kan::new(&options);
+    /// # let training_data = vec![(vec![0.5, 0.4, 0.5, 0.5, 0.4], 1.0f64), (vec![0.4, 0.5, 0.4, 0.5, 0.4], 0.0f64), (vec![0.5, 0.5, 0.5, 0.5, 0.5], 1.0f64)];
+    /// let mut my_layer = KanLayer::new(&layer_options);
     /// # let knot_update_interval = 2;
     /// for (idx, (feature_vec, label)) in training_data.iter().enumerate() {
-    ///     let output = model.forward(feature_vec)?;
-    ///     let gradient = calculate_gradient(output, label);
-    ///     let _ = model.backward(gradient)?;
-    ///     model.update(0.1); // updating the model's parameters changes the output range of the b-splines that make up the model
+    ///     let output = my_layer.forward(feature_vec)?;
+    ///     let gradient = calculate_gradient(output, *label);
+    ///     let _ = my_layer.backward(&gradient)?;
+    ///     my_layer.update(0.1); // updating the model's parameters changes the output range of the b-splines that make up the model
     ///     if idx % knot_update_interval == 0 {
-    ///         model.update_knots_from_samples(0.1)?; // updating the knots adjusts the input range of the b-splines to match the output range of the previous layer
+    ///         my_layer.update_knots_from_samples(0.1)?; // updating the knots adjusts the input range of the b-splines to match the output range of the previous layer
     ///     }
     /// }
-    /// # Ok::<(), fekan::kan::kan_error::KanError>(())
+    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     ///```
     /// Note on the above example: even in this example, where range of input to the layer is the range of values in the training data and does not change during training, it's still important to update the knots at least once, after a good portion of the training data has been passed through, to ensure that the layer's supported input range covers the range spanned by the training data.
     /// KanLayer knots are initialized to span the range [-1, 1], so if the training data is outside that range, the activations will be 0.0 until the knots are updated.
@@ -273,7 +273,7 @@ impl KanLayer {
     /// The below example shows why regularly updating the knots is important - especially early in training, before the model starts to converge when its parameters are changing rapidly
     /// ```
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
-    /// # let some_layer_options = ;
+    /// # let some_layer_options = KanLayerOptions {input_dimension: 2,output_dimension: 4,degree: 5, coef_size: 6};
     /// let mut my_layer = KanLayer::new(&some_layer_options);
     /// let sample1 = vec![100f64, -100f64];
     /// let sample2 = vec![-100f64, 100f64];
