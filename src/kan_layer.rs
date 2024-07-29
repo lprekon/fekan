@@ -78,7 +78,7 @@ impl KanLayer {
                 let coefficients: Vec<f64> = (0..options.coef_size)
                     .map(|_| normal_dist.sample(&mut randomness) as f64)
                     .collect();
-                Edge::spline(options.degree, coefficients, linspace(-1.0, 1.0, num_knots))
+                Edge::new(options.degree, coefficients, linspace(-1.0, 1.0, num_knots))
                     .expect("spline creation error")
             })
             .collect();
@@ -741,8 +741,8 @@ mod test {
         for i in 1..knots.len() {
             knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
         }
-        let spline1 = Edge::spline(k, vec![1.0; coef_size], knots.clone()).unwrap();
-        let spline2 = Edge::spline(k, vec![-1.0; coef_size], knots.clone()).unwrap();
+        let spline1 = Edge::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
+        let spline2 = Edge::new(k, vec![-1.0; coef_size], knots.clone()).unwrap();
         KanLayer {
             splines: vec![spline1.clone(), spline2.clone(), spline2, spline1],
             samples: vec![],
