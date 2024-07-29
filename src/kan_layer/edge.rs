@@ -401,15 +401,15 @@ impl Edge {
     /// * returns [`SplineError::MergeMismatchedControlPointCount`] if the splines have different numbers of control points
     /// * returns [`SplineError::MergeMismatchedKnotCount`] if the splines have different numbers of knots
     pub(crate) fn merge_edges(edges: &[Edge]) -> Result<Edge, EdgeError> {
+        if edges.len() == 0 {
+            return Err(EdgeError::MergeNoEdges);
+        }
         let expected_variant = std::mem::discriminant(&edges[0].kind);
         if edges
             .iter()
             .any(|e| std::mem::discriminant(&e.kind) != expected_variant)
         {
             return Err(EdgeError::MergeMismatchedEdgeTypes);
-        }
-        if edges.len() == 0 {
-            return Err(EdgeError::MergeNoEdges);
         }
         match &edges[0].kind {
             EdgeType::Spline {
@@ -422,8 +422,16 @@ impl Edge {
                 let expected_degree = *degree;
                 let expected_control_point_count = control_points.len();
                 let expected_knot_count = knots.len();
-                let mut new_control_points = vec![0.0; expected_control_point_count];
-                let mut new_knots = vec![0.0; expected_knot_count];
+                let mut new_control_points: Vec<f64> = control_points
+                    .clone()
+                    .iter()
+                    .map(|v| v / edges.len() as f64)
+                    .collect();
+                let mut new_knots: Vec<f64> = knots
+                    .clone()
+                    .iter()
+                    .map(|v| v / edges.len() as f64)
+                    .collect();
                 for i in 1..edges.len() {
                     let edge = &edges[i];
                     match &edge.kind {
