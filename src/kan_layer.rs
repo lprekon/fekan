@@ -6,7 +6,7 @@ use kan_layer_errors::KanLayerError;
 use rand::distributions::Distribution;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use spline::{linspace, Spline};
+use spline::{linspace, Edge};
 use statrs::distribution::Normal; // apparently the statrs distributions use the rand Distribution trait
 
 use std::vec;
@@ -22,7 +22,7 @@ pub struct KanLayer {
     // the first `out_dim` splines will read from the first input, the second `out_dim` splines will read from the second input, etc., with `in_dim` such chunks
     // to caluclate the output of the layer, the first element is the sum of the output of splines 0, out_dim, 2*out_dim, etc., the second element is the sum of splines 1, out_dim+1, 2*out_dim+1, etc.
     /// the splines in this layer. The first `input_dimension` splines belong to the first "node", the second `input_dimension` splines belong to the second "node", etc.
-    pub(crate) splines: Vec<Spline>,
+    pub(crate) splines: Vec<Edge>,
     input_dimension: usize,
     output_dimension: usize,
     /// a vector of previous inputs to the layer, used to update the knot vectors for each incoming edge.
@@ -78,7 +78,7 @@ impl KanLayer {
                 let coefficients: Vec<f64> = (0..options.coef_size)
                     .map(|_| normal_dist.sample(&mut randomness) as f64)
                     .collect();
-                Spline::new(options.degree, coefficients, linspace(-1.0, 1.0, num_knots))
+                Edge::spline(options.degree, coefficients, linspace(-1.0, 1.0, num_knots))
                     .expect("spline creation error")
             })
             .collect();
@@ -700,7 +700,7 @@ impl KanLayer {
         }
         let mut merged_splines = Vec::with_capacity(num_splines);
         for i in 0..num_splines {
-            let merge_result = Spline::merge_splines(&splines_to_merge[i])
+            let merge_result = Edge::merge_edges(&splines_to_merge[i])
                 .map_err(|e| KanLayerError::spline_merge(i, e))?;
             merged_splines.push(merge_result);
         }
@@ -727,7 +727,7 @@ impl PartialEq for KanLayer {
 #[cfg(test)]
 mod test {
 
-    use spline::Spline;
+    use spline::Edge;
 
     use super::*;
 
@@ -741,8 +741,8 @@ mod test {
         for i in 1..knots.len() {
             knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
         }
-        let spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
-        let spline2 = Spline::new(k, vec![-1.0; coef_size], knots.clone()).unwrap();
+        let spline1 = Edge::spline(k, vec![1.0; coef_size], knots.clone()).unwrap();
+        let spline2 = Edge::spline(k, vec![-1.0; coef_size], knots.clone()).unwrap();
         KanLayer {
             splines: vec![spline1.clone(), spline2.clone(), spline2, spline1],
             samples: vec![],

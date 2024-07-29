@@ -1,13 +1,13 @@
 //! Error types relating to the creation and manipulation of [`KanLayer`](crate::kan_layer::KanLayer)s
 
-use super::spline::{spline_errors::SplineError, Spline};
+use super::spline::{spline_errors::EdgeError, Edge};
 use std::fmt::{self, Formatter};
 
 /// Represents any error returned from a KanLayer method or static function
 #[derive(Debug, PartialEq, Clone)]
 pub struct KanLayerError {
     error_kind: KanLayerErrorType,
-    source: Option<SplineError>,
+    source: Option<EdgeError>,
     spline_idx: Option<usize>,
 }
 
@@ -19,7 +19,7 @@ enum KanLayerErrorType {
     },
     NaNsInActivations {
         preacts: Vec<f64>,
-        offending_spline: Spline,
+        offending_spline: Edge,
     },
     MissizedGradient {
         actual: usize,
@@ -57,7 +57,7 @@ impl KanLayerError {
     pub(super) fn nans_in_activations(
         spline_idx: usize,
         preacts: Vec<f64>,
-        offending_spline: Spline,
+        offending_spline: Edge,
     ) -> Self {
         Self {
             error_kind: KanLayerErrorType::NaNsInActivations {
@@ -79,7 +79,7 @@ impl KanLayerError {
     }
 
     // Initialization function for BackwardBeforeForward
-    pub(super) fn backward_before_forward(spline_error: SplineError, spline_idx: usize) -> Self {
+    pub(super) fn backward_before_forward(spline_error: EdgeError, spline_idx: usize) -> Self {
         Self {
             error_kind: KanLayerErrorType::BackwardBeforeForward,
             source: Some(spline_error),
@@ -106,7 +106,7 @@ impl KanLayerError {
     }
 
     // Initialization function for SetKnotLength
-    pub(super) fn set_knot_length(spline_idx: usize, spline_error: SplineError) -> Self {
+    pub(super) fn set_knot_length(spline_idx: usize, spline_error: EdgeError) -> Self {
         Self {
             error_kind: KanLayerErrorType::SetKnotLength,
             source: Some(spline_error),
@@ -158,7 +158,7 @@ impl KanLayerError {
     }
 
     // Initialization function for SplineMerge
-    pub(super) fn spline_merge(spline_idx: usize, spline_error: SplineError) -> Self {
+    pub(super) fn spline_merge(spline_idx: usize, spline_error: EdgeError) -> Self {
         Self {
             error_kind: KanLayerErrorType::MergeUnmergableSplines,
             source: Some(spline_error),

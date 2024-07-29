@@ -1,8 +1,8 @@
-use super::Spline;
+use super::Edge;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum SplineError {
+pub(crate) enum EdgeError {
     TooFewKnots {
         expected: usize,
         actual: usize,
@@ -10,7 +10,7 @@ pub(crate) enum SplineError {
     BackwardBeforeForward,
     ActivationsEmpty,
     NansInControlPoints {
-        offending_spline: Spline,
+        offending_spline: Edge,
     },
     MergeMismatchedDegree {
         pos: usize,
@@ -27,29 +27,30 @@ pub(crate) enum SplineError {
         expected: usize,
         actual: usize,
     },
-    MergeNoSplines,
+    MergeNoEdges,
+    MergeMismatchedEdgeTypes,
 }
 
-impl fmt::Display for SplineError {
+impl fmt::Display for EdgeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            SplineError::TooFewKnots { expected, actual } => {
+            EdgeError::TooFewKnots { expected, actual } => {
                 write!(
                     f,
                     "knot vector has length {}, but expected length at least {} (degree + |control points| + 1)",
                     actual, expected
                 )
             }
-            SplineError::BackwardBeforeForward => {
+            EdgeError::BackwardBeforeForward => {
                 write!(f, "backward called before forward")
             }
-            SplineError::ActivationsEmpty => {
+            EdgeError::ActivationsEmpty => {
                 write!(f, "activations cache is empty")
             }
-            SplineError::NansInControlPoints{offending_spline} => {
+            EdgeError::NansInControlPoints{offending_spline} => {
                 write!(f, "updated control points contain NaN values - {:?}", offending_spline)
             }
-            SplineError::MergeMismatchedDegree {
+            EdgeError::MergeMismatchedDegree {
                 pos,
                 expected,
                 actual,
@@ -58,7 +59,7 @@ impl fmt::Display for SplineError {
                 "unable to merge splines of different degree. spline at position {} has degree {}, but expected degree {}",
                 pos, actual, expected
             ),
-            SplineError::MergeMismatchedControlPointCount {
+            EdgeError::MergeMismatchedControlPointCount {
                 pos,
                 expected,
                 actual,
@@ -67,7 +68,7 @@ impl fmt::Display for SplineError {
                 "unable to merge splines with different numbers of control points. spline at position {} has {} control points, but expected {}",
                 pos, actual, expected
             ),
-            SplineError::MergeMismatchedKnotCount {
+            EdgeError::MergeMismatchedKnotCount {
                 pos,
                 expected,
                 actual,
@@ -76,12 +77,13 @@ impl fmt::Display for SplineError {
                 "unable to merge splines with different numbers of knots. spline at position {} has {} knots, but expected {}",
                 pos, actual, expected
             ),
-            SplineError::MergeNoSplines => write!(f, "no splines to merge"),
+            EdgeError::MergeNoEdges => write!(f, "no splines to merge"),
+            EdgeError::MergeMismatchedEdgeTypes => write!(f, "unable to merge splines of different edge types"),
         }
     }
 }
 
-impl std::error::Error for SplineError {}
+impl std::error::Error for EdgeError {}
 
 #[cfg(test)]
 mod test {
@@ -89,12 +91,12 @@ mod test {
     #[test]
     fn test_spline_error_send() {
         fn assert_send<T: Send>() {}
-        assert_send::<SplineError>();
+        assert_send::<EdgeError>();
     }
 
     #[test]
     fn test_spline_error_sync() {
         fn assert_sync<T: Sync>() {}
-        assert_sync::<SplineError>();
+        assert_sync::<EdgeError>();
     }
 }

@@ -23,53 +23,63 @@ use spline_errors::*;
 /// margin to add to the beginning and end of the knot vector when updating it from samples
 pub(super) const KNOT_MARGIN: f64 = 0.01;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Spline {
-    // degree, control points, and knots are the parameters of the spline
-    // these three fields constitute the "identity" of the spline, so they're the only ones that get serialized, considered for equality, etc.
-    degree: usize,
-    control_points: Vec<f64>,
-    knots: Vec<f64>,
-
-    // the remaining fields represent the "state" of the spline.
-    // They're in flux during operation, and so are ignored for any sort of persitence or comparison.
-    /// the most recent parameter used in the forward pass
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct Edge {
+    kind: EdgeType,
     #[serde(skip)]
     // only used during operation
     last_t: Option<f64>,
-    /// the activations of the spline at each interval, stored from calls to [`forward()`](Spline::forward) and cleared on calls to [`update_knots_from_samples()`](Spline::update_knots_from_samples)
-    #[serde(skip)] // only used during training
-    activations: FxHashMap<(usize, usize, u64), f64>,
-    /// accumulated gradients for each control point
-    #[serde(skip)] // only used during training
-    gradients: Vec<f64>,
 }
 
-impl Spline {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+enum EdgeType {
+    Spline {
+        // degree, control points, and knots are the parameters of the spline
+        // these three fields constitute the "identity" of the spline, so they're the only ones that get serialized, considered for equality, etc.
+        degree: usize,
+        control_points: Vec<f64>,
+        knots: Vec<f64>,
+
+        // the remaining fields represent the "state" of the spline.
+        // They're in flux during operation, and so are ignored for any sort of persistence or comparison.
+        /// the most recent parameter used in the forward pass
+
+        /// the activations of the spline at each interval, stored from calls to [`forward()`](Spline::forward) and cleared on calls to [`update_knots_from_samples()`](Spline::update_knots_from_samples)
+        #[serde(skip)] // only used during training
+        activations: FxHashMap<(usize, usize, u64), f64>,
+        /// accumulated gradients for each control point
+        #[serde(skip)] // only used during training
+        gradients: Vec<f64>,
+    },
+}
+
+impl Edge {
     /// construct a new spline from the given degree, control points, and knots
     ///
     /// # Errors
     /// returns an error if the length of the knot vector is not at least `|control_points| + degree + 1`
-    pub(super) fn new(
+    pub(super) fn spline(
         degree: usize,
         control_points: Vec<f64>,
         knots: Vec<f64>,
-    ) -> Result<Self, SplineError> {
+    ) -> Result<Self, EdgeError> {
         let size = control_points.len();
         let min_required_knots = size + degree + 1;
         if knots.len() < min_required_knots {
-            return Err(SplineError::TooFewKnots {
+            return Err(EdgeError::TooFewKnots {
                 expected: min_required_knots,
                 actual: knots.len(),
             });
         }
-        Ok(Spline {
-            degree,
-            control_points,
-            knots,
+        Ok(Edge {
+            kind: EdgeType::Spline {
+                degree,
+                control_points,
+                knots,
+                activations: FxHashMap::default(),
+                gradients: vec![0.0; size],
+            },
             last_t: None,
-            activations: FxHashMap::default(),
-            gradients: vec![0.0; size],
         })
     }
 
@@ -77,31 +87,43 @@ impl Spline {
     ///
     /// accumulate the activations of the spline at each interval in the internal `activations` field
     pub fn forward(&mut self, t: f64) -> f64 {
-        self.last_t = Some(t); // store the most recent input for use in the backward pass
-        let mut sum = 0.0;
-        for (idx, coef) in self.control_points.iter().enumerate() {
-            let basis_activation = basis_cached(
-                idx,
-                self.degree,
-                t,
-                &self.knots,
-                &mut self.activations,
-                self.degree,
-            );
-            sum += *coef * basis_activation;
+        match &mut self.kind {
+            EdgeType::Spline {
+                degree,
+                control_points,
+                knots,
+                activations,
+                gradients: _gradients,
+            } => {
+                self.last_t = Some(t); // store the most recent input for use in the backward pass
+                let mut sum = 0.0;
+                for (idx, coef) in control_points.iter().enumerate() {
+                    let basis_activation =
+                        basis_cached(idx, *degree, t, &knots, activations, *degree);
+                    sum += *coef * basis_activation;
+                }
+                sum
+            }
         }
-        sum
     }
 
     /// comput the point on the spline at given parameter `t`
     ///
     /// Does not accumulate the activations of the spline at each interval in the internal `activations` field, or any other internal state
     pub fn infer(&self, t: f64) -> f64 {
-        self.control_points
-            .iter()
-            .enumerate()
-            .map(|(idx, coef)| *coef * basis_no_cache(idx, self.degree, t, &self.knots))
-            .sum()
+        match &self.kind {
+            EdgeType::Spline {
+                degree,
+                control_points,
+                knots,
+                activations: _,
+                gradients: _,
+            } => control_points
+                .iter()
+                .enumerate()
+                .map(|(idx, coef)| *coef * basis_no_cache(idx, *degree, t, knots))
+                .sum(),
+        }
     }
 
     /// compute the gradients for each control point  on the spline and accumulate them internally.
@@ -112,72 +134,96 @@ impl Spline {
     ///
     /// # Errors
     /// * Returns [`SplineError::BackwardBeforeForward`] if called before a forward pass
-    pub(super) fn backward(&mut self, error: f64) -> Result<f64, SplineError> {
-        if let None = self.last_t {
-            return Err(SplineError::BackwardBeforeForward);
+    pub(super) fn backward(&mut self, error: f64) -> Result<f64, EdgeError> {
+        match &mut self.kind {
+            EdgeType::Spline {
+                degree,
+                control_points,
+                knots,
+                activations,
+                gradients,
+            } => {
+                if let None = self.last_t {
+                    return Err(EdgeError::BackwardBeforeForward);
+                }
+                let last_t = self.last_t.unwrap();
+
+                let adjusted_error = error / control_points.len() as f64; // distribute the error evenly across all control points
+
+                // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
+                let mut drt_output_wrt_input = 0.0;
+                let k = *degree;
+                for i in 0..control_points.len() {
+                    // calculate control point gradients
+                    // dC_i = B_ik(t) * adjusted_error
+                    let basis_activation = activations.get(&(i, k, last_t.to_bits())).unwrap();
+                    // gradients aka drt_output_wrt_control_point * error
+                    let gradient_update = adjusted_error * basis_activation;
+                    gradients[i] += gradient_update;
+
+                    // calculate the derivative of the spline output with respect to the input (as opposed to wrt the control points)
+                    // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
+                    let left = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
+                    let right = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
+                    let left_recurse = basis_cached(i, k - 1, last_t, knots, activations, k);
+                    let right_recurse = basis_cached(i + 1, k - 1, last_t, &knots, activations, k);
+                    // println!(
+                    //     "i: {} left: {}, right: {}, left_recurse: {}, right_recurse: {}",
+                    //     i, left, right, left_recurse, right_recurse
+                    // );
+                    let basis_derivative = left * left_recurse - right * right_recurse;
+                    drt_output_wrt_input += control_points[i] * basis_derivative;
+                }
+                // input_gradient = drt_output_wrt_input * error
+                return Ok(drt_output_wrt_input * error);
+            }
         }
-        let last_t = self.last_t.unwrap();
-
-        let adjusted_error = error / self.control_points.len() as f64; // distribute the error evenly across all control points
-
-        // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
-        let mut drt_output_wrt_input = 0.0;
-        let k = self.degree;
-        for i in 0..self.control_points.len() {
-            // calculate control point gradients
-            // dC_i = B_ik(t) * adjusted_error
-            let basis_activation = self.activations.get(&(i, k, last_t.to_bits())).unwrap();
-            // gradients aka drt_output_wrt_control_point * error
-            let gradient_update = adjusted_error * basis_activation;
-            self.gradients[i] += gradient_update;
-
-            // calculate the derivative of the spline output with respect to the input (as opposed to wrt the control points)
-            // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
-            let left = (k as f64 - 1.0) / (self.knots[i + k - 1] - self.knots[i]);
-            let right = (k as f64 - 1.0) / (self.knots[i + k] - self.knots[i + 1]);
-            let left_recurse = basis_cached(
-                i,
-                k - 1,
-                last_t,
-                &self.knots,
-                &mut self.activations,
-                self.degree,
-            );
-            let right_recurse = basis_cached(
-                i + 1,
-                k - 1,
-                last_t,
-                &self.knots,
-                &mut self.activations,
-                self.degree,
-            );
-            // println!(
-            //     "i: {} left: {}, right: {}, left_recurse: {}, right_recurse: {}",
-            //     i, left, right, left_recurse, right_recurse
-            // );
-            let basis_derivative = left * left_recurse - right * right_recurse;
-            drt_output_wrt_input += self.control_points[i] * basis_derivative;
-        }
-        // input_gradient = drt_output_wrt_input * error
-        return Ok(drt_output_wrt_input * error);
     }
 
     pub(super) fn update(&mut self, learning_rate: f64) {
-        for i in 0..self.control_points.len() {
-            self.control_points[i] -= learning_rate * self.gradients[i];
+        match &mut self.kind {
+            EdgeType::Spline {
+                degree: _,
+                control_points,
+                knots: _,
+                activations: _,
+                gradients,
+            } => {
+                for i in 0..control_points.len() {
+                    control_points[i] -= learning_rate * gradients[i];
+                }
+            }
         }
     }
 
     pub(super) fn zero_gradients(&mut self) {
-        for i in 0..self.gradients.len() {
-            self.gradients[i] = 0.0;
+        match &mut self.kind {
+            EdgeType::Spline {
+                degree: _,
+                control_points: _,
+                knots: _,
+                activations: _,
+                gradients,
+            } => {
+                for i in 0..gradients.len() {
+                    gradients[i] = 0.0;
+                }
+            }
         }
     }
 
     #[allow(dead_code)]
     // used in tests for parent module
     pub(super) fn knots<'a>(&'a self) -> Iter<'a, f64> {
-        self.knots.iter()
+        match &self.kind {
+            EdgeType::Spline {
+                degree: _,
+                control_points: _,
+                knots,
+                activations: _,
+                gradients: _,
+            } => knots.iter(),
+        }
     }
 
     // pub(super) fn control_points(&self) -> Iter<'_, f64> {
@@ -190,43 +236,53 @@ impl Spline {
     ///
     /// If `samples` is not sorted, the results of the update and future spline operation are undefined.
     pub(super) fn update_knots_from_samples(&mut self, samples: &[f64], knot_adaptivity: f64) {
-        self.activations.clear(); // clear the memoized activations. They're no longer valid, now that the knots are changing
+        match &mut self.kind {
+            EdgeType::Spline {
+                degree,
+                control_points: _,
+                knots,
+                activations,
+                gradients: _,
+            } => {
+                activations.clear(); // clear the memoized activations. They're no longer valid, now that the knots are changing
 
-        let knot_size = self.knots.len();
-        let mut adaptive_knots: Vec<f64> = Vec::with_capacity(knot_size);
-        let num_intervals = self.knots.len() - 1;
-        let step_size = samples.len() / (num_intervals);
-        for i in 0..num_intervals {
-            adaptive_knots.push(samples[i * step_size]);
-        }
-        adaptive_knots.push(samples[samples.len() - 1]);
+                let knot_size = knots.len();
+                let mut adaptive_knots: Vec<f64> = Vec::with_capacity(knot_size);
+                let num_intervals = knots.len() - 1;
+                let step_size = samples.len() / (num_intervals);
+                for i in 0..num_intervals {
+                    adaptive_knots.push(samples[i * step_size]);
+                }
+                adaptive_knots.push(samples[samples.len() - 1]);
 
-        let span_min = samples[0];
-        let span_max = samples[samples.len() - 1];
-        let uniform_knots = linspace(span_min, span_max, self.knots.len());
+                let span_min = samples[0];
+                let span_max = samples[samples.len() - 1];
+                let uniform_knots = linspace(span_min, span_max, knots.len());
 
-        let mut new_knots: Vec<f64> = adaptive_knots
-            .iter()
-            .zip(uniform_knots.iter())
-            .map(|(a, b)| a * knot_adaptivity + b * (1.0 - knot_adaptivity))
-            .collect();
+                let mut new_knots: Vec<f64> = adaptive_knots
+                    .iter()
+                    .zip(uniform_knots.iter())
+                    .map(|(a, b)| a * knot_adaptivity + b * (1.0 - knot_adaptivity))
+                    .collect();
 
-        // make sure new_knots doesn't have too many duplicates
-        let mut duplicate_count = 0;
-        for i in 1..new_knots.len() {
-            if new_knots[i] == new_knots[i - 1] {
-                duplicate_count += 1;
-            } else {
-                duplicate_count = 0;
+                // make sure new_knots doesn't have too many duplicates
+                let mut duplicate_count = 0;
+                for i in 1..new_knots.len() {
+                    if new_knots[i] == new_knots[i - 1] {
+                        duplicate_count += 1;
+                    } else {
+                        duplicate_count = 0;
+                    }
+                    if duplicate_count >= *degree {
+                        return; // we have too many duplicate knots, so we don't update the knots
+                    }
+                }
+
+                new_knots[0] -= KNOT_MARGIN;
+                new_knots[knot_size - 1] += KNOT_MARGIN;
+                *knots = new_knots;
             }
-            if duplicate_count >= self.degree {
-                return; // we have too many duplicate knots, so we don't update the knots
-            }
         }
-
-        new_knots[0] -= KNOT_MARGIN;
-        new_knots[knot_size - 1] += KNOT_MARGIN;
-        self.knots = new_knots;
     }
 
     /// set the length of the knot vector to `knot_length` by linearly interpolating between the first and last knot.
@@ -234,79 +290,108 @@ impl Spline {
     /// # Errors
     /// * returns [`SplineError::ActivationsEmpty`] if the activations cache is empty. The most likely cause of this is calling `set_knot_length`  after initializing the spline or calling `update_knots_from_samples`, without first calling `forward` at least once.
     /// * returns [`SplineError::NansInControlPoints`] if the calculated control points contain `NaN` values
-    pub(super) fn set_knot_length(&mut self, knot_length: usize) -> Result<(), SplineError> {
-        let new_knots = linspace(self.knots[0], self.knots[self.knots.len() - 1], knot_length);
-        // build regressor matrix
-        let mut something = self
-            .activations
-            .iter()
-            .filter(|((_i, k, _t), _b)| *k == self.degree)
-            .map(|((i, _k, t), b)| (*i, f64::from_bits(*t), *b))
-            .collect::<Vec<_>>();
-        if something.is_empty() {
-            return Err(SplineError::ActivationsEmpty);
-        }
-        // put the activations in the correct order. We want each row of the final matrix to be all the basis functions for a single value of t, but since the nalgebra constructors take
-        // inputs in column major order, we build the transpose of the matrix we actually want, and sort by 't' first, then 'i'.
-        something.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        something.sort_by_key(|(i, _t, _b)| *i);
-        /* something = [
-            (0, t_0, B_0(t_0)), (0, t_1, B_0(t_1)), ..., (0, t_m, B_0(t_m)),
-            (1, t_0, B_1(t_0)), (1, t_1, B_1(t_1)), ..., (1, t_m, B_1(t_m)),
-            ...
-            (n, t_0, B_n(t_0)), (n, t_1, B_n(t_1)), ..., (n, t_m, B_n(t_m))
-        ]
-         */
-        let num_samples = something.len() / self.control_points.len();
-        let new_control_point_len = new_knots.len() - self.degree - 1;
-        let activation_matrix =
-            DMatrix::from_vec(num_samples, self.control_points.len(), something);
-        /* activation_matrix = [
-            [(0, t_0, B_0(t_0)), (1, t_0, B_1(t_0)), ..., (n, t_0, B_n(t_0))],
-            [(0, t_1, B_0(t_1)), (1, t_1, B_1(t_1)), ..., (n, t_1, B_n(t_1))],
-            ...
-            [(0, t_m, B_0(t_m)), (1, t_m, B_1(t_m)), ..., (n, t_m, B_n(t_m))]
-        ]
-         */
-        let regressor_matrix = DMatrix::from_fn(num_samples, new_control_point_len, |i, j| {
-            let this_t = activation_matrix.row(i)[0].1;
-            basis_no_cache(j, self.degree, this_t, &new_knots)
-        });
+    pub(super) fn set_knot_length(&mut self, knot_length: usize) -> Result<(), EdgeError> {
+        match &mut self.kind {
+            EdgeType::Spline {
+                degree,
+                control_points,
+                knots,
+                activations,
+                gradients,
+            } => {
+                let degree = *degree;
+                let new_knots = linspace(knots[0], knots[knots.len() - 1], knot_length);
+                // build regressor matrix
+                let mut something = activations
+                    .iter()
+                    .filter(|((_i, k, _t), _b)| *k == degree)
+                    .map(|((i, _k, t), b)| (*i, f64::from_bits(*t), *b))
+                    .collect::<Vec<_>>();
+                if something.is_empty() {
+                    return Err(EdgeError::ActivationsEmpty);
+                }
+                // put the activations in the correct order. We want each row of the final matrix to be all the basis functions for a single value of t, but since the nalgebra constructors take
+                // inputs in column major order, we build the transpose of the matrix we actually want, and sort by 't' first, then 'i'.
+                something.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                something.sort_by_key(|(i, _t, _b)| *i);
+                /* something = [
+                    (0, t_0, B_0(t_0)), (0, t_1, B_0(t_1)), ..., (0, t_m, B_0(t_m)),
+                    (1, t_0, B_1(t_0)), (1, t_1, B_1(t_1)), ..., (1, t_m, B_1(t_m)),
+                    ...
+                    (n, t_0, B_n(t_0)), (n, t_1, B_n(t_1)), ..., (n, t_m, B_n(t_m))
+                ]
+                 */
+                let num_samples = something.len() / control_points.len();
+                let new_control_point_len = new_knots.len() - degree - 1;
+                let activation_matrix =
+                    DMatrix::from_vec(num_samples, control_points.len(), something);
+                /* activation_matrix = [
+                    [(0, t_0, B_0(t_0)), (1, t_0, B_1(t_0)), ..., (n, t_0, B_n(t_0))],
+                    [(0, t_1, B_0(t_1)), (1, t_1, B_1(t_1)), ..., (n, t_1, B_n(t_1))],
+                    ...
+                    [(0, t_m, B_0(t_m)), (1, t_m, B_1(t_m)), ..., (n, t_m, B_n(t_m))]
+                ]
+                 */
+                let regressor_matrix =
+                    DMatrix::from_fn(num_samples, new_control_point_len, |i, j| {
+                        let this_t = activation_matrix.row(i)[0].1;
+                        basis_no_cache(j, degree, this_t, &new_knots)
+                    });
 
-        // build the target matrix by recombining the basis values in the activation matrix with the control points
-        let target_matrix = DVector::from_fn(num_samples, |row, _| {
-            let row = activation_matrix.row(row);
-            row.iter()
-                .fold(0.0, |sum, (i, _t, b)| sum + self.control_points[*i] * b)
-        });
-        // solve the least squares problem
-        let xtx = regressor_matrix.tr_mul(&regressor_matrix);
-        assert_eq!(xtx.nrows(), xtx.ncols());
-        let xty = regressor_matrix.tr_mul(&target_matrix);
-        let svd = SVD::new(xtx, true, true);
-        let solution = svd.solve(&xty, 1e-6).expect("SVD solve failed");
-        // update parameters
-        self.control_points = solution.iter().map(|v| *v).collect();
-        if self.control_points.iter().any(|c| c.is_nan()) {
-            return Err(SplineError::NansInControlPoints {
-                offending_spline: self.clone(),
-            });
+                // build the target matrix by recombining the basis values in the activation matrix with the control points
+                let target_matrix = DVector::from_fn(num_samples, |row, _| {
+                    let row = activation_matrix.row(row);
+                    row.iter()
+                        .fold(0.0, |sum, (i, _t, b)| sum + control_points[*i] * b)
+                });
+                // solve the least squares problem
+                let xtx = regressor_matrix.tr_mul(&regressor_matrix);
+                assert_eq!(xtx.nrows(), xtx.ncols());
+                let xty = regressor_matrix.tr_mul(&target_matrix);
+                let svd = SVD::new(xtx, true, true);
+                let solution = svd.solve(&xty, 1e-6).expect("SVD solve failed");
+                // check new control points for errors
+                let new_control_points: Vec<f64> = solution.iter().map(|v| *v).collect();
+                if new_control_points.iter().any(|c| c.is_nan()) {
+                    return Err(EdgeError::NansInControlPoints {
+                        offending_spline: self.clone(),
+                    });
+                }
+                // update parameters
+                *control_points = new_control_points;
+                *knots = new_knots;
+                // reset state
+                activations.clear();
+                *gradients = vec![0.0; control_points.len()];
+                Ok(())
+            }
         }
-        self.knots = new_knots;
-        // reset state
-        self.activations.clear();
-        self.gradients = vec![0.0; self.control_points.len()];
-        Ok(())
     }
 
     /// return the number of control points and knots in the spline
     pub(super) fn parameter_count(&self) -> usize {
-        self.control_points.len() + self.knots.len()
+        match &self.kind {
+            EdgeType::Spline {
+                degree: _,
+                control_points,
+                knots,
+                activations: _,
+                gradients: _,
+            } => control_points.len() + knots.len(),
+        }
     }
 
     /// return the number of control points in the spline
     pub(super) fn trainable_parameter_count(&self) -> usize {
-        self.control_points.len()
+        match &self.kind {
+            EdgeType::Spline {
+                degree: _,
+                control_points,
+                knots: _,
+                activations: _,
+                gradients: _,
+            } => control_points.len(),
+        }
     }
 
     /// merge a slice of splines into a single spline by averaging the control points and knots
@@ -315,62 +400,76 @@ impl Spline {
     /// * returns [`SplineError::MergeMismatchedDegree`] if the splines have different degrees
     /// * returns [`SplineError::MergeMismatchedControlPointCount`] if the splines have different numbers of control points
     /// * returns [`SplineError::MergeMismatchedKnotCount`] if the splines have different numbers of knots
-    pub(crate) fn merge_splines(splines: &[Spline]) -> Result<Spline, SplineError> {
-        if splines.len() == 0 {
-            return Err(SplineError::MergeNoSplines);
+    pub(crate) fn merge_edges(edges: &[Edge]) -> Result<Edge, EdgeError> {
+        let expected_variant = std::mem::discriminant(&edges[0].kind);
+        if edges
+            .iter()
+            .any(|e| std::mem::discriminant(&e.kind) != expected_variant)
+        {
+            return Err(EdgeError::MergeMismatchedEdgeTypes);
         }
-        let expected_degree = splines[0].degree;
-        let expected_knot_count = splines[0].knots.len();
-        let expected_control_point_count = splines[0].control_points.len();
-        let num_splines = splines.len();
-        let mut control_points = vec![0.0; expected_control_point_count];
-        let mut knots = vec![0.0; expected_knot_count];
-        for (idx, spline) in splines.iter().enumerate() {
-            if spline.degree != expected_degree {
-                return Err(SplineError::MergeMismatchedDegree {
-                    pos: idx,
-                    expected: expected_degree,
-                    actual: spline.degree,
-                });
-            }
-            if spline.control_points.len() != expected_control_point_count {
-                return Err(SplineError::MergeMismatchedControlPointCount {
-                    pos: idx,
-                    expected: expected_control_point_count,
-                    actual: spline.control_points.len(),
-                });
-            }
-            if spline.knots.len() != expected_knot_count {
-                return Err(SplineError::MergeMismatchedKnotCount {
-                    pos: idx,
-                    expected: expected_knot_count,
-                    actual: spline.knots.len(),
-                });
-            }
-            for i in 0..expected_control_point_count {
-                control_points[i] += spline.control_points[i];
-            }
-            for i in 0..expected_knot_count {
-                knots[i] += spline.knots[i];
+        if edges.len() == 0 {
+            return Err(EdgeError::MergeNoEdges);
+        }
+        match &edges[0].kind {
+            EdgeType::Spline {
+                degree,
+                control_points,
+                knots,
+                activations: _,
+                gradients: _,
+            } => {
+                let expected_degree = *degree;
+                let expected_control_point_count = control_points.len();
+                let expected_knot_count = knots.len();
+                let mut new_control_points = vec![0.0; expected_control_point_count];
+                let mut new_knots = vec![0.0; expected_knot_count];
+                for i in 1..edges.len() {
+                    let edge = &edges[i];
+                    match &edge.kind {
+                        EdgeType::Spline {
+                            degree,
+                            control_points,
+                            knots,
+                            activations: _,
+                            gradients: _,
+                        } => {
+                            // check for mismatched degrees, control points, and knots
+                            if *degree != expected_degree {
+                                return Err(EdgeError::MergeMismatchedDegree {
+                                    pos: i,
+                                    expected: expected_degree,
+                                    actual: *degree,
+                                });
+                            }
+                            if control_points.len() != expected_control_point_count {
+                                return Err(EdgeError::MergeMismatchedControlPointCount {
+                                    pos: i,
+                                    expected: expected_control_point_count,
+                                    actual: control_points.len(),
+                                });
+                            }
+                            if knots.len() != expected_knot_count {
+                                return Err(EdgeError::MergeMismatchedKnotCount {
+                                    pos: i,
+                                    expected: expected_knot_count,
+                                    actual: knots.len(),
+                                });
+                            }
+                            // merge in the control points and knots
+                            for j in 0..expected_control_point_count {
+                                new_control_points[j] += control_points[j] / edges.len() as f64;
+                            }
+                            for j in 0..expected_knot_count {
+                                new_knots[j] += knots[j] / edges.len() as f64;
+                            }
+                        }
+                        _ => unreachable!("all edges should be splines"),
+                    }
+                }
+                Ok(Edge::spline(expected_degree, new_control_points, new_knots).unwrap())
             }
         }
-        for i in 0..expected_control_point_count {
-            control_points[i] /= num_splines as f64;
-        }
-        for i in 0..expected_knot_count {
-            knots[i] /= num_splines as f64;
-        }
-        Ok(Spline::new(expected_degree, control_points, knots).unwrap())
-    }
-}
-
-impl PartialEq for Spline {
-    // if two splines have the same degree, control points and knots, they are equivalent, even if they are different instances
-    // if one wants to know if two splines are the same instance, one can compare references
-    fn eq(&self, other: &Self) -> bool {
-        self.degree == other.degree
-            && self.control_points == other.control_points
-            && self.knots == other.knots
     }
 }
 
@@ -485,7 +584,7 @@ mod tests {
     fn test_new_spline_with_too_few_knots() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
-        let result = Spline::new(3, control_points, knots);
+        let result = Edge::spline(3, control_points, knots);
         assert!(result.is_err());
     }
 
@@ -533,7 +632,7 @@ mod tests {
     fn test_forward_and_infer() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
-        let mut spline = Spline::new(3, control_points, knots).unwrap();
+        let mut spline = Edge::spline(3, control_points, knots).unwrap();
         let t = 0.95;
         //0.02535 + 0.5316 + 0.67664 - 0.0117 = 1.22189
         let result = spline.forward(t);
@@ -556,7 +655,7 @@ mod tests {
         for i in 1..knots.len() {
             knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
         }
-        let mut spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
+        let mut spline1 = Edge::spline(k, vec![1.0; coef_size], knots.clone()).unwrap();
         println!("{:#?}", spline1);
         let t: f64 = 0.0;
         let result = spline1.forward(t);
@@ -575,18 +674,19 @@ mod tests {
         // backward can't be run without forward, so we include forward in the name to make it obvious that if forward fails, backward will also fail
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
-        let mut spline = Spline::new(3, control_points, knots).unwrap();
+        let mut spline = Edge::spline(3, control_points, knots).unwrap();
         let t = 0.95;
         let _result = spline.forward(t);
         let error = -0.6;
         let input_gradient = spline.backward(error).unwrap();
         let expected_spline_drt_wrt_input = 1.2290;
         let expedted_control_point_gradients = vec![-0.0077, -0.0867, -0.0547, -0.0009];
-        let rounded_control_point_gradients: Vec<f64> = spline
-            .gradients
-            .iter()
-            .map(|g| (g * 10000.0).round() / 10000.0)
-            .collect();
+        let rounded_control_point_gradients: Vec<f64> = match spline.kind {
+            EdgeType::Spline { gradients, .. } => gradients
+                .iter()
+                .map(|g| (g * 10000.0).round() / 10000.0)
+                .collect(),
+        };
         assert_eq!(
             rounded_control_point_gradients, expedted_control_point_gradients,
             "control point gradients"
@@ -608,7 +708,7 @@ mod tests {
         for i in 1..knots.len() {
             knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
         }
-        let mut spline1 = Spline::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
+        let mut spline1 = Edge::spline(k, vec![1.0; coef_size], knots.clone()).unwrap();
         println!("setup: {:#?}", spline1);
 
         let activation = spline1.forward(0.0);
@@ -627,7 +727,7 @@ mod tests {
     fn test_backward_before_forward() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
-        let mut spline = Spline::new(3, control_points, knots).unwrap();
+        let mut spline = Edge::spline(3, control_points, knots).unwrap();
         let error = -0.6;
         let result = spline.backward(error);
         assert!(result.is_err());
@@ -637,7 +737,7 @@ mod tests {
     fn backward_after_infer() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
-        let mut spline = Spline::new(3, control_points, knots).unwrap();
+        let mut spline = Edge::spline(3, control_points, knots).unwrap();
         let _ = spline.infer(0.95);
         let error = -0.6;
         let result = spline.backward(error);
@@ -648,7 +748,7 @@ mod tests {
     fn test_update_knots() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
-        let mut spline = Spline::new(3, control_points, knots).unwrap();
+        let mut spline = Edge::spline(3, control_points, knots).unwrap();
         let mut samples = Vec::with_capacity(150);
         // assuming unordered samples for now
         for _ in 0..50 {
@@ -663,11 +763,12 @@ mod tests {
         let mut expected_knots = vec![-3.0, -1.74, -0.48, 0.78, 2.04, 3.0, 3.0, 3.0];
         expected_knots[0] -= KNOT_MARGIN;
         expected_knots[7] += KNOT_MARGIN;
-        let rounded_knots: Vec<f64> = spline
-            .knots
-            .iter()
-            .map(|k| (k * 10000.0).round() / 10000.0)
-            .collect();
+        let rounded_knots: Vec<f64> = match spline.kind {
+            EdgeType::Spline { knots, .. } => knots
+                .iter()
+                .map(|k| (k * 10000.0).round() / 10000.0)
+                .collect(),
+        };
         assert_eq!(rounded_knots, expected_knots);
     }
 
@@ -677,7 +778,7 @@ mod tests {
         let coef_size = 5;
         let knot_length = coef_size + k + 1;
         let knots = linspace(-1., 1., knot_length);
-        let mut spline = Spline::new(k, vec![1.0; coef_size], knots).unwrap();
+        let mut spline = Edge::spline(k, vec![1.0; coef_size], knots).unwrap();
 
         let sample_size = 100;
         let inputs = linspace(-1., 1.0, sample_size);
@@ -701,10 +802,10 @@ mod tests {
             .sum::<f64>()
             / sample_size as f64)
             .sqrt();
-        assert_ne!(
-            spline.control_points,
-            vec![0.0; spline.control_points.len()]
-        );
+        let control_points = match spline.kind {
+            EdgeType::Spline { control_points, .. } => control_points,
+        };
+        assert_ne!(control_points, vec![0.0; control_points.len()]);
         assert_almost_eq!(rmse as f64, 0., 1e-3);
     }
 
@@ -715,7 +816,7 @@ mod tests {
         let coef_size = 10;
         let knot_length = coef_size + k + 1;
         let knots = linspace(-1., 1., knot_length);
-        let mut spline = Spline::new(k, vec![1.0; coef_size], knots).unwrap();
+        let mut spline = Edge::spline(k, vec![1.0; coef_size], knots).unwrap();
 
         let sample_size = 100;
         let inputs = linspace(-1., 1.0, sample_size);
@@ -744,21 +845,21 @@ mod tests {
 
     #[test]
     fn test_merge_splines() {
-        let spline1 = Spline::new(
+        let spline1 = Edge::spline(
             3,
             vec![1.0, 2.0, 3.0],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
         )
         .unwrap();
-        let spline2 = Spline::new(
+        let spline2 = Edge::spline(
             3,
             vec![2.0, 3.0, -4.0],
             vec![-1.0, 1.0, 2.0, 5.0, 6.0, 7.0, 8.0],
         )
         .unwrap();
         let splines = vec![spline1, spline2];
-        let new_spline = Spline::merge_splines(&splines).unwrap();
-        let expected_spline = Spline::new(
+        let new_spline = Edge::merge_edges(&splines).unwrap();
+        let expected_spline = Edge::spline(
             3,
             vec![1.5, 2.5, -0.5],
             vec![-0.5, 1.0, 2.0, 4.0, 5.0, 6.0, 7.0],
@@ -770,71 +871,71 @@ mod tests {
     #[test]
     fn test_merge_splines_mismatched_degree() {
         let spline1 =
-            Spline::new(2, vec![1.0, 2.0, 3.0], vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
+            Edge::spline(2, vec![1.0, 2.0, 3.0], vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
         let spline2 =
-            Spline::new(1, vec![2.0, 3.0, -4.0], vec![-1.0, 1.0, 2.0, 5.0, 6.0, 7.0]).unwrap();
+            Edge::spline(1, vec![2.0, 3.0, -4.0], vec![-1.0, 1.0, 2.0, 5.0, 6.0, 7.0]).unwrap();
         let splines = vec![spline1, spline2];
-        let result = Spline::merge_splines(&splines);
+        let result = Edge::merge_edges(&splines);
         assert!(matches!(
             result,
-            Err(SplineError::MergeMismatchedDegree { .. })
+            Err(EdgeError::MergeMismatchedDegree { .. })
         ));
     }
 
     #[test]
     fn test_merge_splines_mismatched_control_points() {
-        let spline1 = Spline::new(
+        let spline1 = Edge::spline(
             3,
             vec![1.0, 2.0, 3.0],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
         )
         .unwrap();
-        let spline2 = Spline::new(
+        let spline2 = Edge::spline(
             3,
             vec![2.0, 3.0, -4.0, 0.0],
             vec![-1.0, 1.0, 2.0, 5.0, 5.5, 6.0, 6.5, 7.0],
         )
         .unwrap();
         let splines = vec![spline1, spline2];
-        let result = Spline::merge_splines(&splines);
+        let result = Edge::merge_edges(&splines);
         assert!(matches!(
             result,
-            Err(SplineError::MergeMismatchedControlPointCount { .. })
+            Err(EdgeError::MergeMismatchedControlPointCount { .. })
         ));
     }
 
     #[test]
     fn test_merge_splines_mismatched_knots() {
-        let spline1 = Spline::new(
+        let spline1 = Edge::spline(
             3,
             vec![1.0, 2.0, 3.0],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
         )
         .unwrap();
-        let spline2 = Spline::new(
+        let spline2 = Edge::spline(
             3,
             vec![2.0, 3.0, -4.0],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 6.5],
         )
         .unwrap();
         let splines = vec![spline1, spline2];
-        let result = Spline::merge_splines(&splines);
+        let result = Edge::merge_edges(&splines);
         assert!(matches!(
             result,
-            Err(SplineError::MergeMismatchedKnotCount { .. })
+            Err(EdgeError::MergeMismatchedKnotCount { .. })
         ));
     }
 
     #[test]
     fn test_merge_splines_empty_spline() {
         let splines = vec![];
-        let result = Spline::merge_splines(&splines);
-        assert!(matches!(result, Err(SplineError::MergeNoSplines)));
+        let result = Edge::merge_edges(&splines);
+        assert!(matches!(result, Err(EdgeError::MergeNoEdges)));
     }
 
     #[test]
     fn test_merged_identical_splines_yield_identical_outputs() {
-        let mut spline1 = Spline::new(
+        let mut spline1 = Edge::spline(
             3,
             vec![1.0, 2.0, 3.0],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
@@ -845,7 +946,7 @@ mod tests {
         let output1 = spline1.forward(t);
         let output2 = spline2.forward(t);
         assert_eq!(output1, output2);
-        let mut new_spline = Spline::merge_splines(&[spline1, spline2]).unwrap();
+        let mut new_spline = Edge::merge_edges(&[spline1, spline2]).unwrap();
         let output3 = new_spline.forward(t);
         assert_eq!(output1, output3);
     }
@@ -853,12 +954,12 @@ mod tests {
     #[test]
     fn test_spline_send() {
         fn assert_send<T: Send>() {}
-        assert_send::<Spline>();
+        assert_send::<Edge>();
     }
 
     #[test]
     fn test_spline_sync() {
         fn assert_sync<T: Sync>() {}
-        assert_sync::<Spline>();
+        assert_sync::<Edge>();
     }
 }
