@@ -61,7 +61,9 @@ enum EdgeType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-enum SymbolicFunction {}
+enum SymbolicFunction {
+    Linear,
+}
 
 impl Edge {
     /// construct a new spline from the given degree, control points, and knots
@@ -97,6 +99,7 @@ impl Edge {
     ///
     /// accumulate the activations of the spline at each interval in the internal `activations` field
     pub fn forward(&mut self, t: f64) -> f64 {
+        self.last_t = Some(t); // store the most recent input for use in the backward pass. This happens regardless of the edge type
         match &mut self.kind {
             EdgeType::Spline {
                 degree,
@@ -105,7 +108,6 @@ impl Edge {
                 activations,
                 gradients: _gradients,
             } => {
-                self.last_t = Some(t); // store the most recent input for use in the backward pass
                 let mut sum = 0.0;
                 for (idx, coef) in control_points.iter().enumerate() {
                     let basis_activation =
@@ -114,13 +116,7 @@ impl Edge {
                 }
                 sum
             }
-            EdgeType::Symbolic {
-                a: _,
-                b: _,
-                c: _,
-                d: _,
-                function: _,
-            } => todo!(),
+            EdgeType::Symbolic { .. } => self.infer(t), // symbolic edges don't cache activations, so they have the same forward and infer implementations
         }
     }
 
@@ -141,12 +137,17 @@ impl Edge {
                 .map(|(idx, coef)| *coef * basis_no_cache(idx, *degree, t, knots))
                 .sum(),
             EdgeType::Symbolic {
-                a: _,
-                b: _,
-                c: _,
-                d: _,
-                function: _,
-            } => todo!(),
+                a,
+                b,
+                c,
+                d,
+                function,
+            } => {
+                let (a, b, c, d) = (*a, *b, *c, *d);
+                match function {
+                    SymbolicFunction::Linear => c * (a * t + b) + d,
+                }
+            }
         }
     }
 
@@ -159,6 +160,9 @@ impl Edge {
     /// # Errors
     /// * Returns [`SplineError::BackwardBeforeForward`] if called before a forward pass
     pub(super) fn backward(&mut self, error: f64) -> Result<f64, EdgeError> {
+        if let None = self.last_t {
+            return Err(EdgeError::BackwardBeforeForward);
+        }
         match &mut self.kind {
             EdgeType::Spline {
                 degree,
@@ -167,9 +171,6 @@ impl Edge {
                 activations,
                 gradients,
             } => {
-                if let None = self.last_t {
-                    return Err(EdgeError::BackwardBeforeForward);
-                }
                 let last_t = self.last_t.unwrap();
 
                 let adjusted_error = error / control_points.len() as f64; // distribute the error evenly across all control points
@@ -202,12 +203,20 @@ impl Edge {
                 return Ok(drt_output_wrt_input * error);
             }
             EdgeType::Symbolic {
-                a: _,
-                b: _,
-                c: _,
-                d: _,
-                function: _,
-            } => todo!(),
+                a,
+                b,
+                c,
+                d,
+                function,
+            } => {
+                let (a, b, c, d) = (*a, *b, *c, *d);
+                match function {
+                    SymbolicFunction::Linear => {
+                        let input_gradient = c * a;
+                        Ok(input_gradient * error)
+                    }
+                }
+            }
         }
     }
 
@@ -1023,5 +1032,43 @@ mod tests {
     fn test_spline_sync() {
         fn assert_sync<T: Sync>() {}
         assert_sync::<Edge>();
+    }
+
+    mod symbolic_tests {
+        use super::*;
+
+        #[test]
+        fn test_symbolic_backward_before_forward() {
+            let mut edge = Edge {
+                kind: EdgeType::Symbolic {
+                    a: 1.0,
+                    b: 0.0,
+                    c: 1.0,
+                    d: 0.0,
+                    function: SymbolicFunction::Linear,
+                },
+                last_t: None,
+            };
+            let result = edge.backward(0.5);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_linear() {
+            let mut edge = Edge {
+                kind: EdgeType::Symbolic {
+                    a: 2.0,
+                    b: 3.0,
+                    c: 4.0,
+                    d: 5.0,
+                    function: SymbolicFunction::Linear,
+                },
+                last_t: None,
+            };
+            let result = edge.forward(0.5);
+            assert_eq!(result, 21.0, "forward");
+            let backward = edge.backward(-0.5).unwrap();
+            assert_eq!(backward, -4.0, "backward");
+        }
     }
 }
