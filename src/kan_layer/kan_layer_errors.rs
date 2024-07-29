@@ -1,6 +1,6 @@
 //! Error types relating to the creation and manipulation of [`KanLayer`](crate::kan_layer::KanLayer)s
 
-use super::spline::{spline_errors::EdgeError, Edge};
+use super::edge::{edge_errors::EdgeError, Edge};
 use std::fmt::{self, Formatter};
 
 /// Represents any error returned from a KanLayer method or static function

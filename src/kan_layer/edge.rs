@@ -17,8 +17,8 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::slice::Iter;
 
-pub(crate) mod spline_errors;
-use spline_errors::*;
+pub(crate) mod edge_errors;
+use edge_errors::*;
 
 /// margin to add to the beginning and end of the knot vector when updating it from samples
 pub(super) const KNOT_MARGIN: f64 = 0.01;

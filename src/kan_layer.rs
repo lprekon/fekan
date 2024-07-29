@@ -1,12 +1,12 @@
 // #![allow(dead_code)]
+pub(crate) mod edge;
 pub mod kan_layer_errors;
-pub(crate) mod spline;
 
+use edge::{linspace, Edge};
 use kan_layer_errors::KanLayerError;
 use rand::distributions::Distribution;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use spline::{linspace, Edge};
 use statrs::distribution::Normal; // apparently the statrs distributions use the rand Distribution trait
 
 use std::vec;
@@ -727,7 +727,7 @@ impl PartialEq for KanLayer {
 #[cfg(test)]
 mod test {
 
-    use spline::Edge;
+    use edge::Edge;
 
     use super::*;
 
