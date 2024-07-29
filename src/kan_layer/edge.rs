@@ -51,7 +51,17 @@ enum EdgeType {
         #[serde(skip)] // only used during training
         gradients: Vec<f64>,
     },
+    Symbolic {
+        a: f64,
+        b: f64,
+        c: f64,
+        d: f64,
+        function: SymbolicFunction,
+    },
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+enum SymbolicFunction {}
 
 impl Edge {
     /// construct a new spline from the given degree, control points, and knots
@@ -104,6 +114,13 @@ impl Edge {
                 }
                 sum
             }
+            EdgeType::Symbolic {
+                a: _,
+                b: _,
+                c: _,
+                d: _,
+                function: _,
+            } => todo!(),
         }
     }
 
@@ -123,6 +140,13 @@ impl Edge {
                 .enumerate()
                 .map(|(idx, coef)| *coef * basis_no_cache(idx, *degree, t, knots))
                 .sum(),
+            EdgeType::Symbolic {
+                a: _,
+                b: _,
+                c: _,
+                d: _,
+                function: _,
+            } => todo!(),
         }
     }
 
@@ -177,6 +201,13 @@ impl Edge {
                 // input_gradient = drt_output_wrt_input * error
                 return Ok(drt_output_wrt_input * error);
             }
+            EdgeType::Symbolic {
+                a: _,
+                b: _,
+                c: _,
+                d: _,
+                function: _,
+            } => todo!(),
         }
     }
 
@@ -193,6 +224,13 @@ impl Edge {
                     control_points[i] -= learning_rate * gradients[i];
                 }
             }
+            EdgeType::Symbolic {
+                a: _,
+                b: _,
+                c: _,
+                d: _,
+                function: _,
+            } => todo!(),
         }
     }
 
@@ -209,6 +247,13 @@ impl Edge {
                     gradients[i] = 0.0;
                 }
             }
+            EdgeType::Symbolic {
+                a: _,
+                b: _,
+                c: _,
+                d: _,
+                function: _,
+            } => todo!(),
         }
     }
 
@@ -223,6 +268,13 @@ impl Edge {
                 activations: _,
                 gradients: _,
             } => knots.iter(),
+            EdgeType::Symbolic {
+                a: _,
+                b: _,
+                c: _,
+                d: _,
+                function: _,
+            } => todo!(),
         }
     }
 
@@ -282,6 +334,13 @@ impl Edge {
                 new_knots[knot_size - 1] += KNOT_MARGIN;
                 *knots = new_knots;
             }
+            EdgeType::Symbolic {
+                a: _,
+                b: _,
+                c: _,
+                d: _,
+                function: _,
+            } => todo!(),
         }
     }
 
@@ -365,6 +424,13 @@ impl Edge {
                 *gradients = vec![0.0; control_points.len()];
                 Ok(())
             }
+            EdgeType::Symbolic {
+                a: _,
+                b: _,
+                c: _,
+                d: _,
+                function: _,
+            } => todo!(),
         }
     }
 
@@ -378,6 +444,13 @@ impl Edge {
                 activations: _,
                 gradients: _,
             } => control_points.len() + knots.len(),
+            EdgeType::Symbolic {
+                a: _,
+                b: _,
+                c: _,
+                d: _,
+                function: _,
+            } => todo!(),
         }
     }
 
@@ -391,6 +464,13 @@ impl Edge {
                 activations: _,
                 gradients: _,
             } => control_points.len(),
+            EdgeType::Symbolic {
+                a: _,
+                b: _,
+                c: _,
+                d: _,
+                function: _,
+            } => todo!(),
         }
     }
 
@@ -477,6 +557,13 @@ impl Edge {
                 }
                 Ok(Edge::spline(expected_degree, new_control_points, new_knots).unwrap())
             }
+            EdgeType::Symbolic {
+                a: _,
+                b: _,
+                c: _,
+                d: _,
+                function: _,
+            } => todo!(),
         }
     }
 }
@@ -694,6 +781,7 @@ mod tests {
                 .iter()
                 .map(|g| (g * 10000.0).round() / 10000.0)
                 .collect(),
+            _ => unreachable!(),
         };
         assert_eq!(
             rounded_control_point_gradients, expedted_control_point_gradients,
@@ -776,6 +864,7 @@ mod tests {
                 .iter()
                 .map(|k| (k * 10000.0).round() / 10000.0)
                 .collect(),
+            _ => unreachable!(),
         };
         assert_eq!(rounded_knots, expected_knots);
     }
@@ -812,6 +901,7 @@ mod tests {
             .sqrt();
         let control_points = match spline.kind {
             EdgeType::Spline { control_points, .. } => control_points,
+            _ => unreachable!(),
         };
         assert_ne!(control_points, vec![0.0; control_points.len()]);
         assert_almost_eq!(rmse as f64, 0., 1e-3);
