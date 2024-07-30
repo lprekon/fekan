@@ -52,12 +52,7 @@ test test::test_nll_loss_and_gradient_2 ... ignored
 test result: ok. 0 passed; 0 failed; 48 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
-running 5 tests
-test bench_backward                  ... bench:   1,534,647.90 ns/iter (+/- 8,192.12)
-test bench_forward                   ... bench:   1,614,629.10 ns/iter (+/- 371,812.88)
-test bench_set_knot_length           ... bench:         188.37 ns/iter (+/- 3.12)
-test bench_update                    ... bench:      42,192.12 ns/iter (+/- 427.42)
-test bench_update_knots_from_samples ... bench:     649,053.12 ns/iter (+/- 18,157.77)
-
-test result: ok. 0 passed; 0 failed; 0 ignored; 5 measured; 0 filtered out; finished in 23.32s
-
+running 6 tests
+test bench_backward                  ... bench:   1,542,179.20 ns/iter (+/- 6,412.16)
+test bench_forward                   ... bench:   1,541,658.30 ns/iter (+/- 13,159.10)
+test bench_set_knot_length           ... bench:         188.19 ns/iter (+/- 1.92)

@@ -25,14 +25,14 @@ const COEF_SIZE_SMALL: usize = 10;
 //     })
 // }
 
-// fn small_layer_big_spline() -> KanLayer {
-//     KanLayer::new(&KanLayerOptions {
-//         input_dimension: INPUT_DIMENSION_SMALL,
-//         output_dimension: OUTPUT_DIMENSION_SMALL,
-//         degree: DEGREE,
-//         coef_size: OUTPUT_DIMENSION_BIG,
-//     })
-// }
+fn small_layer_big_spline() -> KanLayer {
+    KanLayer::new(&KanLayerOptions {
+        input_dimension: INPUT_DIMENSION_SMALL,
+        output_dimension: OUTPUT_DIMENSION_SMALL,
+        degree: DEGREE,
+        coef_size: OUTPUT_DIMENSION_BIG,
+    })
+}
 
 fn big_layer_big_spline() -> KanLayer {
     KanLayer::new(&KanLayerOptions {
@@ -112,16 +112,16 @@ fn bench_set_knot_length(b: &mut Bencher) {
     b.iter(|| layer.set_knot_length(COEF_SIZE_BIG * 3));
 }
 
-// #[bench]
-// fn bench_suggest_symbolic(b: &mut Bencher) {
-//     let mut layer = small_layer_big_spline();
-//     for _ in 0..100 {
-//         let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
-//             .map(|_| thread_rng().gen())
-//             .collect();
-//         let _ = layer.forward(&input);
-//     }
-//     b.iter(|| {
-//         let _ = layer.suggest_symbolic();
-//     });
-// }
+#[bench]
+fn bench_suggest_symbolic(b: &mut Bencher) {
+    let mut layer = small_layer_big_spline();
+    for _ in 0..100 {
+        let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
+            .map(|_| thread_rng().gen())
+            .collect();
+        let _ = layer.forward(&input);
+    }
+    b.iter(|| {
+        let _ = layer.suggest_symbolic();
+    });
+}
