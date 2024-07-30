@@ -296,18 +296,19 @@ impl Edge {
             } => {
                 activations.clear(); // clear the memoized activations. They're no longer valid, now that the knots are changing
 
-                let knot_size = knots.len();
-                let mut adaptive_knots: Vec<f64> = Vec::with_capacity(knot_size);
-                let num_intervals = knots.len() - 1;
-                let step_size = samples.len() / (num_intervals);
+                let knot_count = knots.len();
+                let base_knot_count = knot_count - 2 * (*degree);
+                let mut adaptive_knots: Vec<f64> = Vec::with_capacity(base_knot_count);
+                let num_intervals = base_knot_count - 1;
+                let stride_size = samples.len() / (num_intervals);
                 for i in 0..num_intervals {
-                    adaptive_knots.push(samples[i * step_size]);
+                    adaptive_knots.push(samples[i * stride_size]);
                 }
                 adaptive_knots.push(samples[samples.len() - 1]);
 
                 let span_min = samples[0];
                 let span_max = samples[samples.len() - 1];
-                let uniform_knots = linspace(span_min, span_max, knots.len());
+                let uniform_knots = linspace(span_min, span_max, base_knot_count);
 
                 let mut new_knots: Vec<f64> = adaptive_knots
                     .iter()
@@ -328,8 +329,12 @@ impl Edge {
                     }
                 }
 
-                new_knots[0] -= KNOT_MARGIN;
-                new_knots[knot_size - 1] += KNOT_MARGIN;
+                // pad the knot vectors at either end to prevent edge effects
+                let step_size = (span_max - span_min) / (knot_count as f64);
+                for _ in 0..*degree {
+                    new_knots.insert(0, new_knots[0] - step_size);
+                    new_knots.push(new_knots[new_knots.len() - 1] + step_size);
+                }
                 *knots = new_knots;
             }
             EdgeType::Symbolic { .. } => (), // symbolic edges don't have knots, so this is a no-op
@@ -977,9 +982,7 @@ mod tests {
         samples.sort_by(|a, b| a.partial_cmp(b).unwrap()); // this is annoying, but f64 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp // this is annoying, but f64 DOESN'T IMPLEMENT ORD, so we have to use partial_cmp)
         println!("{:?}", samples);
         spline.update_knots_from_samples(samples.as_slice(), 1.0);
-        let mut expected_knots = vec![-3.0, -1.74, -0.48, 0.78, 2.04, 3.0, 3.0, 3.0];
-        expected_knots[0] -= KNOT_MARGIN;
-        expected_knots[7] += KNOT_MARGIN;
+        let expected_knots = vec![-5.25, -4.5, -3.75, -3.0, 3.0, 3.75, 4.5, 5.25];
         let rounded_knots: Vec<f64> = match spline.kind {
             EdgeType::Spline { knots, .. } => knots
                 .iter()
