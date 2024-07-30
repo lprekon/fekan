@@ -23,6 +23,7 @@ serde-pickle = { version = "1.1.1", optional = true }
 serde_json = { version = "1.0.118", optional = true }
 shuffle = "0.1.7"
 statrs = "0.16.0"
+strum = { version = "0.26.3", features = ["derive", "strum_macros"] }
 
 [profile.release]
 debug = true

@@ -16,6 +16,7 @@ use nalgebra::{DMatrix, DVector, SVD};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::slice::Iter;
+use strum::{EnumIter, IntoEnumIterator};
 
 pub(crate) mod edge_errors;
 use edge_errors::*;
@@ -60,7 +61,7 @@ enum EdgeType {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, EnumIter)]
 enum SymbolicFunction {
     Linear,
 }
@@ -419,6 +420,137 @@ impl Edge {
         }
     }
 
+    // copying pykan for now. TODO: think more about this
+    const PARAM_MIN: f64 = -10.0;
+    const PARAM_MAX: f64 = 10.0;
+    const PARAM_STEPS: usize = 21;
+    const PARAM_ITERATIONS: usize = 2;
+
+    // Find symbolic functions that best fit the spline over the given input data. Return the `num_suggestions` best fits, along with their coefficients of determination (R^2)
+    pub(super) fn suggest_symbolic(
+        &self,
+        inputs: &[f64],
+        num_suggestions: usize,
+    ) -> Vec<(Edge, f64)> {
+        println!("x = {:?}", inputs);
+        let expected_outputs: Vec<f64> = inputs.iter().map(|t| self.infer(*t)).collect();
+
+        println!("y = {:?}", expected_outputs);
+        let mut best_functions: Vec<(Edge, f64)> = vec![];
+        // iterate over all possible symbolic functions
+        for edge_type in SymbolicFunction::iter() {
+            // create a default symbolic edge of the current type, which will be used to store the best edge of the current type (storing the a and b values for us)
+            let mut best_edge_of_the_type = Edge {
+                kind: EdgeType::Symbolic {
+                    a: 1.0,
+                    b: 0.0,
+                    c: 1.0,
+                    d: 0.0,
+                    function: edge_type,
+                },
+                last_t: None,
+            };
+            let (mut a_min, mut a_max) = (Self::PARAM_MIN, Self::PARAM_MAX);
+            let (mut b_min, mut b_max) = (Self::PARAM_MIN, Self::PARAM_MAX);
+            for iteration in 0..Self::PARAM_ITERATIONS {
+                println!("\nIteration: {}", iteration);
+                println!("a: [{}, {}], b: [{}, {}]", a_min, a_max, b_min, b_max);
+                let mut best_edge_for_the_iteration = best_edge_of_the_type.clone(); // arbitrary initial value
+                let mut best_r2_for_the_iteration = f64::NEG_INFINITY;
+                let a_range = linspace(a_min, a_max, Self::PARAM_STEPS);
+                let b_range = linspace(b_min, b_max, Self::PARAM_STEPS);
+                let mut best_a_index = 0;
+                let mut best_b_index = 0;
+                // find the best combination of a and b in the current range
+                for i in 0..Self::PARAM_STEPS {
+                    for j in 0..Self::PARAM_STEPS {
+                        let test_edge = Edge {
+                            kind: EdgeType::Symbolic {
+                                a: a_range[i],
+                                b: b_range[j],
+                                c: 1.0,
+                                d: 0.0,
+                                function: edge_type,
+                            },
+                            last_t: None,
+                        };
+                        let test_outputs: Vec<f64> =
+                            inputs.iter().map(|t| test_edge.infer(*t)).collect();
+
+                        let r2 = calculate_coef_of_determination(&expected_outputs, &test_outputs);
+                        if r2 > best_r2_for_the_iteration {
+                            best_r2_for_the_iteration = r2;
+                            best_edge_for_the_iteration = test_edge;
+                            best_a_index = i;
+                            best_b_index = j;
+                        }
+                    }
+                }
+                best_edge_of_the_type = best_edge_for_the_iteration;
+                // calculate the new ranges for a and b before the next iteration
+                a_min = match best_a_index {
+                    0 => a_range[0] - (a_range[1] - a_range[0]),
+                    _ => a_range[best_a_index - 1],
+                };
+                let last_idx = Self::PARAM_STEPS - 1;
+                a_max = if best_a_index == last_idx {
+                    a_range[last_idx] + (a_range[last_idx] as f64 - a_range[last_idx - 1] as f64)
+                } else {
+                    a_range[best_a_index + 1]
+                };
+                b_min = match best_b_index {
+                    0 => b_range[0] as f64 - (b_range[1] as f64 - b_range[0] as f64),
+                    _ => b_range[best_b_index - 1],
+                };
+                b_max = if best_b_index == last_idx {
+                    b_range[last_idx] + (b_range[last_idx] as f64 - b_range[last_idx - 1] as f64)
+                } else {
+                    b_range[best_b_index + 1]
+                };
+            }
+            // we've done an iterative search to find the best a and b for the current symbolic function. Now we fit the best c and d using least squares regression
+            // best_edge_of_the_type has caputred the best a and b values, so we can use it to calculate the best c and d values
+            let x_matrix = DMatrix::from_fn(inputs.len(), 2, |i, j| {
+                // add a constant column so we can calculate the intercept aka d
+                if j == 0 {
+                    best_edge_of_the_type.infer(inputs[i])
+                } else {
+                    1.0
+                }
+            });
+            let y_matrix = DVector::from_vec(expected_outputs.clone());
+            let xtx = x_matrix.tr_mul(&x_matrix);
+            let xty = x_matrix.tr_mul(&y_matrix);
+            let svd = SVD::new(xtx, true, true);
+            let solution = svd.solve(&xty, 1e-6).expect("SVD solve failed");
+            let best_c = solution[0];
+            let best_d = solution[1];
+            best_edge_of_the_type = match best_edge_of_the_type.kind {
+                EdgeType::Symbolic { a, b, function, .. } => Edge {
+                    kind: EdgeType::Symbolic {
+                        a,
+                        b,
+                        c: best_c,
+                        d: best_d,
+                        function,
+                    },
+                    last_t: None,
+                },
+                _ => unreachable!(),
+            };
+            let test_outputs: Vec<f64> = inputs
+                .iter()
+                .map(|t| best_edge_of_the_type.infer(*t))
+                .collect();
+            let r2 = calculate_coef_of_determination(&expected_outputs, &test_outputs);
+            best_functions.push((best_edge_of_the_type, r2));
+        }
+
+        best_functions.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        let max_suggestions = best_functions.len().min(num_suggestions);
+        return best_functions[0..max_suggestions].to_vec();
+    }
+
     /// return the number of control points and knots in the spline
     pub(super) fn parameter_count(&self) -> usize {
         match &self.kind {
@@ -641,8 +773,24 @@ pub(crate) fn linspace(min: f64, max: f64, num: usize) -> Vec<f64> {
     knots
 }
 
+fn calculate_coef_of_determination(expected: &[f64], actual: &[f64]) -> f64 {
+    let mean_expected = expected.iter().sum::<f64>() / expected.len() as f64;
+    let ss_res = expected
+        .iter()
+        .zip(actual.iter())
+        .map(|(e, a)| (e - a).powi(2))
+        .sum::<f64>();
+    let ss_tot = expected
+        .iter()
+        .map(|e| (e - mean_expected).powi(2))
+        .sum::<f64>();
+    1.0 - (ss_res / (ss_tot + f64::EPSILON))
+}
+
 #[cfg(test)]
 mod tests {
+
+    use std::ops::SubAssign;
 
     use statrs::assert_almost_eq;
 
@@ -1020,6 +1168,49 @@ mod tests {
         let mut new_spline = Edge::merge_edges(&[spline1, spline2]).unwrap();
         let output3 = new_spline.forward(t);
         assert_eq!(output1, output3);
+    }
+
+    #[test]
+    fn test_suggest_symbolic_constant_zero() {
+        let spline = Edge::new(3, vec![0.; 3], vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
+        let inputs = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
+        let suggest_symbolic = spline.suggest_symbolic(inputs.as_slice(), 1);
+        let (edge, r2) = &suggest_symbolic[0];
+        assert_almost_eq!(*r2, 1.0, 1e-2);
+        assert!(matches!(edge.kind, EdgeType::Symbolic { .. }));
+        let symbolic_function = match &edge.kind {
+            EdgeType::Symbolic { function, .. } => function,
+            _ => unreachable!(),
+        };
+        assert_eq!(*symbolic_function, SymbolicFunction::Linear);
+        let params = match &edge.kind {
+            EdgeType::Symbolic { a, b, c, d, .. } => (*a, *b, *c, *d),
+            _ => unreachable!(),
+        };
+        // assert_eq!(*a, 0.0, "a");
+        assert_eq!(params, (0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn test_suggest_symbolic_y_equals_x() {
+        let spline = Edge::new(3, vec![1.0, 2.0, 3.0, 4.0, 5.0], linspace(-0.9, 6.3, 9)).unwrap();
+        let inputs = linspace(0.1, 2.0, 10);
+        let suggest_symbolic = spline.suggest_symbolic(inputs.as_slice(), 1);
+        let (edge, r2) = &suggest_symbolic[0];
+        assert_almost_eq!(*r2, 1.0, 1e-1);
+        assert!(matches!(edge.kind, EdgeType::Symbolic { .. }));
+        let symbolic_function = match &edge.kind {
+            EdgeType::Symbolic { function, .. } => function,
+            _ => unreachable!(),
+        };
+        assert_eq!(*symbolic_function, SymbolicFunction::Linear);
+        let (a, b, c, d) = match &edge.kind {
+            EdgeType::Symbolic { a, b, c, d, .. } => (*a, *b, *c, *d),
+            _ => unreachable!(),
+        };
+        println!("{:?}", (a, b, c, d));
+        assert_almost_eq!(a * c, 1.0, 1e-1);
+        assert_almost_eq!(b + d, 0.0, 1e-1);
     }
 
     #[test]
