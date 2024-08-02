@@ -163,7 +163,6 @@ impl Edge {
                 function,
             } => {
                 let (a, b, c, d) = (*a, *b, *c, *d);
-                println!("a: {}, b: {}, c: {}, d: {}", a, b, c, d);
                 match function {
                     SymbolicFunction::Linear => c * (a * t + b) + d,
                     SymbolicFunction::Quadratic => c * (a * t + b).powi(2) + d,
@@ -477,15 +476,18 @@ impl Edge {
 
     // Find symbolic functions that best fit the spline over the given input data. Return the `num_suggestions` best fits, along with their coefficients of determination (R^2)
     // IMPORTANT NOTE: despite my wishes, this function does an unreliable job at suggesting constant functions. I'm not going to make constant function a class, because I'm just going to add a bias node at some point
-    pub(super) fn suggest_symbolic(
-        &self,
-        inputs: &[f64],
-        num_suggestions: usize,
-    ) -> Vec<(Edge, f64)> {
-        println!("x = {:?}", inputs);
+    pub(super) fn suggest_symbolic(&self, num_suggestions: usize) -> Vec<(Edge, f64)> {
+        if let EdgeType::Symbolic { .. } = &self.kind {
+            return vec![];
+        }
+        let (degree, knots) = match &self.kind {
+            EdgeType::Spline { degree, knots, .. } => (degree, knots),
+            _ => unreachable!(),
+        };
+        let inputs = linspace(knots[*degree], knots[knots.len() - degree - 1], 100);
         let expected_outputs: Vec<f64> = inputs.iter().map(|t| self.infer(*t)).collect();
-
-        println!("y = {:?}", expected_outputs);
+        // println!("x = {:?}", inputs);
+        // println!("y = {:?}", expected_outputs);
         let mut best_functions: Vec<(Edge, f64)> = vec![];
         // iterate over all possible symbolic functions
         for edge_type in SymbolicFunction::iter() {
@@ -1278,9 +1280,9 @@ mod tests {
 
     #[test]
     fn test_suggest_symbolic_y_equals_x() {
-        let spline = Edge::new(3, vec![1.0, 2.0, 3.0, 4.0, 5.0], linspace(-0.9, 6.3, 9)).unwrap();
+        let spline = Edge::new(3, linspace(1.0, 5.0, 5), linspace(-0.9, 6.3, 9)).unwrap();
         let inputs = linspace(0.1, 2.0, 10);
-        let suggest_symbolic = spline.suggest_symbolic(inputs.as_slice(), 1);
+        let suggest_symbolic = spline.suggest_symbolic(1);
         let (edge, r2) = &suggest_symbolic[0];
         assert_almost_eq!(*r2, 1.0, 1e-1);
         assert!(matches!(edge.kind, EdgeType::Symbolic { .. }));
@@ -1353,7 +1355,7 @@ mod tests {
         )
         .unwrap();
         let inputs = linspace(0., 2., 30);
-        let suggest_symbolic = spline.suggest_symbolic(inputs.as_slice(), 1);
+        let suggest_symbolic = spline.suggest_symbolic(1);
         let (edge, r2) = &suggest_symbolic[0];
         println!("R2: {:?}", r2);
         assert_almost_eq!(*r2, 1.0, 1e-2);
