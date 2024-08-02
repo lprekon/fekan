@@ -9,11 +9,11 @@ use clap::{ArgGroup, Args, Parser, Subcommand};
 use fekan::{
     kan::{Kan, KanOptions, ModelType},
     train_model,
-    training_observer::TrainingObserver,
     training_options::{EachEpoch, TrainingOptions, TrainingOptionsError},
     validate_model, Sample,
 };
 use indicatif::{ProgressBar, ProgressStyle};
+use log::info;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
 
@@ -30,6 +30,9 @@ struct Cli {
     /// the number of threads to use for the model. If not set, the program will use as many threads as available cores. If <= 1, the program will use a single thread
     #[arg(long, global = true)]
     num_threads: Option<usize>,
+
+    #[arg(long, action=clap::ArgAction::Count, global = true)]
+    verbosity: u8,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -252,6 +255,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
         default_threads
     });
+    let log_level = match cli.verbosity {
+        0 => log::Level::Info,
+        1 => log::Level::Debug,
+        _ => log::Level::Trace,
+    };
     match cli.command {
         WhereCommands::Build(build_args) => match build_args.model_type {
             CliModelType::Classifier(classifier_args) => {
@@ -267,8 +275,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                     train_args.validation_split,
                     &classifier_args.classes,
                 )?;
+                let expected_ticks = train_args.num_epochs as u64
+                    + match &train_args.knot_extension_times {
+                        Some(times) => times.len() as u64,
+                        None => 0,
+                    }
+                    + match &train_args.validate_each_epoch {
+                        true => 0,
+                        false => 1,
+                    };
                 let progress_observer =
-                    TrainingProgress::new(train_args.num_epochs as u64, cli.log_output);
+                    TrainingProgress::new(expected_ticks, cli.log_output, log_level);
 
                 // build our list of layer sizes, which should equal all the hidden layers specified by the user, plus the output layer
                 // `layers` only needs to be mutable while we build it, then should be immutable after that. Using a closure to build it accomplishes this nicely
@@ -295,27 +312,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                     train_args.build_training_options(num_threads, &validation_data)?;
 
                 // run the training loop on the model
-                let mut trained_model = train_model(
-                    untrained_model,
-                    &training_data,
-                    &progress_observer,
-                    training_options,
-                )?;
+                let mut trained_model =
+                    train_model(untrained_model, &training_data, training_options)?;
                 if !train_args.validate_each_epoch {
                     // we didn't validate each epoch, so we need to validate the model now
                     let validation_loss = validate_model(&validation_data, &mut trained_model);
-                    progress_observer.into_inner().println(format!(
-                        "{} Final validation Loss: {}",
-                        chrono::Local::now(),
-                        validation_loss
-                    ));
-                } else {
-                    progress_observer
-                        .into_inner()
-                        .finish_with_message("Training complete");
+                    info!("Final validation Loss: {}", validation_loss);
                 }
+
+                progress_observer
+                    .into_inner()
+                    .finish_with_message("Training complete");
                 // save the model to a file
                 if let Some(output_path) = train_args.model_output_file {
+                    info!("Saving model to file: {:?}", output_path);
                     serialize_model(&output_path, &trained_model)?;
                 }
                 Ok(())
@@ -331,8 +341,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let (training_data, validation_data) =
                     load_regression_data(&train_args.data_file, train_args.validation_split)?;
 
+                let expected_ticks = train_args.num_epochs as u64
+                    + match &train_args.knot_extension_times {
+                        Some(times) => times.len() as u64,
+                        None => 0,
+                    }
+                    + match &train_args.validate_each_epoch {
+                        true => 0,
+                        false => 1,
+                    };
                 let progress_observer =
-                    TrainingProgress::new(train_args.num_epochs as u64, cli.log_output);
+                    TrainingProgress::new(expected_ticks, cli.log_output, log_level);
 
                 // build our list of layer sizes, which should equal all the hidden layers specified by the user, plus the output layer
                 let layers = {
@@ -358,29 +377,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                     train_args.build_training_options(num_threads, &validation_data)?;
 
                 // run the training loop on the model
-                let mut trained_model = train_model(
-                    untrained_model,
-                    &training_data,
-                    &progress_observer,
-                    training_options,
-                )?;
+                let mut trained_model =
+                    train_model(untrained_model, &training_data, training_options)?;
 
                 if !train_args.validate_each_epoch {
                     // we didn't validate each epoch, so we need to validate the model now
                     let validation_loss = validate_model(&validation_data, &mut trained_model);
-                    progress_observer.into_inner().println(format!(
-                        "{} Final validation Loss: {}",
-                        chrono::Local::now(),
-                        validation_loss
-                    ));
-                } else {
-                    progress_observer
-                        .into_inner()
-                        .finish_with_message("Training complete");
+                    info!("Final validation Loss: {}", validation_loss);
                 }
 
-                if let Some(model_output_file) = &train_args.model_output_file {
-                    serialize_model(model_output_file, &trained_model)?;
+                progress_observer
+                    .into_inner()
+                    .finish_with_message("Training complete");
+                // save the model to a file
+                if let Some(output_path) = train_args.model_output_file {
+                    info!("Saving model to file: {:?}", output_path);
+                    serialize_model(&output_path, &trained_model)?;
                 }
                 Ok(())
             }
@@ -409,32 +421,34 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                     // if the user wants the model validated each epoch, pass the validation data to the training function and included the counts in the training observer.
 
+                    let expected_ticks = train_args.num_epochs as u64
+                        + match &train_args.knot_extension_times {
+                            Some(times) => times.len() as u64,
+                            None => 0,
+                        }
+                        + match &train_args.validate_each_epoch {
+                            true => 0,
+                            false => 1,
+                        };
                     let progress_observer =
-                        TrainingProgress::new(train_args.num_epochs as u64, cli.log_output);
+                        TrainingProgress::new(expected_ticks, cli.log_output, log_level);
 
                     // run the training loop on the model
-                    let mut trained_model = train_model(
-                        loaded_model,
-                        &training_data,
-                        &progress_observer,
-                        training_options,
-                    )?;
+                    let mut trained_model =
+                        train_model(loaded_model, &training_data, training_options)?;
                     if !train_args.validate_each_epoch {
                         // we didn't validate each epoch, so we need to validate the model now
                         let validation_loss = validate_model(&validation_data, &mut trained_model);
-                        progress_observer.into_inner().println(format!(
-                            "{} Final validation Loss: {}",
-                            chrono::Local::now(),
-                            validation_loss
-                        ));
-                    } else {
-                        progress_observer
-                            .into_inner()
-                            .finish_with_message("Training complete");
+                        info!("Final validation Loss: {}", validation_loss);
                     }
+
+                    progress_observer
+                        .into_inner()
+                        .finish_with_message("Training complete");
                     // save the model to a file
-                    if let Some(model_output_file) = &train_args.model_output_file {
-                        serialize_model(model_output_file, &trained_model)?;
+                    if let Some(output_path) = train_args.model_output_file {
+                        info!("Saving model to file: {:?}", output_path);
+                        serialize_model(&output_path, &trained_model)?;
                     }
                     Ok(())
                 }
@@ -517,13 +531,15 @@ fn deserialize_model(model_input_file: &PathBuf) -> Result<Kan, Box<dyn Error>> 
     Ok(model)
 }
 
+#[derive(Clone)]
 struct TrainingProgress {
     pb: ProgressBar,
+    log_level: log::Level,
     should_log: bool,
 }
 
 impl TrainingProgress {
-    fn new(total: u64, should_log: bool) -> Self {
+    fn new(total: u64, should_log: bool, log_level: log::Level) -> Self {
         let pb = ProgressBar::new(total);
         pb.set_style(
             ProgressStyle::default_bar()
@@ -533,7 +549,14 @@ impl TrainingProgress {
                 .unwrap(),
         );
         pb.enable_steady_tick(Duration::from_millis(100));
-        TrainingProgress { pb, should_log }
+        let this = TrainingProgress {
+            pb,
+            log_level,
+            should_log,
+        };
+        log::set_boxed_logger(Box::new(this.clone())).unwrap(); // progress bar's internals are already Arc<Mutex<...>>, so we should be able to clone around no problem?
+        log::set_max_level(log::LevelFilter::Trace);
+        this
     }
 
     fn into_inner(self) -> ProgressBar {
@@ -541,43 +564,28 @@ impl TrainingProgress {
     }
 }
 
-impl TrainingObserver for TrainingProgress {
-    fn on_epoch_end(&self, epoch: usize, epoch_loss: f64, validation_loss: f64) {
-        self.pb.println(format!(
-            "{} Epoch {}: Training Loss: {}, Validation Loss: {}",
-            chrono::Local::now(),
-            epoch,
-            epoch_loss,
-            validation_loss
-        ));
-        if self.should_log {
-            println!(
-                "{} Epoch {}: Training Loss: {}, Validation Loss: {}",
-                chrono::Local::now(),
-                epoch,
-                epoch_loss,
-                validation_loss
-            );
-        }
-        self.pb.inc(1);
+impl log::Log for TrainingProgress {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= self.log_level
     }
 
-    fn on_knot_extension(&self, old_length: usize, new_length: usize) {
-        self.pb.println(format!(
-            "{} Extending knot vectors from {} to {}",
-            chrono::Local::now(),
-            old_length,
-            new_length
-        ));
-        if self.should_log {
-            println!(
-                "{} Extending knot vectors from {} to {}",
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            if record.level() == log::Level::Info {
+                self.pb.inc(1);
+            }
+            self.pb.println(format!(
+                "{} {}",
                 chrono::Local::now(),
-                old_length,
-                new_length
-            );
+                record.args().to_string()
+            ));
+            if self.should_log {
+                println!("{} {}", chrono::Local::now(), record.args());
+            }
         }
     }
+
+    fn flush(&self) {}
 }
 
 #[derive(Deserialize, Debug)]

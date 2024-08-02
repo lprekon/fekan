@@ -15,7 +15,7 @@ chrono = "0.4.38"
 ciborium = { version = "0.2.2", optional = true }
 clap = { version = "4.5.6", features = ["derive"] }
 indicatif = "0.17.8"
-log = "0.4.22"
+log = { version = "0.4.22", features = ["std"] }
 nalgebra = "0.33.0"
 rand = "0.8.5"
 rustc-hash = "2.0.0"
@@ -32,6 +32,7 @@ debug = true
 [dev-dependencies]
 ciborium = "0.2.2"
 tempfile = "3.10.1"
+test-log = "0.2.16"
 
 [features]
 serialization = ["serde_json", "serde-pickle", "apache-avro", "ciborium"]

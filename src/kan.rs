@@ -1,6 +1,7 @@
 pub mod kan_error;
 
 use kan_error::KanError;
+use log::{debug, trace};
 
 use crate::kan_layer::{KanLayer, KanLayerOptions};
 
@@ -551,12 +552,12 @@ impl Kan {
         Ok(())
     }
 
-    pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) -> Vec<Vec<(usize, String)>> {
-        let mut changes = Vec::new();
-        for layer in self.layers.iter_mut() {
-            changes.push(layer.test_and_set_symbolic(r2_threshold));
+    pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) {
+        debug!("Testing and setting symbolic for the model");
+        for i in 0..self.layers.len() {
+            trace!("Testing and setting symbolic for layer {}", i);
+            self.layers[i].test_and_set_symbolic(r2_threshold)
         }
-        changes
     }
 }
 

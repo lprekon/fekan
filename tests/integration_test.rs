@@ -1,7 +1,6 @@
 use fekan::{
     kan::{Kan, KanOptions, ModelType},
     preset_knot_ranges, train_model,
-    training_observer::TrainingObserver,
     training_options::TrainingOptions,
     validate_model, Sample,
 };
@@ -9,8 +8,8 @@ use fekan::{
 use rand::{thread_rng, Rng};
 
 mod classification {
-
     use super::*;
+    use test_log::test;
     /// Build a model and train it on the function f(x, y, z) = x + y + z > 0. Tests that the trained validation loss is less than the untrained validation loss
     #[test]
     fn classifier_sum_greater_than_zero() {
@@ -49,7 +48,6 @@ mod classification {
         let mut trained_model = train_model(
             untrained_model,
             &training_data,
-            &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 100,
                 num_threads: 8,
@@ -68,24 +66,19 @@ mod classification {
         for i in 0..100 {
             let _ = trained_model.forward(training_data[i].features().clone());
         }
-        let symbolic_results: Vec<Vec<(usize, String)>> = trained_model.test_and_set_symbolic(0.98);
+        trained_model.test_and_set_symbolic(0.98);
         let symbolic_loss = validate_model(&validation_data, &mut trained_model);
         assert!(
             symbolic_loss <= validation_loss,
-            "Symbolification did not improve loss. Before {}, After {}. Symbolification: {:#?}",
+            "Symbolification did not improve loss. Before {}, After {}. ",
             validation_loss,
             symbolic_loss,
-            symbolic_results
         );
-        println!(
-            "Symbolification results: Before {}, After {}. Symbolification: {:#?}",
-            validation_loss, symbolic_loss, symbolic_results
-        );
-        assert!(false);
     }
 }
 mod regression {
     use super::*;
+    use test_log::test;
     /// build a model and train it on the function f(x, y) = xy
     #[test]
     fn regressor_xy() {
@@ -116,7 +109,6 @@ mod regression {
         let training_result = train_model(
             untrained_model,
             &training_data,
-            &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 50,
                 num_threads: 8,
@@ -139,14 +131,13 @@ mod regression {
         for i in 0..100 {
             let _ = trained_model.forward(training_data[i].features().clone());
         }
-        let symbolic_results: Vec<Vec<(usize, String)>> = trained_model.test_and_set_symbolic(0.95);
+        trained_model.test_and_set_symbolic(0.95);
         let symbolic_loss = validate_model(&validation_data, &mut trained_model);
         assert!(
             symbolic_loss <= validation_loss,
-            "Symbolification did not improve loss. Before {}, After {}. Symbolification: {:#?}",
+            "Symbolification did not improve loss. Before {}, After {}.",
             validation_loss,
             symbolic_loss,
-            symbolic_results
         );
     }
 
@@ -183,7 +174,6 @@ mod regression {
         let mut trained_model = train_model(
             untrained_model,
             &training_data,
-            &TestObserver::new(),
             TrainingOptions {
                 num_epochs: 50,
                 num_threads: 8,
@@ -203,40 +193,13 @@ mod regression {
         for i in 0..100 {
             let _ = trained_model.forward(training_data[i].features().clone());
         }
-        let symbolic_results: Vec<Vec<(usize, String)>> = trained_model.test_and_set_symbolic(0.95);
+        trained_model.test_and_set_symbolic(0.95);
         let symbolic_loss = validate_model(&validation_data, &mut trained_model);
         assert!(
             symbolic_loss <= validation_loss,
-            "Symbolification did not improve loss. Before {}, After {}. Symbolification: {:#?}",
+            "Symbolification did not improve loss. Before {}, After {}",
             validation_loss,
             symbolic_loss,
-            symbolic_results
         );
-
-        println!(
-            "Symbolification results: Before {}, After {}. Symbolification: {:#?}",
-            validation_loss, symbolic_loss, symbolic_results
-        );
-        assert!(false);
-    }
-}
-struct TestObserver {}
-
-impl TestObserver {
-    pub fn new() -> Self {
-        TestObserver {}
-    }
-}
-
-impl TrainingObserver for TestObserver {
-    fn on_epoch_end(&self, epoch: usize, epoch_loss: f64, validation_loss: f64) {
-        println!(
-            "Epoch: {}, Epoch Loss: {}, Validation Loss: {}",
-            epoch, epoch_loss, validation_loss
-        );
-    }
-
-    fn on_knot_extension(&self, old_length: usize, new_length: usize) {
-        println!("Knots extended from {} to {}", old_length, new_length);
     }
 }

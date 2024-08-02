@@ -18,9 +18,13 @@ python3 generate_feynman_I-9-18_data.py 1000 > "$DATA_FILE"
 
 
 cargo run --features serialization -- build regressor --data "$DATA_FILE" \
-   --learning-rate 0.001 \
+   --learning-rate 0.01 \
    --no-save \
-   --hidden-layer-sizes "6,4,1"
+   --coefs 10 \
+   --hidden-layer-sizes "6,4,1" \
+   --knot-extension-targets "20" \
+   --validate-each-epoch \
+   --knot-extension-times "30"
 
 
 

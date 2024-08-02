@@ -63,19 +63,17 @@ pub mod kan;
 pub mod kan_layer;
 /// Contains the struct [`TrainingError`] representing an error encountered during training.
 pub mod training_error;
-/// Provides a trait for observing the training process during [`crate::train_model`].
-pub mod training_observer;
 /// Options for training a model with [`crate::train_model`].
 pub mod training_options;
 
 use std::thread;
 
 use kan::{Kan, ModelType};
+use log::info;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use shuffle::{fy, shuffler::Shuffler};
 use training_error::TrainingError;
-use training_observer::TrainingObserver;
 use training_options::{EachEpoch, TrainingOptions};
 
 /// A sample of data to be used in training a model.
@@ -179,10 +177,9 @@ impl Sample {
 ///
 // TODO implement training multi-variate regression models. I'll need to calculate the loss w.r.t each output node and run backward on each,
 // then call update after all those gradients have been accumulated
-pub fn train_model<T: TrainingObserver>(
+pub fn train_model(
     mut model: Kan,
     training_data: &[Sample],
-    training_observer: &T,
     options: TrainingOptions,
 ) -> Result<Kan, TrainingError> {
     // TRAINING
@@ -333,14 +330,17 @@ pub fn train_model<T: TrainingObserver>(
                 }
             }
         } // end single-thread-specific code
-        let validation_loss = match options.each_epoch {
+        match options.each_epoch {
             EachEpoch::ValidateModel(validation_data) => {
-                validate_model(validation_data, &mut model)
+                let validation_lostt = validate_model(validation_data, &mut model);
+                info!(
+                    "Epoch: {}, Epoch Loss: {}, Validation Loss: {}",
+                    epoch, epoch_loss, validation_lostt
+                );
             }
-            EachEpoch::DoNotValidateModel => f64::NAN,
+            EachEpoch::DoNotValidateModel => info!("Epoch: {}, Epoch Loss: {}", epoch, epoch_loss),
         };
         // notify the observer that the epoch has ended
-        training_observer.on_epoch_end(epoch, epoch_loss, validation_loss);
 
         // update the knots if necessary
         if knot_extensions_completed < knot_extension_targets.len()
@@ -359,7 +359,7 @@ pub fn train_model<T: TrainingObserver>(
                     epoch,
                     sample: samples_seen,
                 })?;
-            training_observer.on_knot_extension(old_length, target_length);
+            info!("Knot extension: {} -> {}", old_length, target_length);
             knot_extensions_completed += 1;
         }
     }
@@ -464,27 +464,6 @@ fn calculate_huber_loss_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
             HUBER_DELTA * (diff.abs() - 0.5 * HUBER_DELTA),
             HUBER_DELTA * diff.signum(),
         )
-    }
-}
-
-// EmptyObserver is basically a singleton, so there's no point in implementing any other common traits
-/// An observer that does nothing when called.
-/// Used for ignoring training events in the [train_model] function.
-#[derive(Default)]
-pub struct EmptyObserver {}
-impl EmptyObserver {
-    /// Create a new instance of the EmptyObserver
-    pub fn new() -> Self {
-        EmptyObserver {}
-    }
-}
-impl TrainingObserver for EmptyObserver {
-    fn on_epoch_end(&self, _epoch: usize, _epoch_loss: f64, _validation_loss: f64) {
-        // do nothing
-    }
-
-    fn on_knot_extension(&self, _old_length: usize, _new_length: usize) {
-        // do nothing
     }
 }
 

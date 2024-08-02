@@ -12,6 +12,7 @@
 //! "brute force" it with a single massive Edge type that matches on a mode flag every method. At least this way, I get serialization and thread safety for free, and all the case-consciouness is in one place
 //! (besides maybe the aforementioned code that suggests and clamps-to symbolic edges, but that's rather unavoidable, as I said)
 
+use log::trace;
 use nalgebra::{DMatrix, DVector, SVD};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -471,8 +472,8 @@ impl Edge {
     // copying pykan for now. TODO: think more about this
     const PARAM_MIN: f64 = -10.0;
     const PARAM_MAX: f64 = 10.0;
-    const PARAM_STEPS: usize = 101;
-    const PARAM_ITERATIONS: usize = 4;
+    const PARAM_STEPS: usize = 21;
+    const PARAM_ITERATIONS: usize = 5;
 
     // Find symbolic functions that best fit the spline over the given input data. Return the `num_suggestions` best fits, along with their coefficients of determination (R^2)
     // IMPORTANT NOTE: despite my wishes, this function does an unreliable job at suggesting constant functions. I'm not going to make constant function a class, because I'm just going to add a bias node at some point
@@ -480,125 +481,201 @@ impl Edge {
         if let EdgeType::Symbolic { .. } = &self.kind {
             return vec![];
         }
+        trace!("suggesting symbolic functions for spline {}", self);
         let (degree, knots) = match &self.kind {
             EdgeType::Spline { degree, knots, .. } => (degree, knots),
             _ => unreachable!(),
         };
         let inputs = linspace(knots[*degree], knots[knots.len() - degree - 1], 100);
         let expected_outputs: Vec<f64> = inputs.iter().map(|t| self.infer(*t)).collect();
-        // println!("x = {:?}", inputs);
-        // println!("y = {:?}", expected_outputs);
+        trace!("inputs: {:?}", inputs);
+        trace!("expected_outputs: {:?}", expected_outputs);
         let mut best_functions: Vec<(Edge, f64)> = vec![];
         // iterate over all possible symbolic functions
         for edge_type in SymbolicFunction::iter() {
             // create a default symbolic edge of the current type, which will be used to store the best edge of the current type (storing the a and b values for us)
-            let mut best_edge_of_the_type = Edge {
-                kind: EdgeType::Symbolic {
-                    a: 1.0,
-                    b: 0.0,
-                    c: 1.0,
-                    d: 0.0,
-                    function: edge_type,
-                },
-                last_t: None,
-            };
-            let (mut a_min, mut a_max) = (Self::PARAM_MIN, Self::PARAM_MAX);
-            let (mut b_min, mut b_max) = (Self::PARAM_MIN, Self::PARAM_MAX);
-            for _ in 0..Self::PARAM_ITERATIONS {
-                let mut best_edge_for_the_iteration = best_edge_of_the_type.clone(); // arbitrary initial value
-                let mut best_r2_for_the_iteration = f64::NEG_INFINITY;
-                let a_range = linspace(a_min, a_max, Self::PARAM_STEPS);
-                let b_range = linspace(b_min, b_max, Self::PARAM_STEPS);
-                let mut best_a_index = 0;
-                let mut best_b_index = 0;
-                // find the best combination of a and b in the current range
-                for i in (0..Self::PARAM_STEPS).rev() {
-                    for j in 0..Self::PARAM_STEPS {
-                        let test_edge = Edge {
-                            kind: EdgeType::Symbolic {
-                                a: a_range[i],
-                                b: b_range[j],
-                                c: 1.0,
-                                d: 0.0,
-                                function: edge_type,
-                            },
-                            last_t: None,
-                        };
-                        let test_outputs: Vec<f64> =
-                            inputs.iter().map(|t| test_edge.infer(*t)).collect();
-
-                        let r2 = calculate_coef_of_determination(&expected_outputs, &test_outputs);
-                        if r2 > best_r2_for_the_iteration {
-                            best_r2_for_the_iteration = r2;
-                            best_edge_for_the_iteration = test_edge;
-                            best_a_index = i;
-                            best_b_index = j;
+            trace!("trying symbolic function {:?}", edge_type);
+            match edge_type {
+                SymbolicFunction::Linear => {
+                    let x_matrix = DMatrix::from_fn(inputs.len(), 2, |i, j| {
+                        // add a constant column so we can calculate the intercept aka b
+                        if j == 0 {
+                            inputs[i]
+                        } else {
+                            1.0
                         }
-                    }
+                    });
+                    let y_matrix = DVector::from_vec(expected_outputs.to_vec());
+                    let xtx = x_matrix.tr_mul(&x_matrix);
+                    let xty = x_matrix.tr_mul(&y_matrix);
+                    let svd = SVD::new(xtx, true, true);
+                    let solution = svd.solve(&xty, 1e-6).expect("SVD solve failed");
+                    let best_linear_edge = Edge {
+                        kind: EdgeType::Symbolic {
+                            a: solution[0],
+                            b: solution[1],
+                            c: 1.0,
+                            d: 0.0,
+                            function: edge_type,
+                        },
+                        last_t: None,
+                    };
+                    let function_outputs: Vec<f64> =
+                        inputs.iter().map(|t| best_linear_edge.infer(*t)).collect();
+                    let r2 = calculate_coef_of_determination(&expected_outputs, &function_outputs);
+                    best_functions.push((best_linear_edge, r2));
                 }
-                best_edge_of_the_type = best_edge_for_the_iteration;
-                // calculate the new ranges for a and b before the next iteration
-                a_min = match best_a_index {
-                    0 => a_range[0] - (a_range[1] - a_range[0]),
-                    _ => a_range[best_a_index - 1],
-                };
-                let last_idx = Self::PARAM_STEPS - 1;
-                a_max = if best_a_index == last_idx {
-                    a_range[last_idx] + (a_range[last_idx] as f64 - a_range[last_idx - 1] as f64)
-                } else {
-                    a_range[best_a_index + 1]
-                };
-                b_min = match best_b_index {
-                    0 => b_range[0] as f64 - (b_range[1] as f64 - b_range[0] as f64),
-                    _ => b_range[best_b_index - 1],
-                };
-                b_max = if best_b_index == last_idx {
-                    b_range[last_idx] + (b_range[last_idx] as f64 - b_range[last_idx - 1] as f64)
-                } else {
-                    b_range[best_b_index + 1]
-                };
+                _ => {
+                    let best_edge_of_the_type = Self::parameter_search(
+                        edge_type,
+                        (Self::PARAM_MIN, Self::PARAM_MAX),
+                        (Self::PARAM_MIN, Self::PARAM_MAX),
+                        Self::PARAM_STEPS,
+                        Self::PARAM_ITERATIONS,
+                        &inputs,
+                        &expected_outputs,
+                    );
+                    let function_outputs: Vec<f64> = inputs
+                        .iter()
+                        .map(|t| best_edge_of_the_type.infer(*t))
+                        .collect();
+                    let r2 = calculate_coef_of_determination(&expected_outputs, &function_outputs);
+                    best_functions.push((best_edge_of_the_type, r2));
+                }
             }
-            // we've done an iterative search to find the best a and b for the current symbolic function. Now we fit the best c and d using least squares regression
-            // best_edge_of_the_type has caputred the best a and b values, so we can use it to calculate the best c and d values
-            let x_matrix = DMatrix::from_fn(inputs.len(), 2, |i, j| {
-                // add a constant column so we can calculate the intercept aka d
-                if j == 0 {
-                    best_edge_of_the_type.infer(inputs[i])
-                } else {
-                    1.0
-                }
-            });
-            let y_matrix = DVector::from_vec(expected_outputs.clone());
-            let xtx = x_matrix.tr_mul(&x_matrix);
-            let xty = x_matrix.tr_mul(&y_matrix);
-            let svd = SVD::new(xtx, true, true);
-            let solution = svd.solve(&xty, 1e-6).expect("SVD solve failed");
-            let best_c = solution[0];
-            let best_d = solution[1];
-            best_edge_of_the_type = match best_edge_of_the_type.kind {
-                EdgeType::Symbolic { a, b, function, .. } => Edge {
-                    kind: EdgeType::Symbolic {
-                        a,
-                        b,
-                        c: best_c,
-                        d: best_d,
-                        function,
-                    },
-                    last_t: None,
-                },
-                _ => unreachable!(),
-            };
-            let test_outputs: Vec<f64> = inputs
-                .iter()
-                .map(|t| best_edge_of_the_type.infer(*t))
-                .collect();
-            let r2 = calculate_coef_of_determination(&expected_outputs, &test_outputs);
-            best_functions.push((best_edge_of_the_type, r2));
         }
 
         best_functions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         let max_suggestions = best_functions.len().min(num_suggestions);
-        return best_functions[0..max_suggestions].to_vec();
+        let suggestions = best_functions[0..max_suggestions].to_vec();
+        trace!("suggestions: {:?}", suggestions);
+        return suggestions;
+    }
+
+    fn parameter_search(
+        kind: SymbolicFunction,
+        a_range: (f64, f64),
+        b_range: (f64, f64),
+        step_count: usize,
+        iterations: usize,
+        inputs: &[f64],
+        expected_outputs: &[f64],
+    ) -> Edge {
+        trace!(
+            "searching for best parameters for symbolic function {:?}",
+            kind
+        );
+        let mut best_edge = Edge {
+            kind: EdgeType::Symbolic {
+                a: 0.0,
+                b: 0.0,
+                c: 0.0,
+                d: 0.0,
+                function: kind,
+            },
+            last_t: None,
+        }; // arbitrary initial value
+        let mut a_min = a_range.0;
+        let mut a_max = a_range.1;
+        let mut b_min = b_range.0;
+        let mut b_max = b_range.1;
+        for it in 1..=iterations {
+            let mut iteration_best_r2 = f64::NEG_INFINITY;
+            let mut iteration_best_a_idx = 0;
+            let mut iteration_best_b_idx = 0;
+
+            let a_values = linspace(a_min, a_max, step_count);
+            let b_values = linspace(b_min, b_max, step_count);
+
+            for i in (0..step_count).rev() {
+                // go in reverse to favor positive values of a in functions where positive and negative values are equivalent (e.g x^2)
+                for j in (0..step_count).rev() {
+                    let function_under_test = Edge {
+                        kind: EdgeType::Symbolic {
+                            a: a_values[i],
+                            b: b_values[j],
+                            c: 1.0,
+                            d: 0.0,
+                            function: kind,
+                        },
+                        last_t: None,
+                    };
+                    let function_outputs: Vec<f64> = inputs
+                        .iter()
+                        .map(|t| function_under_test.infer(*t))
+                        .collect();
+                    let r2 = calculate_coef_of_determination(expected_outputs, &function_outputs);
+                    if r2 > iteration_best_r2 {
+                        iteration_best_r2 = r2;
+                        iteration_best_a_idx = i;
+                        iteration_best_b_idx = j;
+                        best_edge = function_under_test;
+                    }
+                }
+            }
+            trace!(
+                "iteration {} a_values: [{}, {}, ... {}] b_values: [{}, {}, ..., {}]\nbest function: {} with r2: {}",
+                it,
+                a_min,
+                a_values[1],
+                a_max,
+                b_min,
+                b_values[1],
+                b_max,
+                best_edge,
+                iteration_best_r2
+            );
+            // prepare for next iteration
+            let last_val = step_count - 1;
+            a_min = match iteration_best_a_idx {
+                0 => a_values[0] - (a_values[1] - a_values[0]),
+                _ => a_values[iteration_best_a_idx - 1],
+            };
+            a_max = if iteration_best_a_idx == last_val {
+                a_values[step_count - 1] + (a_values[step_count - 1] - a_values[step_count - 2])
+            } else {
+                a_values[iteration_best_a_idx + 1]
+            };
+
+            b_min = match iteration_best_b_idx {
+                0 => b_values[0] - (b_values[1] - b_values[0]),
+                _ => b_values[iteration_best_b_idx - 1],
+            };
+            b_max = if iteration_best_b_idx == last_val {
+                b_values[step_count - 1] + (b_values[step_count - 1] - b_values[step_count - 2])
+            } else {
+                b_values[iteration_best_b_idx + 1]
+            };
+        }
+        // now use linear regression to find the best c and d values
+        let x_matrix = DMatrix::from_fn(inputs.len(), 2, |i, j| {
+            // add a constant column so we can calculate the intercept aka d
+            if j == 0 {
+                best_edge.infer(inputs[i])
+            } else {
+                1.0
+            }
+        });
+        let y_matrix = DVector::from_vec(expected_outputs.to_vec());
+        let xtx = x_matrix.tr_mul(&x_matrix);
+        let xty = x_matrix.tr_mul(&y_matrix);
+        let svd = SVD::new(xtx, true, true);
+        let solution = svd.solve(&xty, 1e-6).expect("SVD solve failed");
+        let best_c = solution[0];
+        let best_d = solution[1];
+        let (best_a, best_b) = match best_edge.kind {
+            EdgeType::Symbolic { a, b, .. } => (a, b),
+            _ => unreachable!(),
+        };
+        best_edge.kind = EdgeType::Symbolic {
+            a: best_a,
+            b: best_b,
+            c: best_c,
+            d: best_d,
+            function: kind,
+        };
+
+        best_edge
     }
 
     /// return the number of control points and knots in the spline
@@ -849,30 +926,70 @@ impl std::fmt::Display for Edge {
                 c,
                 d,
                 function,
-            } => match function {
-                SymbolicFunction::Linear => write!(f, "{} * ( {} * x + {}) + {}", c, a, b, d),
-                SymbolicFunction::Quadratic => write!(f, "{} * ({} * x + {})^2 + {}", c, a, b, d),
-                SymbolicFunction::Cubic => write!(f, "{} * ({} * x + {})^3 + {}", c, a, b, d),
-                SymbolicFunction::Quartic => write!(f, "{} * ({} * x + {})^4 + {}", c, a, b, d),
-                SymbolicFunction::Quintic => write!(f, "{} * ({} * x + {})^5 + {}", c, a, b, d),
-                SymbolicFunction::SquareRoot => {
-                    write!(f, "{} * sqrt({} * x + {}) + {}", c, a, b, d)
+            } => {
+                let type_string = format!("{:?}", function);
+                match function {
+                    SymbolicFunction::Linear => {
+                        write!(f, "{}: {} * ( {} * x + {}) + {}", type_string, c, a, b, d)
+                    }
+                    SymbolicFunction::Quadratic => {
+                        write!(f, "{}: {} * ({} * x + {})^2 + {}", type_string, c, a, b, d)
+                    }
+                    SymbolicFunction::Cubic => {
+                        write!(f, "{}: {} * ({} * x + {})^3 + {}", type_string, c, a, b, d)
+                    }
+                    SymbolicFunction::Quartic => {
+                        write!(f, "{}: {} * ({} * x + {})^4 + {}", type_string, c, a, b, d)
+                    }
+                    SymbolicFunction::Quintic => {
+                        write!(f, "{}: {} * ({} * x + {})^5 + {}", type_string, c, a, b, d)
+                    }
+                    SymbolicFunction::SquareRoot => {
+                        write!(
+                            f,
+                            "{}: {} * sqrt({} * x + {}) + {}",
+                            type_string, c, a, b, d
+                        )
+                    }
+                    SymbolicFunction::CubeRoot => {
+                        write!(
+                            f,
+                            "{}: {} * cbrt({} * x + {}) + {}",
+                            type_string, c, a, b, d
+                        )
+                    }
+                    SymbolicFunction::FourthRoot => {
+                        write!(
+                            f,
+                            "{}: {} * ({} * x + {})^(1/4)) + {}",
+                            type_string, c, a, b, d
+                        )
+                    }
+                    SymbolicFunction::FifthRoot => {
+                        write!(
+                            f,
+                            "{}: {} * ({} * x + {})^(1/5) + {}",
+                            type_string, c, a, b, d
+                        )
+                    }
+                    SymbolicFunction::Log => {
+                        write!(f, "{}: {} * log({} * x + {}) + {}", type_string, c, a, b, d)
+                    }
+
+                    SymbolicFunction::Exp => {
+                        write!(f, "{}: {} * e^({} * x + {}) + {}", type_string, c, a, b, d)
+                    }
+                    SymbolicFunction::Sin => {
+                        write!(f, "{}: {} * sin({} * x + {}) + {}", type_string, c, a, b, d)
+                    }
+                    SymbolicFunction::Tan => {
+                        write!(f, "{}: {} * tan({} * x + {}) + {}", type_string, c, a, b, d)
+                    }
+                    SymbolicFunction::Inverse => {
+                        write!(f, "{}: {} / ({} * x + {}) + {}", type_string, c, a, b, d)
+                    }
                 }
-                SymbolicFunction::CubeRoot => {
-                    write!(f, "{} * ({} * x + {})^(1/3)+ {}", c, a, b, d)
-                }
-                SymbolicFunction::FourthRoot => {
-                    write!(f, "{} * ({} * x + {})^(1/4)+ {}", c, a, b, d)
-                }
-                SymbolicFunction::FifthRoot => {
-                    write!(f, "{} * ({} * x + {})^(1/5)+ {}", c, a, b, d)
-                }
-                SymbolicFunction::Log => write!(f, "{} * log({} * x + {}) + {}", c, a, b, d),
-                SymbolicFunction::Exp => write!(f, "{} * exp({} * x + {}) + {}", c, a, b, d),
-                SymbolicFunction::Sin => write!(f, "{} * sin({} * x + {}) + {}", c, a, b, d),
-                SymbolicFunction::Tan => write!(f, "{} * tan({} * x + {}) + {}", c, a, b, d),
-                SymbolicFunction::Inverse => write!(f, "{} / ({} * x + {}) + {}", c, a, b, d),
-            },
+            }
         }
     }
 }
@@ -881,6 +998,7 @@ impl std::fmt::Display for Edge {
 mod tests {
 
     use statrs::assert_almost_eq;
+    use test_log::test;
 
     use super::*;
 
@@ -1281,7 +1399,6 @@ mod tests {
     #[test]
     fn test_suggest_symbolic_y_equals_x() {
         let spline = Edge::new(3, linspace(1.0, 5.0, 5), linspace(-0.9, 6.3, 9)).unwrap();
-        let inputs = linspace(0.1, 2.0, 10);
         let suggest_symbolic = spline.suggest_symbolic(1);
         let (edge, r2) = &suggest_symbolic[0];
         assert_almost_eq!(*r2, 1.0, 1e-1);
@@ -1296,7 +1413,7 @@ mod tests {
             _ => unreachable!(),
         };
         println!("{:?}", (a, b, c, d));
-        assert_almost_eq!(a * c, 1.0, 1e-1);
+        assert_almost_eq!(a * c, 1.0, 2e-1);
         assert_almost_eq!(b + d, 0.0, 1e-1);
     }
 
@@ -1357,7 +1474,7 @@ mod tests {
         let inputs = linspace(0., 2., 30);
         let suggest_symbolic = spline.suggest_symbolic(1);
         let (edge, r2) = &suggest_symbolic[0];
-        println!("R2: {:?}", r2);
+        println!("R2: {:?}\n{}", r2, edge);
         assert_almost_eq!(*r2, 1.0, 1e-2);
         let final_outputs = inputs.iter().map(|i| edge.infer(*i)).collect::<Vec<f64>>();
         println!("{:?}", final_outputs);
@@ -1372,7 +1489,7 @@ mod tests {
         //     EdgeType::Symbolic { a, b, c, d, .. } => (*a, *b, *c, *d),
         //     _ => unreachable!(),
         // };
-        // assert_eq!((2.2, -3.0, 1.5, 10.0), params);
+        // assert_eq!((2.2, -3.0, 1.5, 0.0), params);
     }
 
     #[test]
@@ -1389,6 +1506,7 @@ mod tests {
 
     mod symbolic_tests {
         use super::*;
+        use test_log::test;
 
         #[test]
         fn test_symbolic_backward_before_forward() {

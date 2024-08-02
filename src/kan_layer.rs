@@ -4,6 +4,7 @@ pub mod kan_layer_errors;
 
 use edge::{linspace, Edge};
 use kan_layer_errors::KanLayerError;
+use log::{debug, trace};
 use rand::distributions::Distribution;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
@@ -715,30 +716,22 @@ impl KanLayer {
 
     /// does no useful work at the moment - only here for benchmarking
     pub fn bench_suggest_symbolic(&self) {
-        for (idx, spline) in self.splines.iter().enumerate() {
+        for (_idx, spline) in self.splines.iter().enumerate() {
             spline.suggest_symbolic(1);
         }
-    }
-
-    /// take self.samples, where dim0 is the sample idx and dim1 is the input idx, and transpose it so that dim0 is the input idx and dim1 is the sample idx,
-    /// So any given slice `transposed_samples[i]` will be the ith value of all samples
-    fn transpose_samples(&self) -> Vec<Vec<f64>> {
-        let mut transposed_samples: Vec<Vec<f64>> =
-            vec![Vec::with_capacity(self.samples.len()); self.input_dimension];
-        for i in 0..self.samples.len() {
-            for j in 0..self.input_dimension {
-                transposed_samples[j].push(self.samples[i][j]);
-            }
-        }
-        transposed_samples
     }
 
     /// test each spline in the layer for similarity to a symbolic function (e.g x^2, sin(x), etc.). If the R^2 value of the best fit is greater than `r2_threshold`, replace the spline with the symbolic function
     /// # Examples
     ///
-    pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) -> Vec<(usize, String)> {
+    pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) {
+        debug!(
+            "Testing and setting symbolic functions with threshold {}",
+            r2_threshold
+        );
         let mut clamped_edges = Vec::new();
         for i in 0..self.splines.len() {
+            trace!("Testing edge {}", i);
             let mut suggestions = self.splines[i].suggest_symbolic(1);
             let (possible_symbol, r2) = suggestions.remove(0);
             if r2 >= r2_threshold {
@@ -746,7 +739,7 @@ impl KanLayer {
                 clamped_edges.push((i, format!("R2({}) {}", r2, self.splines[i]).to_string()));
             }
         }
-        clamped_edges
+        debug!("Symbolified layer:\n{}", self);
     }
 }
 
@@ -757,6 +750,22 @@ impl PartialEq for KanLayer {
         self.splines == other.splines
             && self.input_dimension == other.input_dimension
             && self.output_dimension == other.output_dimension
+    }
+}
+
+impl std::fmt::Display for KanLayer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let edge_string = self
+            .splines
+            .iter()
+            .map(|e| "- ".to_string() + &e.to_string())
+            .collect::<Vec<String>>()
+            .join("\n");
+        write!(
+            f,
+            "KanLayer: input_dimension: {}, output_dimension: {}, edges:\n {}",
+            self.input_dimension, self.output_dimension, edge_string
+        )
     }
 }
 
