@@ -835,6 +835,46 @@ fn calculate_coef_of_determination(expected: &[f64], actual: &[f64]) -> f64 {
     1.0 - (ss_res / (ss_tot + f64::EPSILON))
 }
 
+impl std::fmt::Display for Edge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.kind {
+            EdgeType::Spline { degree, knots, .. } => {
+                write!(f, "Spline(k: {}, |knots|: {}", degree, knots.len())
+            }
+            EdgeType::Symbolic {
+                a,
+                b,
+                c,
+                d,
+                function,
+            } => match function {
+                SymbolicFunction::Linear => write!(f, "{} * ( {} * x + {}) + {}", c, a, b, d),
+                SymbolicFunction::Quadratic => write!(f, "{} * ({} * x + {})^2 + {}", c, a, b, d),
+                SymbolicFunction::Cubic => write!(f, "{} * ({} * x + {})^3 + {}", c, a, b, d),
+                SymbolicFunction::Quartic => write!(f, "{} * ({} * x + {})^4 + {}", c, a, b, d),
+                SymbolicFunction::Quintic => write!(f, "{} * ({} * x + {})^5 + {}", c, a, b, d),
+                SymbolicFunction::SquareRoot => {
+                    write!(f, "{} * sqrt({} * x + {}) + {}", c, a, b, d)
+                }
+                SymbolicFunction::CubeRoot => {
+                    write!(f, "{} * ({} * x + {})^(1/3)+ {}", c, a, b, d)
+                }
+                SymbolicFunction::FourthRoot => {
+                    write!(f, "{} * ({} * x + {})^(1/4)+ {}", c, a, b, d)
+                }
+                SymbolicFunction::FifthRoot => {
+                    write!(f, "{} * ({} * x + {})^(1/5)+ {}", c, a, b, d)
+                }
+                SymbolicFunction::Log => write!(f, "{} * log({} * x + {}) + {}", c, a, b, d),
+                SymbolicFunction::Exp => write!(f, "{} * exp({} * x + {}) + {}", c, a, b, d),
+                SymbolicFunction::Sin => write!(f, "{} * sin({} * x + {}) + {}", c, a, b, d),
+                SymbolicFunction::Tan => write!(f, "{} * tan({} * x + {}) + {}", c, a, b, d),
+                SymbolicFunction::Inverse => write!(f, "{} / ({} * x + {}) + {}", c, a, b, d),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
