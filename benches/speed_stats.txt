@@ -1,5 +1,5 @@
 
-running 48 tests
+running 52 tests
 test kan::test::test_error_send ... ignored
 test kan::test::test_error_sync ... ignored
 test kan::test::test_forward ... ignored
@@ -10,7 +10,11 @@ test kan::test::test_model_sync ... ignored
 test kan_layer::edge::edge_errors::test::test_spline_error_send ... ignored
 test kan_layer::edge::edge_errors::test::test_spline_error_sync ... ignored
 test kan_layer::edge::tests::backward_after_infer ... ignored
+test kan_layer::edge::tests::symbolic_tests::test_cubic ... ignored
 test kan_layer::edge::tests::symbolic_tests::test_linear ... ignored
+test kan_layer::edge::tests::symbolic_tests::test_quadratic ... ignored
+test kan_layer::edge::tests::symbolic_tests::test_quartic ... ignored
+test kan_layer::edge::tests::symbolic_tests::test_quintic ... ignored
 test kan_layer::edge::tests::symbolic_tests::test_symbolic_backward_before_forward ... ignored
 test kan_layer::edge::tests::test_b_2 ... ignored
 test kan_layer::edge::tests::test_backward_before_forward ... ignored
@@ -30,7 +34,7 @@ test kan_layer::edge::tests::test_set_knot_length_decreasing ... ignored
 test kan_layer::edge::tests::test_set_knot_length_increasing ... ignored
 test kan_layer::edge::tests::test_spline_send ... ignored
 test kan_layer::edge::tests::test_spline_sync ... ignored
-test kan_layer::edge::tests::test_suggest_symbolic_constant_zero ... ignored
+test kan_layer::edge::tests::test_suggest_symbolic_quadratic ... ignored
 test kan_layer::edge::tests::test_suggest_symbolic_y_equals_x ... ignored
 test kan_layer::edge::tests::test_update_knots ... ignored
 test kan_layer::kan_layer_errors::test::test_layer_error_send ... ignored
@@ -49,16 +53,16 @@ test test::test_error_sync ... ignored
 test test::test_nll_loss_and_gradient ... ignored
 test test::test_nll_loss_and_gradient_2 ... ignored
 
-test result: ok. 0 passed; 0 failed; 48 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 52 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 running 6 tests
-test bench_backward                  ... bench:   2,656,654.20 ns/iter (+/- 28,526.60)
-test bench_forward                   ... bench:   2,672,362.40 ns/iter (+/- 35,805.76)
-test bench_set_knot_length           ... bench:         325.98 ns/iter (+/- 8.88)
-test bench_suggest_symbolic          ... bench:      18,809.03 ns/iter (+/- 444.35)
-test bench_update                    ... bench:      72,916.65 ns/iter (+/- 856.97)
-test bench_update_knots_from_samples ... bench:   1,136,470.90 ns/iter (+/- 27,953.34)
+test bench_backward                  ... bench:   1,758,314.60 ns/iter (+/- 7,978.77)
+test bench_forward                   ... bench:   1,537,620.90 ns/iter (+/- 27,370.41)
+test bench_set_knot_length           ... bench:         188.18 ns/iter (+/- 2.13)
+test bench_suggest_symbolic          ... bench:   4,869,925.00 ns/iter (+/- 14,263.34)
+test bench_update                    ... bench:      42,537.08 ns/iter (+/- 151.09)
+test bench_update_knots_from_samples ... bench:     765,014.60 ns/iter (+/- 27,059.29)
 
-test result: ok. 0 passed; 0 failed; 0 ignored; 6 measured; 0 filtered out; finished in 41.06s
+test result: ok. 0 passed; 0 failed; 0 ignored; 6 measured; 0 filtered out; finished in 36.53s
 

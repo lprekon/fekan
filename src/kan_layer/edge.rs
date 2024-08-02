@@ -65,6 +65,23 @@ enum SymbolicFunction {
     Cubic,
     Quartic,
     Quintic,
+    SquareRoot,
+    CubeRoot,
+    FourthRoot,
+    FifthRoot,
+    // CubeSqrt,
+    Sin,
+    Tan,
+    Log,
+    Exp,
+    Inverse,
+    // InverseSquared,
+    // InverseCubed,
+    // InverseQuartic,
+    // InverseQuintic,
+    // InverseSqrt,
+    // InverseCbrt,
+    // InverseCubeSqrt,
 }
 
 impl Edge {
@@ -153,6 +170,15 @@ impl Edge {
                     SymbolicFunction::Cubic => c * (a * t + b).powi(3) + d,
                     SymbolicFunction::Quartic => c * (a * t + b).powi(4) + d,
                     SymbolicFunction::Quintic => c * (a * t + b).powi(5) + d,
+                    SymbolicFunction::SquareRoot => c * (a * t + b).sqrt() + d,
+                    SymbolicFunction::CubeRoot => c * (a * t + b).cbrt() + d,
+                    SymbolicFunction::FourthRoot => c * (a * t + b).powf(0.25) + d,
+                    SymbolicFunction::FifthRoot => c * (a * t + b).powf(0.2) + d,
+                    SymbolicFunction::Sin => c * (a * t + b).sin() + d,
+                    SymbolicFunction::Tan => c * (a * t + b).tan() + d,
+                    SymbolicFunction::Log => c * (a * t + b).ln() + d,
+                    SymbolicFunction::Exp => c * (a * t + b).exp() + d,
+                    SymbolicFunction::Inverse => c / (a * t.max(f64::EPSILON) + b) + d,
                 }
             }
         }
@@ -170,6 +196,7 @@ impl Edge {
         if let None = self.last_t {
             return Err(EdgeError::BackwardBeforeForward);
         }
+        let last_t = self.last_t.unwrap();
         match &mut self.kind {
             EdgeType::Spline {
                 degree,
@@ -178,8 +205,6 @@ impl Edge {
                 activations,
                 gradients,
             } => {
-                let last_t = self.last_t.unwrap();
-
                 let adjusted_error = error / control_points.len() as f64; // distribute the error evenly across all control points
 
                 // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
@@ -219,14 +244,21 @@ impl Edge {
                 let (a, b, c, _) = (*a, *b, *c, *d);
                 let input_gradient = match function {
                     SymbolicFunction::Linear => c * a,
-                    SymbolicFunction::Quadratic => 2.0 * a * c * (a * self.last_t.unwrap() + b),
-                    SymbolicFunction::Cubic => 3.0 * a * c * (a * self.last_t.unwrap() + b).powi(2),
-                    SymbolicFunction::Quartic => {
-                        4.0 * a * c * (a * self.last_t.unwrap() + b).powi(3)
+                    SymbolicFunction::Quadratic => 2.0 * a * c * (a * last_t + b),
+                    SymbolicFunction::Cubic => 3.0 * a * c * (a * last_t + b).powi(2),
+                    SymbolicFunction::Quartic => 4.0 * a * c * (a * last_t + b).powi(3),
+                    SymbolicFunction::Quintic => 5.0 * a * c * (a * last_t + b).powi(4),
+                    SymbolicFunction::SquareRoot => 0.5 * c * (a * last_t + b).powf(-0.5),
+                    SymbolicFunction::CubeRoot => {
+                        (1.0 / 3.0) * c * (a * last_t + b).powf(-2.0 / 3.0)
                     }
-                    SymbolicFunction::Quintic => {
-                        5.0 * a * c * (a * self.last_t.unwrap() + b).powi(4)
-                    }
+                    SymbolicFunction::FourthRoot => 0.25 * c * (a * last_t + b).powf(-0.75),
+                    SymbolicFunction::FifthRoot => 0.2 * c * (a * last_t + b).powf(-0.8),
+                    SymbolicFunction::Sin => c * a * (a * last_t + b).cos(),
+                    SymbolicFunction::Tan => c * a / (a * last_t + b).cos().powi(2),
+                    SymbolicFunction::Log => c * a / (a * last_t + b),
+                    SymbolicFunction::Exp => c * a * (a * last_t + b).exp(),
+                    SymbolicFunction::Inverse => -c * a / (a * last_t + b).powi(2),
                 };
                 Ok(input_gradient * error)
             }
