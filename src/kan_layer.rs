@@ -714,26 +714,39 @@ impl KanLayer {
     }
 
     /// does no useful work at the moment - only here for benchmarking
-    pub fn suggest_symbolic(&self) {
-        let mut sorted_samples: Vec<Vec<f64>> =
+    pub fn bench_suggest_symbolic(&self) {
+        for (idx, spline) in self.splines.iter().enumerate() {
+            spline.suggest_symbolic(1);
+        }
+    }
+
+    /// take self.samples, where dim0 is the sample idx and dim1 is the input idx, and transpose it so that dim0 is the input idx and dim1 is the sample idx,
+    /// So any given slice `transposed_samples[i]` will be the ith value of all samples
+    fn transpose_samples(&self) -> Vec<Vec<f64>> {
+        let mut transposed_samples: Vec<Vec<f64>> =
             vec![Vec::with_capacity(self.samples.len()); self.input_dimension];
         for i in 0..self.samples.len() {
             for j in 0..self.input_dimension {
-                sorted_samples[j].push(self.samples[i][j]); // remember, push is just an indexed insert that checks capacity first. As long as capacity isn't exceeded, push is O(1)
+                transposed_samples[j].push(self.samples[i][j]);
             }
         }
+        transposed_samples
+    }
 
-        // now we sort along dim1
-        for j in 0..self.input_dimension {
-            sorted_samples[j].sort_by(|a, b| a.partial_cmp(b).unwrap());
+    /// test each spline in the layer for similarity to a symbolic function (e.g x^2, sin(x), etc.). If the R^2 value of the best fit is greater than `r2_threshold`, replace the spline with the symbolic function
+    /// # Examples
+    ///
+    pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) -> Vec<(usize, String)> {
+        let mut clamped_edges = Vec::new();
+        for i in 0..self.splines.len() {
+            let mut suggestions = self.splines[i].suggest_symbolic(1);
+            let (possible_symbol, r2) = suggestions.remove(0);
+            if r2 >= r2_threshold {
+                self.splines[i] = possible_symbol;
+                clamped_edges.push((i, format!("R2({}) {}", r2, self.splines[i]).to_string()));
+            }
         }
-        // TODO: it might be worth checking if the above operation would be faster if I changed the order of the loops and sorted inside the outer loop. Maybe something to do with cache performance?
-
-        for (idx, spline) in self.splines.iter().enumerate() {
-            let sample_idx = idx % self.input_dimension; // the first `input_dimension` splines belong to the first "node", so every `input_dimension` splines, we move to the next node and reset which inner sample vector we're looking at
-            let spline_samples = &sorted_samples[sample_idx];
-            spline.suggest_symbolic(spline_samples, 1);
-        }
+        clamped_edges
     }
 }
 

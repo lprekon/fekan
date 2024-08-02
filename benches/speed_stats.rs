@@ -122,6 +122,6 @@ fn bench_suggest_symbolic(b: &mut Bencher) {
         let _ = layer.forward(&input);
     }
     b.iter(|| {
-        let _ = layer.suggest_symbolic();
+        let _ = layer.bench_suggest_symbolic();
     });
 }
