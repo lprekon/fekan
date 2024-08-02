@@ -64,7 +64,24 @@ mod classification {
         "Validation loss did not decrease after training. Before training: {}, After training: {}",
         untrained_validation_loss,
         validation_loss
-    );
+        );
+        for i in 0..100 {
+            let _ = trained_model.forward(training_data[i].features().clone());
+        }
+        let symbolic_results: Vec<Vec<(usize, String)>> = trained_model.test_and_set_symbolic(0.98);
+        let symbolic_loss = validate_model(&validation_data, &mut trained_model);
+        assert!(
+            symbolic_loss <= validation_loss,
+            "Symbolification did not improve loss. Before {}, After {}. Symbolification: {:#?}",
+            validation_loss,
+            symbolic_loss,
+            symbolic_results
+        );
+        println!(
+            "Symbolification results: Before {}, After {}. Symbolification: {:#?}",
+            validation_loss, symbolic_loss, symbolic_results
+        );
+        assert!(false);
     }
 }
 mod regression {
@@ -117,7 +134,20 @@ mod regression {
         "Validation loss did not decrease after training. Before training: {}, After training: {}",
         untrained_validation_loss,
         validation_loss
-    );
+        );
+
+        for i in 0..100 {
+            let _ = trained_model.forward(training_data[i].features().clone());
+        }
+        let symbolic_results: Vec<Vec<(usize, String)>> = trained_model.test_and_set_symbolic(0.95);
+        let symbolic_loss = validate_model(&validation_data, &mut trained_model);
+        assert!(
+            symbolic_loss <= validation_loss,
+            "Symbolification did not improve loss. Before {}, After {}. Symbolification: {:#?}",
+            validation_loss,
+            symbolic_loss,
+            symbolic_results
+        );
     }
 
     /// build a model and train it on the function f(x, y) = e^(sin(pi*x) * y^2)
@@ -168,7 +198,26 @@ mod regression {
         "Validation loss did not decrease after training. Before training: {}, After training: {}",
         untrained_validation_loss,
         validation_loss
-    );
+        );
+
+        for i in 0..100 {
+            let _ = trained_model.forward(training_data[i].features().clone());
+        }
+        let symbolic_results: Vec<Vec<(usize, String)>> = trained_model.test_and_set_symbolic(0.95);
+        let symbolic_loss = validate_model(&validation_data, &mut trained_model);
+        assert!(
+            symbolic_loss <= validation_loss,
+            "Symbolification did not improve loss. Before {}, After {}. Symbolification: {:#?}",
+            validation_loss,
+            symbolic_loss,
+            symbolic_results
+        );
+
+        println!(
+            "Symbolification results: Before {}, After {}. Symbolification: {:#?}",
+            validation_loss, symbolic_loss, symbolic_results
+        );
+        assert!(false);
     }
 }
 struct TestObserver {}

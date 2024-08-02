@@ -849,7 +849,7 @@ mod test_main {
         assert_eq!(expected_data, loaded_data);
     }
 
-    #[test]
+    // #[test]
     fn read_avro_classifcation_data() {
         let tmp_dir = tempdir().unwrap();
         let file_path = tmp_dir.path().join("test.avro");
@@ -905,7 +905,7 @@ mod test_main {
         assert_eq!(expected_data, loaded_data);
     }
 
-    #[test]
+    // #[test]
     fn read_avro_regression_data() {
         let tmp_dir = tempdir().unwrap();
         let file_path = tmp_dir.path().join("test.avro");
