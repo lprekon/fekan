@@ -14,17 +14,13 @@ trap 'rm -f $DATA_FILE' EXIT
 
 git rev-parse HEAD
 
-python3 generate_exp_data.py 1000 > "$DATA_FILE"
+python3 generate_feynman_I-9-18_data.py 1000 > "$DATA_FILE"
 
 
 cargo run --features serialization -- build regressor --data "$DATA_FILE" \
-   --hidden-layer-sizes "5" \
-   --learning-rate 0.01 \
-   --validate-each-epoch \
+   --learning-rate 0.001 \
    --no-save \
-   --degree 3 \
-   --knot-extension-targets 10,20,50 \
-   --knot-extension-times 10,20,30 \
-   --epochs 100
+   --hidden-layer-sizes "6,4,1"
+
 
 

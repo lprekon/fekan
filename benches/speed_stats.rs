@@ -14,7 +14,7 @@ const OUTPUT_DIMENSION_BIG: usize = 12;
 const OUTPUT_DIMENSION_SMALL: usize = 2;
 
 const COEF_SIZE_BIG: usize = 100;
-const COEF_SIZE_SMALL: usize = 10;
+// const COEF_SIZE_SMALL: usize = 10;
 
 // fn big_layer_small_spline() -> KanLayer {
 //     KanLayer::new(&KanLayerOptions {
