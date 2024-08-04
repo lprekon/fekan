@@ -22,6 +22,8 @@ use strum::{EnumIter, IntoEnumIterator};
 pub(crate) mod edge_errors;
 use edge_errors::*;
 
+use crate::kan_layer::edge;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct Edge {
     kind: EdgeType,
@@ -473,7 +475,8 @@ impl Edge {
     const PARAM_MIN: f64 = -10.0;
     const PARAM_MAX: f64 = 10.0;
     const PARAM_STEPS: usize = 21;
-    const PARAM_ITERATIONS: usize = 5;
+    const PARAM_ITERATIONS: usize = 2000;
+    const PARAM_LEARNING_RATE: f64 = 0.01;
 
     // Find symbolic functions that best fit the spline over the given input data. Return the `num_suggestions` best fits, along with their coefficients of determination (R^2)
     // IMPORTANT NOTE: despite my wishes, this function does an unreliable job at suggesting constant functions. I'm not going to make constant function a class, because I'm just going to add a bias node at some point
@@ -526,11 +529,11 @@ impl Edge {
                     best_functions.push((best_linear_edge, r2));
                 }
                 _ => {
+                    if edge_type != SymbolicFunction::Sin {
+                        continue; // DEBUG
+                    }
                     let best_edge_of_the_type = Self::parameter_search(
                         edge_type,
-                        (Self::PARAM_MIN, Self::PARAM_MAX),
-                        (Self::PARAM_MIN, Self::PARAM_MAX),
-                        Self::PARAM_STEPS,
                         Self::PARAM_ITERATIONS,
                         &inputs,
                         &expected_outputs,
@@ -540,6 +543,11 @@ impl Edge {
                         .map(|t| best_edge_of_the_type.infer(*t))
                         .collect();
                     let r2 = calculate_coef_of_determination(&expected_outputs, &function_outputs);
+                    trace!(
+                        "best edge of the type: R2: {}\n {}",
+                        r2,
+                        best_edge_of_the_type
+                    );
                     best_functions.push((best_edge_of_the_type, r2));
                 }
             }
@@ -554,9 +562,6 @@ impl Edge {
 
     fn parameter_search(
         kind: SymbolicFunction,
-        a_range: (f64, f64),
-        b_range: (f64, f64),
-        step_count: usize,
         iterations: usize,
         inputs: &[f64],
         expected_outputs: &[f64],
@@ -565,117 +570,99 @@ impl Edge {
             "searching for best parameters for symbolic function {:?}",
             kind
         );
-        let mut best_edge = Edge {
+        let (mut a, mut b, mut c, mut d) = (1.0, 0.0, 1.0, 0.0);
+        // let mut prev_loss = f64::INFINITY;
+        for iteration in 0..iterations {
+            let mut edge_under_test = Edge {
+                kind: EdgeType::Symbolic {
+                    a,
+                    b,
+                    c,
+                    d,
+                    function: kind,
+                },
+                last_t: None,
+            };
+            let y_pred = inputs
+                .iter()
+                .map(|t| edge_under_test.infer(*t))
+                .collect::<Vec<f64>>();
+
+            let y_mean = expected_outputs.iter().sum::<f64>() / expected_outputs.len() as f64;
+            let ss_tot = expected_outputs
+                .iter()
+                .map(|y| (y - y_mean).powi(2))
+                .sum::<f64>();
+            let ss_res = expected_outputs
+                .iter()
+                .zip(y_pred.iter())
+                .map(|(y, y_pred)| (y - y_pred).powi(2))
+                .sum::<f64>();
+            let r2 = 1.0 - ss_res / ss_tot;
+            // let loss = 1.0 - r2;
+            let loss = ss_res / ss_tot;
+
+            let d_loss_d_y_pred_partial: Vec<f64> = (expected_outputs
+                .iter()
+                .zip(y_pred.iter())
+                .map(|(y, y_pred)| -2.0 * (y - y_pred)))
+            .collect();
+
+            let mut d_y_pred_d_a = Vec::new();
+            let mut d_y_pred_d_b = Vec::new();
+            let mut d_y_pred_d_c = Vec::new();
+            let d_y_pred_d_d = vec![1.0; inputs.len()];
+            for t in inputs.iter() {
+                let f = edge_under_test.forward(*t);
+                let f_prime = edge_under_test
+                    .backward(1.0)
+                    .expect("Forward should have been called");
+                d_y_pred_d_a.push(c * t * f_prime);
+                d_y_pred_d_b.push(c * f_prime);
+                d_y_pred_d_c.push(f);
+            }
+
+            let grad_a = d_y_pred_d_a
+                .iter()
+                .zip(d_loss_d_y_pred_partial.iter())
+                .map(|(a, b)| a * b)
+                .sum::<f64>()
+                / ss_tot;
+            let grad_b = d_y_pred_d_b
+                .iter()
+                .zip(d_loss_d_y_pred_partial.iter())
+                .map(|(a, b)| a * b)
+                .sum::<f64>()
+                / ss_tot;
+            let grad_c = d_y_pred_d_c
+                .iter()
+                .zip(d_loss_d_y_pred_partial.iter())
+                .map(|(a, b)| a * b)
+                .sum::<f64>()
+                / ss_tot;
+            let grad_d = d_loss_d_y_pred_partial.iter().sum::<f64>() / ss_tot;
+
+            // if iteration % 10 == 0 {
+            //     trace!("y_mean: {}", y_mean);
+            //     trace!("ss_tot: {}", ss_tot);
+            //     trace!("d_y_pred_d_c: {:?}", d_y_pred_d_c);
+            //     trace!("Iteration {iteration} a: {a} b: {b} c: {c} d: {d} R^2: {r2}\ngrad_a: {grad_a} grad_b: {grad_b}, grad_c: {grad_c}, grad_d: {grad_d}");
+            // }
+            a -= Self::PARAM_LEARNING_RATE * grad_a;
+            b -= Self::PARAM_LEARNING_RATE * grad_b;
+            c -= Self::PARAM_LEARNING_RATE * grad_c;
+            d -= Self::PARAM_LEARNING_RATE * grad_d;
+        }
+        Edge {
             kind: EdgeType::Symbolic {
-                a: 0.0,
-                b: 0.0,
-                c: 0.0,
-                d: 0.0,
+                a,
+                b,
+                c,
+                d,
                 function: kind,
             },
             last_t: None,
-        }; // arbitrary initial value
-        let mut a_min = a_range.0;
-        let mut a_max = a_range.1;
-        let mut b_min = b_range.0;
-        let mut b_max = b_range.1;
-        for it in 1..=iterations {
-            let mut iteration_best_r2 = f64::NEG_INFINITY;
-            let mut iteration_best_a_idx = 0;
-            let mut iteration_best_b_idx = 0;
-
-            let a_values = linspace(a_min, a_max, step_count);
-            let b_values = linspace(b_min, b_max, step_count);
-
-            for i in (0..step_count).rev() {
-                // go in reverse to favor positive values of a in functions where positive and negative values are equivalent (e.g x^2)
-                for j in (0..step_count).rev() {
-                    let function_under_test = Edge {
-                        kind: EdgeType::Symbolic {
-                            a: a_values[i],
-                            b: b_values[j],
-                            c: 1.0,
-                            d: 0.0,
-                            function: kind,
-                        },
-                        last_t: None,
-                    };
-                    let function_outputs: Vec<f64> = inputs
-                        .iter()
-                        .map(|t| function_under_test.infer(*t))
-                        .collect();
-                    let r2 = calculate_coef_of_determination(expected_outputs, &function_outputs);
-                    if r2 > iteration_best_r2 {
-                        iteration_best_r2 = r2;
-                        iteration_best_a_idx = i;
-                        iteration_best_b_idx = j;
-                        best_edge = function_under_test;
-                    }
-                }
-            }
-            trace!(
-                "iteration {} a_values: [{}, {}, ... {}] b_values: [{}, {}, ..., {}]\nbest function: {} with r2: {}",
-                it,
-                a_min,
-                a_values[1],
-                a_max,
-                b_min,
-                b_values[1],
-                b_max,
-                best_edge,
-                iteration_best_r2
-            );
-            // prepare for next iteration
-            let last_val = step_count - 1;
-            a_min = match iteration_best_a_idx {
-                0 => a_values[0] - (a_values[1] - a_values[0]),
-                _ => a_values[iteration_best_a_idx - 1],
-            };
-            a_max = if iteration_best_a_idx == last_val {
-                a_values[step_count - 1] + (a_values[step_count - 1] - a_values[step_count - 2])
-            } else {
-                a_values[iteration_best_a_idx + 1]
-            };
-
-            b_min = match iteration_best_b_idx {
-                0 => b_values[0] - (b_values[1] - b_values[0]),
-                _ => b_values[iteration_best_b_idx - 1],
-            };
-            b_max = if iteration_best_b_idx == last_val {
-                b_values[step_count - 1] + (b_values[step_count - 1] - b_values[step_count - 2])
-            } else {
-                b_values[iteration_best_b_idx + 1]
-            };
         }
-        // now use linear regression to find the best c and d values
-        let x_matrix = DMatrix::from_fn(inputs.len(), 2, |i, j| {
-            // add a constant column so we can calculate the intercept aka d
-            if j == 0 {
-                best_edge.infer(inputs[i])
-            } else {
-                1.0
-            }
-        });
-        let y_matrix = DVector::from_vec(expected_outputs.to_vec());
-        let xtx = x_matrix.tr_mul(&x_matrix);
-        let xty = x_matrix.tr_mul(&y_matrix);
-        let svd = SVD::new(xtx, true, true);
-        let solution = svd.solve(&xty, 1e-6).expect("SVD solve failed");
-        let best_c = solution[0];
-        let best_d = solution[1];
-        let (best_a, best_b) = match best_edge.kind {
-            EdgeType::Symbolic { a, b, .. } => (a, b),
-            _ => unreachable!(),
-        };
-        best_edge.kind = EdgeType::Symbolic {
-            a: best_a,
-            b: best_b,
-            c: best_c,
-            d: best_d,
-            function: kind,
-        };
-
-        best_edge
     }
 
     /// return the number of control points and knots in the spline
