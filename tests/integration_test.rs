@@ -206,17 +206,22 @@ mod regression {
     #[test]
     fn sin_x() {
         let input_range = 0.0..6.0;
+
+        fn true_function(x: f64) -> f64 {
+            4.0 * x.sin()
+        }
+
         let training_data = (0..1000)
             .map(|_| {
                 let x: f64 = thread_rng().gen_range(input_range.clone());
-                let label = 4.0 * x.sin();
+                let label = true_function(x);
                 Sample::new(vec![x], label)
             })
             .collect::<Vec<Sample>>();
         let validation_data = (0..100)
             .map(|_| {
                 let x: f64 = thread_rng().gen_range(input_range.clone());
-                let label = 4.0 * x.sin();
+                let label = true_function(x);
                 Sample::new(vec![x], label)
             })
             .collect::<Vec<Sample>>();
@@ -228,33 +233,32 @@ mod regression {
             model_type: ModelType::Regression,
             class_map: None,
         });
-        if log::log_enabled!(log::Level::Trace) {
-            let mut training_samples = training_data.clone();
-            let mut validation_samples = validation_data.clone();
-            training_samples.sort_by(|a, b| a.features()[0].partial_cmp(&b.features()[0]).unwrap());
-            validation_samples
-                .sort_by(|a, b| a.features()[0].partial_cmp(&b.features()[0]).unwrap());
-            let training_inputs: Vec<f64> =
-                training_samples.iter().map(|s| s.features()[0]).collect();
-            let training_outputs: Vec<f64> = training_samples.iter().map(|s| s.label()).collect();
-            let validation_inputs: Vec<f64> =
-                validation_samples.iter().map(|s| s.features()[0]).collect();
-            let validation_outputs: Vec<f64> =
-                validation_samples.iter().map(|s| s.label()).collect();
-            log::trace!(
-                "Training inputs: {:?}\nTraining outputs: {:?}",
-                training_inputs,
-                training_outputs
-            );
-            log::trace!(
-                "Validation inputs: {:?}\nValidation outputs: {:?}",
-                validation_inputs,
-                validation_outputs
-            );
-        }
+        // if log::log_enabled!(log::Level::Trace) {
+        //     let mut training_samples = training_data.clone();
+        //     let mut validation_samples = validation_data.clone();
+        //     training_samples.sort_by(|a, b| a.features()[0].partial_cmp(&b.features()[0]).unwrap());
+        //     validation_samples
+        //         .sort_by(|a, b| a.features()[0].partial_cmp(&b.features()[0]).unwrap());
+        //     let training_inputs: Vec<f64> =
+        //         training_samples.iter().map(|s| s.features()[0]).collect();
+        //     let training_outputs: Vec<f64> = training_samples.iter().map(|s| s.label()).collect();
+        //     let validation_inputs: Vec<f64> =
+        //         validation_samples.iter().map(|s| s.features()[0]).collect();
+        //     let validation_outputs: Vec<f64> =
+        //         validation_samples.iter().map(|s| s.label()).collect();
+        //     log::trace!(
+        //         "Training inputs: {:?}\nTraining outputs: {:?}",
+        //         training_inputs,
+        //         training_outputs
+        //     );
+        //     log::trace!(
+        //         "Validation inputs: {:?}\nValidation outputs: {:?}",
+        //         validation_inputs,
+        //         validation_outputs
+        //     );
+        // }
 
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
-        preset_knot_ranges(&mut untrained_model, &training_data).unwrap();
         let mut trained_model = train_model(
             untrained_model,
             &training_data,
@@ -269,12 +273,12 @@ mod regression {
         )
         .unwrap();
         let validation_loss = validate_model(&validation_data, &mut trained_model);
-        // assert!(
-        // validation_loss < untrained_validation_loss,
-        // "Validation loss did not decrease after training. Before training: {}, After training: {}",
-        // untrained_validation_loss,
-        // validation_loss
-        // );
+        assert!(
+        validation_loss < untrained_validation_loss,
+        "Validation loss did not decrease after training. Before training: {}, After training: {}",
+        untrained_validation_loss,
+        validation_loss
+        );
         trained_model.test_and_set_symbolic(0.99);
         let symbolic_loss = validate_model(&validation_data, &mut trained_model);
         assert!(
@@ -283,5 +287,178 @@ mod regression {
             validation_loss,
             symbolic_loss,
         );
+    }
+
+    #[test]
+    fn x_cubed() {
+        let input_range = -2.0..2.0;
+
+        fn true_function(x: f64) -> f64 {
+            -0.5 * (x - 4.0).powi(3) + 2.0
+        }
+
+        let training_data = (0..1000)
+            .map(|_| {
+                let x: f64 = thread_rng().gen_range(input_range.clone());
+                let label = true_function(x);
+                Sample::new(vec![x], label)
+            })
+            .collect::<Vec<Sample>>();
+        let validation_data = (0..100)
+            .map(|_| {
+                let x: f64 = thread_rng().gen_range(input_range.clone());
+                let label = true_function(x);
+                Sample::new(vec![x], label)
+            })
+            .collect::<Vec<Sample>>();
+        let mut untrained_model = Kan::new(&KanOptions {
+            input_size: 1,
+            layer_sizes: vec![1],
+            degree: 3,
+            coef_size: 10,
+            model_type: ModelType::Regression,
+            class_map: None,
+        });
+        // if log::log_enabled!(log::Level::Trace) {
+        //     let mut training_samples = training_data.clone();
+        //     let mut validation_samples = validation_data.clone();
+        //     training_samples.sort_by(|a, b| a.features()[0].partial_cmp(&b.features()[0]).unwrap());
+        //     validation_samples
+        //         .sort_by(|a, b| a.features()[0].partial_cmp(&b.features()[0]).unwrap());
+        //     let training_inputs: Vec<f64> =
+        //         training_samples.iter().map(|s| s.features()[0]).collect();
+        //     let training_outputs: Vec<f64> = training_samples.iter().map(|s| s.label()).collect();
+        //     let validation_inputs: Vec<f64> =
+        //         validation_samples.iter().map(|s| s.features()[0]).collect();
+        //     let validation_outputs: Vec<f64> =
+        //         validation_samples.iter().map(|s| s.label()).collect();
+        //     log::trace!(
+        //         "Training inputs: {:?}\nTraining outputs: {:?}",
+        //         training_inputs,
+        //         training_outputs
+        //     );
+        //     log::trace!(
+        //         "Validation inputs: {:?}\nValidation outputs: {:?}",
+        //         validation_inputs,
+        //         validation_outputs
+        //     );
+        // }
+
+        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
+        let mut trained_model = train_model(
+            untrained_model,
+            &training_data,
+            TrainingOptions {
+                num_threads: 8,
+                knot_update_interval: 1001,
+                num_epochs: 500,
+                learning_rate: 0.01,
+                each_epoch: fekan::training_options::EachEpoch::ValidateModel(&validation_data),
+                ..TrainingOptions::default()
+            },
+        )
+        .unwrap();
+        let validation_loss = validate_model(&validation_data, &mut trained_model);
+        assert!(
+        validation_loss < untrained_validation_loss,
+        "Validation loss did not decrease after training. Before training: {}, After training: {}",
+        untrained_validation_loss,
+        validation_loss
+        );
+        trained_model.test_and_set_symbolic(0.99);
+        let symbolic_loss = validate_model(&validation_data, &mut trained_model);
+        assert!(
+            symbolic_loss < validation_loss,
+            "Symbolification did not improve loss. Before {}, After {}",
+            validation_loss,
+            symbolic_loss,
+        );
+    }
+
+    #[test]
+    fn root_x() {
+        let input_range = -12.0..2.99;
+
+        fn true_function(x: f64) -> f64 {
+            -1.0 * (-1.0 * x + 3.0).sqrt() - 4.0
+        }
+
+        let training_data = (0..1000)
+            .map(|_| {
+                let x: f64 = thread_rng().gen_range(input_range.clone());
+                let label = true_function(x);
+                Sample::new(vec![x], label)
+            })
+            .collect::<Vec<Sample>>();
+        let validation_data = (0..100)
+            .map(|_| {
+                let x: f64 = thread_rng().gen_range(input_range.clone());
+                let label = true_function(x);
+                Sample::new(vec![x], label)
+            })
+            .collect::<Vec<Sample>>();
+        let mut untrained_model = Kan::new(&KanOptions {
+            input_size: 1,
+            layer_sizes: vec![1],
+            degree: 3,
+            coef_size: 10,
+            model_type: ModelType::Regression,
+            class_map: None,
+        });
+        // if log::log_enabled!(log::Level::Trace) {
+        //     let mut training_samples = training_data.clone();
+        //     let mut validation_samples = validation_data.clone();
+        //     training_samples.sort_by(|a, b| a.features()[0].partial_cmp(&b.features()[0]).unwrap());
+        //     validation_samples
+        //         .sort_by(|a, b| a.features()[0].partial_cmp(&b.features()[0]).unwrap());
+        //     let training_inputs: Vec<f64> =
+        //         training_samples.iter().map(|s| s.features()[0]).collect();
+        //     let training_outputs: Vec<f64> = training_samples.iter().map(|s| s.label()).collect();
+        //     let validation_inputs: Vec<f64> =
+        //         validation_samples.iter().map(|s| s.features()[0]).collect();
+        //     let validation_outputs: Vec<f64> =
+        //         validation_samples.iter().map(|s| s.label()).collect();
+        //     log::trace!(
+        //         "Training inputs: {:?}\nTraining outputs: {:?}",
+        //         training_inputs,
+        //         training_outputs
+        //     );
+        //     log::trace!(
+        //         "Validation inputs: {:?}\nValidation outputs: {:?}",
+        //         validation_inputs,
+        //         validation_outputs
+        //     );
+        // }
+
+        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
+        let mut trained_model = train_model(
+            untrained_model,
+            &training_data,
+            TrainingOptions {
+                num_threads: 8,
+                knot_update_interval: 1001,
+                num_epochs: 500,
+                learning_rate: 0.01,
+                each_epoch: fekan::training_options::EachEpoch::ValidateModel(&validation_data),
+                ..TrainingOptions::default()
+            },
+        )
+        .unwrap();
+        let validation_loss = validate_model(&validation_data, &mut trained_model);
+        assert!(
+        validation_loss < untrained_validation_loss,
+        "Validation loss did not decrease after training. Before training: {}, After training: {}",
+        untrained_validation_loss,
+        validation_loss
+        );
+        trained_model.test_and_set_symbolic(0.99);
+        let symbolic_loss = validate_model(&validation_data, &mut trained_model);
+        assert!(
+            symbolic_loss < validation_loss,
+            "Symbolification did not improve loss. Before {}, After {}",
+            validation_loss,
+            symbolic_loss,
+        );
+        assert!(false);
     }
 }

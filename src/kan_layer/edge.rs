@@ -552,7 +552,7 @@ impl Edge {
         best_functions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         let max_suggestions = best_functions.len().min(num_suggestions);
         let suggestions = best_functions[0..max_suggestions].to_vec();
-        trace!("suggestions: {:?}", suggestions);
+        trace!("fitting results: {:#?}", suggestions);
         return suggestions;
     }
 
@@ -567,8 +567,9 @@ impl Edge {
         expected_outputs: &[f64],
     ) -> Edge {
         trace!(
-            "searching for best parameters for symbolic function {:?}",
-            kind
+            "searching for best parameters for symbolic function {:?} with c = {}",
+            kind,
+            starting_c
         );
         let mut best_edge = Edge {
             kind: EdgeType::Symbolic {
