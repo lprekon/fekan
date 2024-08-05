@@ -526,21 +526,25 @@ impl Edge {
                     best_functions.push((best_linear_edge, r2));
                 }
                 _ => {
-                    let best_edge_of_the_type = Self::parameter_search(
-                        edge_type,
-                        (Self::PARAM_MIN, Self::PARAM_MAX),
-                        (Self::PARAM_MIN, Self::PARAM_MAX),
-                        Self::PARAM_STEPS,
-                        Self::PARAM_ITERATIONS,
-                        &inputs,
-                        &expected_outputs,
-                    );
-                    let function_outputs: Vec<f64> = inputs
-                        .iter()
-                        .map(|t| best_edge_of_the_type.infer(*t))
-                        .collect();
-                    let r2 = calculate_coef_of_determination(&expected_outputs, &function_outputs);
-                    best_functions.push((best_edge_of_the_type, r2));
+                    for starting_c in vec![1.0, -1.0] {
+                        let best_edge_of_the_type = Self::parameter_search(
+                            edge_type,
+                            (Self::PARAM_MIN, Self::PARAM_MAX),
+                            (Self::PARAM_MIN, Self::PARAM_MAX),
+                            starting_c,
+                            Self::PARAM_STEPS,
+                            Self::PARAM_ITERATIONS,
+                            &inputs,
+                            &expected_outputs,
+                        );
+                        let function_outputs: Vec<f64> = inputs
+                            .iter()
+                            .map(|t| best_edge_of_the_type.infer(*t))
+                            .collect();
+                        let r2 =
+                            calculate_coef_of_determination(&expected_outputs, &function_outputs);
+                        best_functions.push((best_edge_of_the_type, r2));
+                    }
                 }
             }
         }
@@ -556,6 +560,7 @@ impl Edge {
         kind: SymbolicFunction,
         a_range: (f64, f64),
         b_range: (f64, f64),
+        starting_c: f64,
         step_count: usize,
         iterations: usize,
         inputs: &[f64],
@@ -594,7 +599,7 @@ impl Edge {
                         kind: EdgeType::Symbolic {
                             a: a_values[i],
                             b: b_values[j],
-                            c: 1.0,
+                            c: starting_c,
                             d: 0.0,
                             function: kind,
                         },
