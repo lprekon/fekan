@@ -87,6 +87,25 @@ enum SymbolicFunction {
     // InverseCubeSqrt,
 }
 
+impl SymbolicFunction {
+    fn horizontally_symmetric(&self) -> bool {
+        match self {
+            SymbolicFunction::Quadratic | SymbolicFunction::Quartic | SymbolicFunction::Sin => true,
+            _ => false,
+        }
+    }
+
+    fn radially_symmetric(&self) -> bool {
+        match self {
+            SymbolicFunction::Cubic
+            | SymbolicFunction::Quintic
+            | SymbolicFunction::Tan
+            | SymbolicFunction::Inverse => true,
+            _ => false,
+        }
+    }
+}
+
 impl Edge {
     /// construct a new spline from the given degree, control points, and knots
     ///
@@ -472,11 +491,13 @@ impl Edge {
     }
 
     // copying pykan for now. TODO: think more about this
-    const PARAM_MIN: f64 = -10.0;
-    const PARAM_MAX: f64 = 10.0;
-    const PARAM_STEPS: usize = 21;
-    const PARAM_ITERATIONS: usize = 2000;
+    // const PARAM_MIN: f64 = -10.0;
+    // const PARAM_MAX: f64 = 10.0;
+    // const PARAM_STEPS: usize = 21;
+    // const PARAM_ITERATIONS: usize = 2000;
     const PARAM_LEARNING_RATE: f64 = 0.01;
+    const LOSS_REDUCTION_THRESHOLD: f64 = 1e-6;
+    const ITERATION_CAP: usize = 1e10 as usize;
 
     // Find symbolic functions that best fit the spline over the given input data. Return the `num_suggestions` best fits, along with their coefficients of determination (R^2)
     // IMPORTANT NOTE: despite my wishes, this function does an unreliable job at suggesting constant functions. I'm not going to make constant function a class, because I'm just going to add a bias node at some point
@@ -529,26 +550,37 @@ impl Edge {
                     best_functions.push((best_linear_edge, r2));
                 }
                 _ => {
-                    if edge_type != SymbolicFunction::Sin {
+                    if edge_type != SymbolicFunction::Cubic {
                         continue; // DEBUG
                     }
-                    let best_edge_of_the_type = Self::parameter_search(
-                        edge_type,
-                        Self::PARAM_ITERATIONS,
-                        &inputs,
-                        &expected_outputs,
-                    );
-                    let function_outputs: Vec<f64> = inputs
-                        .iter()
-                        .map(|t| best_edge_of_the_type.infer(*t))
-                        .collect();
-                    let r2 = calculate_coef_of_determination(&expected_outputs, &function_outputs);
-                    trace!(
-                        "best edge of the type: R2: {}\n {}",
-                        r2,
-                        best_edge_of_the_type
-                    );
-                    best_functions.push((best_edge_of_the_type, r2));
+                    let mut a_c_combos = vec![(1.0, 1.0), (1.0, -1.0)];
+                    if !edge_type.horizontally_symmetric() {
+                        a_c_combos.push((-1.0, 1.0));
+                    }
+                    if !edge_type.radially_symmetric() {
+                        a_c_combos.push((-1.0, -1.0));
+                    }
+                    for (starting_a, starting_c) in a_c_combos {
+                        let best_edge_of_the_type = Self::parameter_search(
+                            edge_type,
+                            starting_a,
+                            starting_c,
+                            &inputs,
+                            &expected_outputs,
+                        );
+                        let function_outputs: Vec<f64> = inputs
+                            .iter()
+                            .map(|t| best_edge_of_the_type.infer(*t))
+                            .collect();
+                        let r2 =
+                            calculate_coef_of_determination(&expected_outputs, &function_outputs);
+                        // trace!(
+                        //     "best edge of the type: R2: {}\n {}",
+                        //     r2,
+                        //     best_edge_of_the_type
+                        // );
+                        best_functions.push((best_edge_of_the_type, r2));
+                    }
                 }
             }
         }
@@ -556,23 +588,26 @@ impl Edge {
         best_functions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         let max_suggestions = best_functions.len().min(num_suggestions);
         let suggestions = best_functions[0..max_suggestions].to_vec();
-        trace!("suggestions: {:?}", suggestions);
+        trace!("best_functions: {:?}", best_functions);
         return suggestions;
     }
 
     fn parameter_search(
         kind: SymbolicFunction,
-        iterations: usize,
+        starting_a: f64,
+        starting_c: f64,
         inputs: &[f64],
         expected_outputs: &[f64],
     ) -> Edge {
         trace!(
-            "searching for best parameters for symbolic function {:?}",
-            kind
+            "searching for best parameters for symbolic function {:?} with starting a: {} and starting c: {}",
+            kind, starting_a, starting_c
         );
-        let (mut a, mut b, mut c, mut d) = (1.0, 0.0, 1.0, 0.0);
-        // let mut prev_loss = f64::INFINITY;
-        for iteration in 0..iterations {
+        let (mut a, mut b, mut c, mut d) = (starting_a, 0.0, starting_c, 0.0);
+        let mut prev_loss = f64::INFINITY;
+        let mut iteration = 0;
+        while iteration < Self::ITERATION_CAP {
+            iteration += 1;
             let mut edge_under_test = Edge {
                 kind: EdgeType::Symbolic {
                     a,
@@ -642,17 +677,26 @@ impl Edge {
                 / ss_tot;
             let grad_d = d_loss_d_y_pred_partial.iter().sum::<f64>() / ss_tot;
 
-            // if iteration % 10 == 0 {
-            //     trace!("y_mean: {}", y_mean);
-            //     trace!("ss_tot: {}", ss_tot);
-            //     trace!("d_y_pred_d_c: {:?}", d_y_pred_d_c);
-            //     trace!("Iteration {iteration} a: {a} b: {b} c: {c} d: {d} R^2: {r2}\ngrad_a: {grad_a} grad_b: {grad_b}, grad_c: {grad_c}, grad_d: {grad_d}");
-            // }
+            if iteration <= 10 {
+                trace!("y_mean: {}", y_mean);
+                trace!("ss_tot: {}", ss_tot);
+                // trace!("d_y_pred_d_c: {:?}", d_y_pred_d_c);
+                trace!("Iteration {iteration} a: {a} b: {b} c: {c} d: {d} R^2: {r2}\ngrad_a: {grad_a} grad_b: {grad_b}, grad_c: {grad_c}, grad_d: {grad_d}");
+            }
+
+            // put here so we can get the trace above
+            if prev_loss - loss < Self::LOSS_REDUCTION_THRESHOLD {
+                break;
+            }
+            prev_loss = loss;
+
             a -= Self::PARAM_LEARNING_RATE * grad_a;
             b -= Self::PARAM_LEARNING_RATE * grad_b;
             c -= Self::PARAM_LEARNING_RATE * grad_c;
             d -= Self::PARAM_LEARNING_RATE * grad_d;
         }
+        trace!("search complete after {iteration} iterations. a: {a} b: {b} c: {c} d: {d}",);
+
         Edge {
             kind: EdgeType::Symbolic {
                 a,
@@ -905,7 +949,7 @@ impl std::fmt::Display for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
             EdgeType::Spline { degree, knots, .. } => {
-                write!(f, "Spline(k: {}, |knots|: {}", degree, knots.len())
+                write!(f, "Spline(k: {}, |knots|: {})", degree, knots.len())
             }
             EdgeType::Symbolic {
                 a,
