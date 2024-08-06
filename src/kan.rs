@@ -552,6 +552,7 @@ impl Kan {
         Ok(())
     }
 
+    /// Test and set the symbolic status of the model, using the given R^2 threshold. See [`KanLayer::test_and_set_symbolic`] for more information
     pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) {
         debug!("Testing and setting symbolic for the model");
         for i in 0..self.layers.len() {

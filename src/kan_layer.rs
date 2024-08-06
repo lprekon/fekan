@@ -722,8 +722,8 @@ impl KanLayer {
     }
 
     /// test each spline in the layer for similarity to a symbolic function (e.g x^2, sin(x), etc.). If the R^2 value of the best fit is greater than `r2_threshold`, replace the spline with the symbolic function
-    /// # Examples
     ///
+    /// Useful at the end of training to enhance interpretability of the model
     pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) {
         debug!(
             "Testing and setting symbolic functions with threshold {}",
