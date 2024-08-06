@@ -2,6 +2,17 @@
 set -e # exit on error
 set -x # print commands
 
+if [ -n "$S3_BUCKET" ]; then
+    echo "S3 target detected. Checking connection..."
+    aws s3 ls s3://$S3_BUCKET
+    if [$? -ne 0]; then
+        echo "Error: could not connect to s3 bucket $S3_BUCKET"
+        exit 1
+    else 
+        echo "Connection successful"
+    fi
+fi
+
 # grab the latest code
 git clone https://github.com/lprekon/fekan.git
 cd fekan
