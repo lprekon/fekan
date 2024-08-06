@@ -6,7 +6,8 @@ RUN apt-get update && apt-get install -y \
     git \
     awscli \
     python3-venv \
-    python3-pip
+    python3-pip \ 
+    valgrind
 
 RUN python3 -m venv /venv 
 
