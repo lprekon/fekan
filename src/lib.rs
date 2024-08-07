@@ -401,13 +401,13 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
             })?; // we only want to get the proper input ranges - we're not worried about high-frequency resolution
 
         debug!("Layer {} knot ranges set.", set_layer);
-        if log::log_enabled!(log::Level::Debug) {
+        if log::log_enabled!(log::Level::Debug) && set_layer < model.layers.len() - 1 {
             let mut output_ranges: Vec<(f64, f64)> =
                 vec![(0.0, 0.0); model.layers[set_layer].output_dimension()];
-            let mut outputs = Vec::new();
             for sample in preset_data {
+                let mut outputs = sample.features.clone();
                 for layer_idx in 0..=set_layer {
-                    outputs = model.layers[layer_idx].forward(&sample.features).unwrap();
+                    outputs = model.layers[layer_idx].forward(&outputs).unwrap();
                 }
                 for output_idx in 0..outputs.len() {
                     output_ranges[output_idx].0 =
