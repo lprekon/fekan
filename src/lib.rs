@@ -34,8 +34,8 @@
 //! let model_options = KanOptions{
 //!     input_size: 2,
 //!     layer_sizes: vec![3, 1],
-//!     degree: 4,
-//!     coef_size: 5,
+//!     degree: 3,
+//!     coef_size: 7,
 //!     model_type: ModelType::Regression,
 //!     class_map: None};
 //! let mut untrained_model = Kan::new(&model_options);
@@ -47,7 +47,7 @@
 //! # let sample_2 = Sample::new(vec![-1.0, 1.0], 0.0);
 //! # let training_data = vec![sample_1, sample_2];
 //!
-//! let trained_model = fekan::train_model(untrained_model, &training_data, &fekan::EmptyObserver::new(), TrainingOptions::default())?;
+//! let trained_model = fekan::train_model(untrained_model, &training_data, TrainingOptions::default())?;
 //!
 //! // save the model
 //! // both Kan and KanLayer implement the serde Serialize trait, so they can be saved to a file using any serde-compatible format
@@ -122,11 +122,11 @@ impl Sample {
 /// # Example
 /// train a model with some training data:
 /// ```
-/// use fekan::{train_model, Sample, training_options::TrainingOptions, EmptyObserver};
+/// use fekan::{train_model, Sample, training_options::TrainingOptions};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
 /// # use fekan::training_error::TrainingError;
 ///
-/// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression, class_map: None};
+/// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 3, coef_size: 7, model_type: ModelType::Regression, class_map: None};
 /// let untrained_model = Kan::new(&some_model_options);
 /// let mut training_data: Vec<Sample> = Vec::new();
 /// /* Load training data */
@@ -135,7 +135,6 @@ impl Sample {
 /// let trained_model = train_model(
 ///     untrained_model,
 ///     &training_data,
-///     &EmptyObserver::new(),
 ///     TrainingOptions::default())?;
 /// # Ok::<(), TrainingError>(())
 /// ```
@@ -145,20 +144,9 @@ impl Sample {
 /// use fekan::{train_model, Sample, training_options::{TrainingOptions, EachEpoch}};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
 /// # use fekan::training_error::TrainingError;
-/// # use fekan::training_observer::TrainingObserver;
-/// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 4, coef_size: 5, model_type: ModelType::Regression, class_map: None};
-/// # struct MyCustomObserver {}
-/// # impl MyCustomObserver {
-/// #     fn new() -> Self { MyCustomObserver{} }
-/// # }
-/// # impl TrainingObserver for MyCustomObserver {
-/// #     fn on_epoch_end(&self, epoch: usize, epoch_loss: f64, validation_loss: f64) {}
-///       fn on_knot_extension(&self, old_length: usize, new_length: usize) {}
-/// # }
+/// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 3, coef_size: 7, model_type: ModelType::Regression, class_map: None};
 ///
 /// let untrained_model = Kan::new(&some_model_options);
-///
-/// let my_observer = MyCustomObserver::new(); // custom type that implements TrainingObserver
 ///
 /// let mut training_data: Vec<Sample> = Vec::new();
 /// let mut validation_data: Vec<Sample> = Vec::new();
@@ -169,7 +157,6 @@ impl Sample {
 /// let trained_model = train_model(
 ///     untrained_model,
 ///     &training_data,
-///     &my_observer,
 ///     TrainingOptions::default())?;
 /// // loss is reported each epoch to the training observer
 /// # Ok::<(), TrainingError>(())

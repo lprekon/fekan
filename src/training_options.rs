@@ -26,7 +26,7 @@ pub struct TrainingOptions<'a> {
 #[derive(Clone, PartialEq, Debug)]
 /// Indicates whether the model should be tested against the validation data set after each epoch
 pub enum EachEpoch<'a> {
-    /// Test the model against the validation data set after each epoch, and report the validation loss through the provided  [`TrainingObserver`](crate::TrainingObserver) implementation
+    /// Test the model against the validation data set after each epoch, and log the validation loss
     ValidateModel(&'a [Sample]),
     /// Do not test the model against the validation data set after each epoch
     DoNotValidateModel,

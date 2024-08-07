@@ -92,7 +92,7 @@ struct GenericBuildParams {
     /// The degree of the spline basis functions
     degree: usize,
 
-    #[arg(long = "coefs", default_value = "4", global = true)]
+    #[arg(long = "coefs", default_value = "7", global = true)]
     /// The number of coefficients/control points in the spline basis functions
     num_coefficients: usize,
 

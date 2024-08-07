@@ -55,6 +55,10 @@ impl KanLayer {
     ///
     /// All B-splines areinitialized with coefficients drawn from astandard normal distribution, and with
     /// `degree + coef_size + 1` knots evenly spaced between -1.0 and 1.0. Because knots are always initialized to span the range [-1, 1], make sure you call [`KanLayer::update_knots_from_samples`] regularly during training, or at least after a good portion of the training data has been passed through the model, to ensure that the layer's supported input range covers the range spanned by the training data.
+    /// # Warning
+    /// If you plan on ever calling [`KanLayer::update_knots_from_samples`] on your layer, make sure coef_size >= 2 * degree + 1. [`KanLayer::update_knots_from_samples`] reserves the first and last `degree` knots as "padding", and you will get NaNs when you call [`KanLayer::forward`] after updating knots if there aren't enough "non-padding" knots
+    ///
+    /// If you don't plan on calling [`KanLayer::update_knots_from_samples`], any coef_size >= degree + 1 should be fine
     /// # Examples
     /// ```
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
@@ -63,7 +67,7 @@ impl KanLayer {
     /// let layer_options = KanLayerOptions {
     ///     input_dimension,
     ///     output_dimension,
-    ///     degree: 5,
+    ///     degree: 3,
     ///     coef_size: 6,
     /// };
     /// let my_layer = KanLayer::new(&layer_options);
@@ -72,7 +76,7 @@ impl KanLayer {
     pub fn new(options: &KanLayerOptions) -> Self {
         let num_edges = options.input_dimension * options.output_dimension;
         let num_knots = options.coef_size + options.degree + 1;
-        let normal_dist = Normal::new(0.0, 0.1).expect("unable to create normal distribution");
+        let normal_dist = Normal::new(0.0, 1.0).expect("unable to create normal distribution");
         let mut randomness = thread_rng();
         let splines = (0..num_edges)
             .map(|_| {
@@ -251,9 +255,9 @@ impl KanLayer {
     ///
     /// # let input_size = 5;
     /// # let output_size = 3;
-    /// # let layer_options = KanLayerOptions {input_dimension: 5,output_dimension: 4,degree: 5, coef_size: 6};
+    /// # let layer_options = KanLayerOptions {input_dimension: 5,output_dimension: 4,degree: 3, coef_size: 6};
     /// # fn calculate_gradient(output: Vec<f64>, label: f64) -> Vec<f64> {vec![0.0; output.len()]}
-    /// # let training_data = vec![(vec![0.5, 0.4, 0.5, 0.5, 0.4], 1.0f64), (vec![0.4, 0.5, 0.4, 0.5, 0.4], 0.0f64), (vec![0.5, 0.5, 0.5, 0.5, 0.5], 1.0f64)];
+    /// # let training_data = vec![(vec![0.1, 0.2, 0.3, 0.4, 0.5], 1.0f64), (vec![0.2, 0.3, 0.4, 0.5, 0.6], 0.0f64), (vec![0.3, 0.4, 0.5, 0.6, 0.7], 1.0f64)];
     /// let mut my_layer = KanLayer::new(&layer_options);
     /// # let knot_update_interval = 2;
     /// for (idx, (feature_vec, label)) in training_data.iter().enumerate() {
@@ -740,6 +744,16 @@ impl KanLayer {
             }
         }
         debug!("Symbolified layer:\n{}", self);
+    }
+
+    /// return the input dimension of this layer
+    pub fn input_dimension(&self) -> usize {
+        self.input_dimension
+    }
+
+    /// return the output dimension of this layer
+    pub fn output_dimension(&self) -> usize {
+        self.output_dimension
     }
 }
 
