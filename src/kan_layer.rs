@@ -10,7 +10,7 @@ use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use statrs::distribution::Normal; // apparently the statrs distributions use the rand Distribution trait
 
-use std::vec;
+use std::{collections::VecDeque, vec};
 
 /// A layer in a Kolmogorov-Arnold neural Network (KAN)
 ///
@@ -667,7 +667,7 @@ impl KanLayer {
     /// let fully_trained_layer = KanLayer::merge_layers(&partially_trained_layers)?;
     /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
-    pub fn merge_layers(kan_layers: &[KanLayer]) -> Result<KanLayer, KanLayerError> {
+    pub fn merge_layers(kan_layers: Vec<KanLayer>) -> Result<KanLayer, KanLayerError> {
         if kan_layers.is_empty() {
             return Err(KanLayerError::merge_no_layers());
         }
@@ -690,28 +690,50 @@ impl KanLayer {
                 ));
             }
         }
-        // now build a row-major matrix of splines where each column is the splines in a given layer, and the rows are the ith spline in each layer
-        // splines_to_merge = [[L0_S0, L1_S0, ... LJ_S0],
-        //                     [L0_S1, L1_S1, ... LJ_S1],
-        //                     ...
-        //                     [L0_SN, L1_SN, ... LJ_SN]]
-        let num_splines = expected_input_dimension * expected_output_dimension;
-        let mut splines_to_merge = vec![vec![]; num_splines];
-        //populated in column-major order
-        for j in 0..kan_layers.len() {
-            for i in 0..num_splines {
-                splines_to_merge[i].push(kan_layers[j].splines[i].clone());
-            }
-        }
-        let mut merged_splines = Vec::with_capacity(num_splines);
-        for i in 0..num_splines {
-            let merge_result = Edge::merge_edges(&splines_to_merge[i])
-                .map_err(|e| KanLayerError::spline_merge(i, e))?;
-            merged_splines.push(merge_result);
+        let edge_count = expected_input_dimension * expected_output_dimension;
+        // // now build a row-major matrix of splines where each column is the splines in a given layer, and the rows are the ith spline in each layer
+        // // splines_to_merge = [[L0_S0, L1_S0, ... LJ_S0],
+        // //                     [L0_S1, L1_S1, ... LJ_S1],
+        // //                     ...
+        // //                     [L0_SN, L1_SN, ... LJ_SN]]
+        // let num_splines = expected_input_dimension * expected_output_dimension;
+        // let mut splines_to_merge: VecDeque<Vec<Edge>> = vec![vec![]; num_splines].into();
+        // //populated in column-major order
+        // for j in 0..kan_layers.len() {
+        //     for i in 0..num_splines {
+        //         splines_to_merge[i].push(kan_layers[j].splines.remove(i));
+        //     }
+        // }
+        // let mut merged_splines = Vec::with_capacity(num_splines);
+        // let mut i = 0;
+        // while let Some(splines) = splines_to_merge.pop_front() {
+        //     let merge_result =
+        //         Edge::merge_edges(splines).map_err(|e| KanLayerError::spline_merge(i, e))?;
+        //     i += 1;
+        //     merged_splines.push(merge_result);
+        // }
+        let mut all_edges: Vec<VecDeque<Edge>> = kan_layers
+            .into_iter()
+            .map(|layer| layer.splines.into())
+            .collect();
+        let mut merged_edges =
+            Vec::with_capacity(expected_input_dimension * expected_output_dimension);
+        for i in 0..edge_count {
+            let edges_to_merge: Vec<Edge> = all_edges
+                .iter_mut()
+                .map(|layer_dequeue| {
+                    layer_dequeue
+                        .pop_front()
+                        .expect("iterated past end of dequeue while merging layers")
+                })
+                .collect();
+            merged_edges.push(
+                Edge::merge_edges(edges_to_merge).map_err(|e| KanLayerError::spline_merge(i, e))?,
+            );
         }
 
         Ok(KanLayer {
-            splines: merged_splines,
+            splines: merged_edges,
             input_dimension: expected_input_dimension,
             output_dimension: expected_output_dimension,
             samples: vec![],
@@ -730,7 +752,7 @@ impl KanLayer {
     /// Useful at the end of training to enhance interpretability of the model
     pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) {
         debug!(
-            "Testing and setting symbolic functions with threshold {}",
+            "Testing and setting symbolic functions with R2 >= {}",
             r2_threshold
         );
         let mut clamped_edges = Vec::new();
@@ -970,7 +992,7 @@ mod test {
         let acts1 = layer1.infer(&input).unwrap();
         let acts2 = layer2.infer(&input).unwrap();
         assert_eq!(acts1, acts2);
-        let merged_layer = KanLayer::merge_layers(&[layer1, layer2]).unwrap();
+        let merged_layer = KanLayer::merge_layers(vec![layer1, layer2]).unwrap();
         let acts3 = merged_layer.infer(&input).unwrap();
         assert_eq!(acts1, acts3);
     }

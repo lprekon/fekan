@@ -1,5 +1,7 @@
 pub mod kan_error;
 
+use std::collections::VecDeque;
+
 use kan_error::KanError;
 use log::{debug, trace};
 
@@ -482,24 +484,35 @@ impl Kan {
     /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     ///
-    pub fn merge_models(models: &[Kan]) -> Result<Kan, KanError> {
-        Self::models_mergable(models)?; // check if the models are mergable
-
+    pub fn merge_models(models: Vec<Kan>) -> Result<Kan, KanError> {
+        Self::models_mergable(&models)?; // check if the models are mergable
+        let layer_count = models[0].layers.len();
+        let model_type = models[0].model_type;
+        let class_map = models[0].class_map.clone();
+        let mut all_layers: Vec<VecDeque<KanLayer>> = models
+            .into_iter()
+            .map(|model| model.layers.into())
+            .collect();
+        // aggregate layers by index
         let mut merged_layers = Vec::new();
-        for layer_idx in 0..models[0].layers.len() {
-            let layers_to_merge: Vec<KanLayer> = models
-                .iter()
-                .map(|model| model.layers[layer_idx].clone())
+        for layer_idx in 0..layer_count {
+            let layers_to_merge: Vec<KanLayer> = all_layers
+                .iter_mut()
+                .map(|layers| {
+                    layers
+                        .pop_front()
+                        .expect("iterated past end of dequeue while merging models")
+                })
                 .collect();
-            let merged_layer = KanLayer::merge_layers(&layers_to_merge)
+            let merged_layer = KanLayer::merge_layers(layers_to_merge)
                 .map_err(|e| KanError::merge_unmergable_layers(e, layer_idx))?;
             merged_layers.push(merged_layer);
         }
 
         let merged_model = Kan {
             layers: merged_layers,
-            model_type: models[0].model_type,
-            class_map: models[0].class_map.clone(),
+            model_type,
+            class_map,
         };
         Ok(merged_model)
     }
@@ -556,7 +569,7 @@ impl Kan {
     pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) {
         debug!("Testing and setting symbolic for the model");
         for i in 0..self.layers.len() {
-            trace!("Testing and setting symbolic for layer {}", i);
+            debug!("Symbolifying layer {}", i);
             self.layers[i].test_and_set_symbolic(r2_threshold)
         }
     }
@@ -630,7 +643,7 @@ mod test {
         let first_result = first_kan.infer(input.clone()).unwrap();
         let second_result = second_kan.infer(input.clone()).unwrap();
         assert_eq!(first_result, second_result);
-        let merged_kan = Kan::merge_models(&[first_kan, second_kan]).unwrap();
+        let merged_kan = Kan::merge_models(vec![first_kan, second_kan]).unwrap();
         let merged_result = merged_kan.infer(input).unwrap();
         assert_eq!(first_result, merged_result);
     }

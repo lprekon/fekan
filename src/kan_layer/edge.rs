@@ -16,7 +16,7 @@ use log::trace;
 use nalgebra::{DMatrix, DVector, SVD};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::slice::Iter;
+use std::{collections::VecDeque, slice::Iter};
 use strum::{EnumIter, IntoEnumIterator};
 
 pub(crate) mod edge_errors;
@@ -740,7 +740,7 @@ impl Edge {
     /// * returns [`SplineError::MergeMismatchedDegree`] if the splines have different degrees
     /// * returns [`SplineError::MergeMismatchedControlPointCount`] if the splines have different numbers of control points
     /// * returns [`SplineError::MergeMismatchedKnotCount`] if the splines have different numbers of knots
-    pub(crate) fn merge_edges(edges: &[Edge]) -> Result<Edge, EdgeError> {
+    pub(crate) fn merge_edges(edges: Vec<Edge>) -> Result<Edge, EdgeError> {
         if edges.len() == 0 {
             return Err(EdgeError::MergeNoEdges);
         }
@@ -751,30 +751,43 @@ impl Edge {
         {
             return Err(EdgeError::MergeMismatchedEdgeTypes);
         }
-        match &edges[0].kind {
-            EdgeType::Spline {
-                degree,
-                control_points,
-                knots,
-                activations: _,
-                gradients: _,
-            } => {
-                let expected_degree = *degree;
-                let expected_control_point_count = control_points.len();
-                let expected_knot_count = knots.len();
-                let mut new_control_points: Vec<f64> = control_points
-                    .clone()
-                    .iter()
-                    .map(|v| v / edges.len() as f64)
-                    .collect();
-                let mut new_knots: Vec<f64> = knots
-                    .clone()
-                    .iter()
-                    .map(|v| v / edges.len() as f64)
-                    .collect();
-                for i in 1..edges.len() {
-                    let edge = &edges[i];
-                    match &edge.kind {
+        match edges[0].kind {
+            EdgeType::Spline { .. } => {
+                // let expected_degree, = degree;
+                // let expected_control_point_count = control_points.len();
+                // let expected_knot_count = knots.len();
+                // let mut new_control_points: Vec<f64> = control_points
+                //     .clone()
+                //     .into_iter()
+                //     .map(|v| v / edges.len() as f64)
+                //     .collect();
+                // let mut new_knots: Vec<f64> = knots
+                //     .clone()
+                //     .iter()
+                //     .map(|v| v / edges.len() as f64)
+                //     .collect();
+                let total_edges = edges.len();
+                let mut edge_queue = VecDeque::from(edges);
+                let (expected_degree, mut new_control_points, mut new_knots) = match edge_queue
+                    .pop_front()
+                    .expect("edge queue has length zero despite being checked")
+                    .kind
+                {
+                    EdgeType::Spline {
+                        degree,
+                        control_points,
+                        knots,
+                        activations: _,
+                        gradients: _,
+                    } => (degree, control_points, knots),
+                    _ => unreachable!(),
+                };
+                let expected_control_point_count = new_control_points.len();
+                let expected_knot_count = new_knots.len();
+                let mut i = 0;
+                while let Some(edge) = edge_queue.pop_front() {
+                    i += 1;
+                    match edge.kind {
                         EdgeType::Spline {
                             degree,
                             control_points,
@@ -783,11 +796,11 @@ impl Edge {
                             gradients: _,
                         } => {
                             // check for mismatched degrees, control points, and knots
-                            if *degree != expected_degree {
+                            if degree != expected_degree {
                                 return Err(EdgeError::MergeMismatchedDegree {
                                     pos: i,
                                     expected: expected_degree,
-                                    actual: *degree,
+                                    actual: degree,
                                 });
                             }
                             if control_points.len() != expected_control_point_count {
@@ -806,14 +819,22 @@ impl Edge {
                             }
                             // merge in the control points and knots
                             for j in 0..expected_control_point_count {
-                                new_control_points[j] += control_points[j] / edges.len() as f64;
+                                new_control_points[j] += control_points[j];
                             }
                             for j in 0..expected_knot_count {
-                                new_knots[j] += knots[j] / edges.len() as f64;
+                                new_knots[j] += knots[j];
                             }
                         }
                         _ => unreachable!("all edges should be splines"),
                     }
+                }
+                // divide by the number of edges to get the average
+                // doing it inplace like this avoids any allocations that might come with using map
+                for j in 0..expected_control_point_count {
+                    new_control_points[j] /= total_edges as f64;
+                }
+                for j in 0..expected_knot_count {
+                    new_knots[j] /= total_edges as f64;
                 }
                 Ok(Edge::new(expected_degree, new_control_points, new_knots).unwrap())
             }
@@ -946,7 +967,7 @@ impl std::fmt::Display for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
             EdgeType::Spline { degree, knots, .. } => {
-                write!(f, "Spline(k: {}, |knots|: {}", degree, knots.len())
+                write!(f, "Spline(k: {}, |knots|: {})", degree, knots.len())
             }
             EdgeType::Symbolic {
                 a,
@@ -1309,7 +1330,7 @@ mod tests {
         )
         .unwrap();
         let splines = vec![spline1, spline2];
-        let new_spline = Edge::merge_edges(&splines).unwrap();
+        let new_spline = Edge::merge_edges(splines).unwrap();
         let expected_spline = Edge::new(
             3,
             vec![1.5, 2.5, -0.5],
@@ -1326,7 +1347,7 @@ mod tests {
         let spline2 =
             Edge::new(1, vec![2.0, 3.0, -4.0], vec![-1.0, 1.0, 2.0, 5.0, 6.0, 7.0]).unwrap();
         let splines = vec![spline1, spline2];
-        let result = Edge::merge_edges(&splines);
+        let result = Edge::merge_edges(splines);
         assert!(matches!(
             result,
             Err(EdgeError::MergeMismatchedDegree { .. })
@@ -1348,7 +1369,7 @@ mod tests {
         )
         .unwrap();
         let splines = vec![spline1, spline2];
-        let result = Edge::merge_edges(&splines);
+        let result = Edge::merge_edges(splines);
         assert!(matches!(
             result,
             Err(EdgeError::MergeMismatchedControlPointCount { .. })
@@ -1370,7 +1391,7 @@ mod tests {
         )
         .unwrap();
         let splines = vec![spline1, spline2];
-        let result = Edge::merge_edges(&splines);
+        let result = Edge::merge_edges(splines);
         assert!(matches!(
             result,
             Err(EdgeError::MergeMismatchedKnotCount { .. })
@@ -1380,7 +1401,7 @@ mod tests {
     #[test]
     fn test_merge_splines_empty_spline() {
         let splines = vec![];
-        let result = Edge::merge_edges(&splines);
+        let result = Edge::merge_edges(splines);
         assert!(matches!(result, Err(EdgeError::MergeNoEdges)));
     }
 
@@ -1397,7 +1418,7 @@ mod tests {
         let output1 = spline1.forward(t);
         let output2 = spline2.forward(t);
         assert_eq!(output1, output2);
-        let mut new_spline = Edge::merge_edges(&[spline1, spline2]).unwrap();
+        let mut new_spline = Edge::merge_edges(vec![spline1, spline2]).unwrap();
         let output3 = new_spline.forward(t);
         assert_eq!(output1, output3);
     }

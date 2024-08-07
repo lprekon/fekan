@@ -263,7 +263,7 @@ pub fn train_model(
             let multithreaded_training_result = multithreaded_training?;
             let (partially_trained_models, chunk_losses): (Vec<Kan>, Vec<f64>) =
                 multithreaded_training_result.into_iter().unzip();
-            model = Kan::merge_models(&partially_trained_models).map_err(|e| TrainingError {
+            model = Kan::merge_models(partially_trained_models).map_err(|e| TrainingError {
                 source: e,
                 epoch,
                 sample: 0,
