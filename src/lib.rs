@@ -69,7 +69,7 @@ pub mod training_options;
 use std::thread;
 
 use kan::{Kan, ModelType};
-use log::info;
+use log::{debug, info};
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use shuffle::{fy, shuffler::Shuffler};
@@ -107,7 +107,7 @@ impl Sample {
 ///
 /// if `validation_data` is not `None`, the model will be validated after each epoch, and the validation loss will be reported to the observer, otherwise the reported validation loss will be NaN.
 ///
-/// This function will report status to the provided [`training_observer`](TrainingObserver).
+/// This function will report log status.
 ///
 /// This function uses the [`ModelType`] of the model to determine how to calculate the loss and gradient of the model.
 ///
@@ -120,7 +120,7 @@ impl Sample {
 /// returns a [TrainingError] if the model reports an error at any point during training.
 ///
 /// # Example
-/// train a model, using the crate-provided [`EmptyObserver`] to ignore all training events:
+/// train a model with some training data:
 /// ```
 /// use fekan::{train_model, Sample, training_options::TrainingOptions, EmptyObserver};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
@@ -140,7 +140,7 @@ impl Sample {
 /// # Ok::<(), TrainingError>(())
 /// ```
 ///
-/// Train a model, testing it against the validation data after each epoch, and catching the results with a custom struct that implements [`TrainingObserver`]:
+/// Train a model, testing it against the validation data after each epoch:
 /// ```
 /// use fekan::{train_model, Sample, training_options::{TrainingOptions, EachEpoch}};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
@@ -370,7 +370,18 @@ pub fn train_model(
 /// Scan over the training data and adjust model knot ranges. This is equivalent to calling [`Kan::forward`] on each sample in the training data, then calling [`Kan::update_knots_from_samples`] with a `knot_adaptivity` of 0.0.
 /// This presetting helps avoid large amounts of training inputs falling outside the knot ranges, which can cause the model to fail to converge.
 pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(), TrainingError> {
-    Ok(for j in 0..model.layers.len() {
+    debug!("Presetting knot ranges");
+    if log::log_enabled!(log::Level::Debug) {
+        let mut ranges: Vec<(f64, f64)> = vec![(0.0, 0.0); preset_data[0].features.len()];
+        for sample in preset_data {
+            for idx in 0..sample.features.len() {
+                ranges[idx].0 = ranges[idx].0.min(sample.features[idx]);
+                ranges[idx].1 = ranges[idx].1.max(sample.features[idx]);
+            }
+        }
+        debug!("Layer 0 input ranges: {:#?}", ranges);
+    }
+    for set_layer in 0..model.layers.len() {
         for i in 0..preset_data.len() {
             model
                 .forward(preset_data[i].features().clone())
@@ -380,14 +391,35 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
                     sample: i,
                 })?;
         }
+
         model
             .update_knots_from_samples(0.0)
             .map_err(|e| TrainingError {
                 source: e,
                 epoch: 0,
-                sample: j * preset_data.len(),
+                sample: set_layer * preset_data.len(),
             })?; // we only want to get the proper input ranges - we're not worried about high-frequency resolution
-    })
+
+        debug!("Layer {} knot ranges set.", set_layer);
+        if log::log_enabled!(log::Level::Debug) {
+            let mut output_ranges: Vec<(f64, f64)> =
+                vec![(0.0, 0.0); model.layers[set_layer].output_dimension()];
+            let mut outputs = Vec::new();
+            for sample in preset_data {
+                for layer_idx in 0..=set_layer {
+                    outputs = model.layers[layer_idx].forward(&sample.features).unwrap();
+                }
+                for output_idx in 0..outputs.len() {
+                    output_ranges[output_idx].0 =
+                        output_ranges[output_idx].0.min(outputs[output_idx]);
+                    output_ranges[output_idx].1 =
+                        output_ranges[output_idx].1.max(outputs[output_idx]);
+                }
+            }
+            debug!("Layer {} input ranges: {:#?}", set_layer + 1, output_ranges);
+        }
+    }
+    Ok(())
 }
 
 /// Calculates the loss of the model on the provided validation data. If the model is a classification model, the cross entropy loss is calculated.
