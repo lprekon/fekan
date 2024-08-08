@@ -1,6 +1,7 @@
-use super::Edge;
+use super::{Edge, EdgeType, SymbolicFunction};
 use std::fmt;
 
+#[allow(private_interfaces)] // allow private interfaces for error types, since they just need to be displayed
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum EdgeError {
     TooFewKnots {
@@ -28,7 +29,16 @@ pub(crate) enum EdgeError {
         actual: usize,
     },
     MergeNoEdges,
-    MergeMismatchedEdgeTypes,
+    MergeMismatchedEdgeTypes {
+        pos: usize,
+        expected: EdgeType,
+        actual: EdgeType,
+    },
+    MergeMismatchedSymbolicFunctions {
+        pos: usize,
+        expected: SymbolicFunction,
+        actual: SymbolicFunction,
+    },
 }
 
 impl fmt::Display for EdgeError {
@@ -78,7 +88,8 @@ impl fmt::Display for EdgeError {
                 pos, actual, expected
             ),
             EdgeError::MergeNoEdges => write!(f, "no splines to merge"),
-            EdgeError::MergeMismatchedEdgeTypes => write!(f, "unable to merge splines of different edge types"),
+            EdgeError::MergeMismatchedEdgeTypes{pos, expected, actual} => write!(f, "unable to merge edges of different edge types. edge at position {} has edge type {:?}, but expected edge type {:?}", pos, actual, expected),
+            EdgeError::MergeMismatchedSymbolicFunctions{pos, expected, actual} => write!(f, "unable to merge edges with different symbolic functions. edge at position {} has symbolic function {:?}, but expected symbolic function {:?}", pos, actual, expected),
         }
     }
 }

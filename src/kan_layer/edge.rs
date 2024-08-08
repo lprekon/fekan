@@ -745,43 +745,31 @@ impl Edge {
             return Err(EdgeError::MergeNoEdges);
         }
         let expected_variant = std::mem::discriminant(&edges[0].kind);
-        if edges
-            .iter()
-            .any(|e| std::mem::discriminant(&e.kind) != expected_variant)
-        {
-            return Err(EdgeError::MergeMismatchedEdgeTypes);
+        for idx in 1..edges.len() {
+            if std::mem::discriminant(&edges[idx].kind) != expected_variant {
+                return Err(EdgeError::MergeMismatchedEdgeTypes {
+                    pos: idx,
+                    expected: edges[0].kind.clone(),
+                    actual: edges[idx].kind.clone(),
+                });
+            }
         }
-        match edges[0].kind {
-            EdgeType::Spline { .. } => {
-                // let expected_degree, = degree;
-                // let expected_control_point_count = control_points.len();
-                // let expected_knot_count = knots.len();
-                // let mut new_control_points: Vec<f64> = control_points
-                //     .clone()
-                //     .into_iter()
-                //     .map(|v| v / edges.len() as f64)
-                //     .collect();
-                // let mut new_knots: Vec<f64> = knots
-                //     .clone()
-                //     .iter()
-                //     .map(|v| v / edges.len() as f64)
-                //     .collect();
-                let total_edges = edges.len();
-                let mut edge_queue = VecDeque::from(edges);
-                let (expected_degree, mut new_control_points, mut new_knots) = match edge_queue
-                    .pop_front()
-                    .expect("edge queue has length zero despite being checked")
-                    .kind
-                {
-                    EdgeType::Spline {
-                        degree,
-                        control_points,
-                        knots,
-                        activations: _,
-                        gradients: _,
-                    } => (degree, control_points, knots),
-                    _ => unreachable!(),
-                };
+        let total_edges = edges.len();
+        let mut edge_queue = VecDeque::from(edges);
+        match edge_queue
+            .pop_front()
+            .expect("Edge queue empty even after check")
+            .kind
+        {
+            EdgeType::Spline {
+                degree,
+                control_points,
+                knots,
+                ..
+            } => {
+                let expected_degree = degree;
+                let mut new_control_points = control_points;
+                let mut new_knots = knots;
                 let expected_control_point_count = new_control_points.len();
                 let expected_knot_count = new_knots.len();
                 let mut i = 0;
@@ -839,12 +827,62 @@ impl Edge {
                 Ok(Edge::new(expected_degree, new_control_points, new_knots).unwrap())
             }
             EdgeType::Symbolic {
-                a: _,
-                b: _,
-                c: _,
-                d: _,
-                function: _,
-            } => todo!(),
+                a,
+                b,
+                c,
+                d,
+                function,
+            } => {
+                // symbolic edges aren't trained, but we want to support symbolifying before merging, just to be safe.
+                let expected_function = function;
+                let mut new_a = a;
+                let mut new_b = b;
+                let mut new_c = c;
+                let mut new_d = d;
+                let mut i = 0;
+                while let Some(edge) = edge_queue.pop_front() {
+                    i += 1;
+                    match edge.kind {
+                        EdgeType::Symbolic {
+                            a,
+                            b,
+                            c,
+                            d,
+                            function,
+                        } => {
+                            // check for mismatched functions
+                            if function != expected_function {
+                                return Err(EdgeError::MergeMismatchedSymbolicFunctions {
+                                    pos: i,
+                                    expected: expected_function,
+                                    actual: function,
+                                });
+                            }
+                            // merge in the coefficients
+                            new_a += a;
+                            new_b += b;
+                            new_c += c;
+                            new_d += d;
+                        }
+                        _ => unreachable!("all edges should be symbolic"),
+                    }
+                }
+                // divide by the number of edges to get the average
+                new_a /= total_edges as f64;
+                new_b /= total_edges as f64;
+                new_c /= total_edges as f64;
+                new_d /= total_edges as f64;
+                Ok(Edge {
+                    kind: EdgeType::Symbolic {
+                        a: new_a,
+                        b: new_b,
+                        c: new_c,
+                        d: new_d,
+                        function: expected_function,
+                    },
+                    last_t: None,
+                })
+            }
         }
     }
 }
