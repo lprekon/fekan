@@ -4,16 +4,16 @@ set -x # print commands
 
 # make sure we have all the variables and accesses we need
 
-if [ -n "$S3_BUCKET" ]; then
-    echo "S3 target detected. Checking connection..."
-    aws s3 ls s3://$S3_BUCKET
-    if [$? -ne 0]; then
-        echo "Error: could not connect to s3 bucket $S3_BUCKET"
-        exit 1
-    else 
-        echo "Connection successful"
-    fi
-fi
+# if [ -n "$S3_BUCKET" ]; then
+#     echo "S3 target detected. Checking connection..."
+#     aws s3 ls s3://$S3_BUCKET
+#     if [$? -ne 0]; then
+#         echo "Error: could not connect to s3 bucket $S3_BUCKET"
+#         exit 1
+#     else 
+#         echo "Connection successful"
+#     fi
+# fi
 # set our defaults if we don't have them
 if [ -z "$BRANCH" ]; then
     BRANCH="main"
@@ -22,7 +22,7 @@ if [ -n "$KNOT_EXTENSION_TARGETS" ]; then
     KNOT_EXTENSION_FLAG="--knot-extension-targets $KNOT_EXTENSION_TARGETS --knot-extension-times $KNOT_EXTENSION_TIMES"
 fi
 if [ -n "$SYMBOLIFICATION_TIMES" ]; then
-    SYMBOLIFICATION_FLAG="--sym-times $SYMBOLIFICATION_TIMES --sym-threshold $SYMBOLIFICATION_THRESHOLD"
+    SYMBOLIFICATION_FLAG="--sym-times \"$SYMBOLIFICATION_TIMES\" --sym-threshold \"$SYMBOLIFICATION_THRESHOLD\""
 fi
 if [ -n "$HIDDEN_LAYER_SIZES" ]; then
     HIDDEN_LAYER_SIZES_FLAG="--hidden-layer-sizes $HIDDEN_LAYER_SIZES"
@@ -73,6 +73,7 @@ pip3 install -r requirements.txt
 python3 generate_${BENCHMARK}_data.py 100000 > $DATA_FILE
 
 fekan build regressor \
+    -v \
     --data $DATA_FILE \
     $HIDDEN_LAYER_SIZES_FLAG \
     $NUM_EPOCHS_FLAG \
@@ -85,7 +86,6 @@ fekan build regressor \
     --validate-each-epoch \
     --log-output \
     --no-save \
-    -v \ 
     >> $LOG_FILE
 
 if [ -n "$S3_BUCKET" ]; then

@@ -24,7 +24,8 @@ cargo run --features serialization -- build regressor --data "$DATA_FILE" \
    --hidden-layer-sizes "6,4,1" \
    --knot-extension-targets "20" \
    --validate-each-epoch \
-   --knot-extension-times "30"
+   --knot-extension-times "30" \
+   -v
 
 
 
