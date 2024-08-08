@@ -3,7 +3,7 @@ pub mod kan_error;
 use std::collections::VecDeque;
 
 use kan_error::KanError;
-use log::{debug, trace};
+use log::debug;
 
 use crate::kan_layer::{KanLayer, KanLayerOptions};
 

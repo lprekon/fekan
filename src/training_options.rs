@@ -17,6 +17,10 @@ pub struct TrainingOptions<'a> {
     pub knot_extension_targets: Option<Vec<usize>>,
     /// The epochs (one-indexed) after which to extend the knots. Must be sorted in ascending order and equal in length to `knot_extension_targets`
     pub knot_extension_times: Option<Vec<usize>>,
+    /// the epochs (one-indexed) after which to perform symbolification. Must be sorted in ascending order. See [`KanLayer::test_and_set_symbolic`](crate::kan_layer::KanLayer::test_and_set_symbolic) for more information about this process. If not set, no symbolification will occur
+    pub symbolification_times: Option<Vec<usize>>,
+    /// the R2 threshold for symbolification. See [`KanLayer::test_and_set_symbolic`](crate::kan_layer::KanLayer::test_and_set_symbolic) for more information about this process.
+    pub symbolification_threshold: f64,
     /// the number of threads to use when training the model. If <= 1, training will be single-threaded.
     pub num_threads: usize,
     /// whether to test the model against the validation data set after each epoch
@@ -45,6 +49,8 @@ impl<'a> TrainingOptions<'_> {
         learning_rate: f64,
         knot_extension_targets: Option<Vec<usize>>,
         knot_extension_times: Option<Vec<usize>>,
+        symbolification_times: Option<Vec<usize>>,
+        symbolification_threshold: Option<f64>,
         num_threads: usize,
         each_epoch: EachEpoch<'a>,
     ) -> Result<TrainingOptions, TrainingOptionsError> {
@@ -72,6 +78,20 @@ impl<'a> TrainingOptions<'_> {
             }
             None => None,
         };
+        if symbolification_times.is_some() && symbolification_threshold.is_none() {
+            return Err(TrainingOptionsError::MissingSymbolificationThreshold);
+        }
+        if symbolification_times.is_none() && symbolification_threshold.is_some() {
+            return Err(TrainingOptionsError::MissingSymbolificationTimes);
+        }
+        let symbol_times: Option<Vec<usize>> = match symbolification_times {
+            Some(times) => {
+                let mut times = times;
+                times.sort();
+                Some(times)
+            }
+            None => None,
+        };
         Ok(TrainingOptions {
             num_epochs,
             knot_update_interval,
@@ -79,6 +99,8 @@ impl<'a> TrainingOptions<'_> {
             learning_rate,
             knot_extension_targets,
             knot_extension_times: extension_times,
+            symbolification_times: symbol_times,
+            symbolification_threshold: symbolification_threshold.unwrap_or(0.0),
             num_threads,
             each_epoch,
         })
@@ -94,6 +116,8 @@ impl Default for TrainingOptions<'_> {
             learning_rate: 0.001,
             knot_extension_targets: None,
             knot_extension_times: None,
+            symbolification_times: None,
+            symbolification_threshold: 0.0,
             num_threads: 1,
             each_epoch: EachEpoch::DoNotValidateModel,
         }
@@ -114,6 +138,10 @@ pub enum TrainingOptionsError {
         /// The length of the knot extension times received
         knot_extension_times_length: usize,
     },
+    /// Symbolification times were provided, but the symbolification threshold was not
+    MissingSymbolificationThreshold,
+    /// Symbolification threshold was provided, but the symbolification times were not
+    MissingSymbolificationTimes,
 }
 
 impl fmt::Display for TrainingOptionsError {
@@ -122,6 +150,8 @@ impl fmt::Display for TrainingOptionsError {
             TrainingOptionsError::MissingKnotExtensionTimes => write!(f, "Missing knot extension times"),
             TrainingOptionsError::MissingKnotExtensionTargets => write!(f, "Missing knot extension targets"),
             TrainingOptionsError::MismatchedKnotExtensionLengths { knot_extension_targets_length, knot_extension_times_length } => write!(f, "Mismatched knot extension lengths: knot extension targets length is {}, knot extension times length is {}", knot_extension_targets_length, knot_extension_times_length),
+            TrainingOptionsError::MissingSymbolificationThreshold => write!(f, "Missing symbolification threshold"),
+            TrainingOptionsError::MissingSymbolificationTimes => write!(f, "Missing symbolification times"),
         }
     }
 }

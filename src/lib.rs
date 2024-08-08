@@ -176,6 +176,7 @@ pub fn train_model(
     let mut knot_extensions_completed = 0;
     let knot_extension_targets = options.knot_extension_targets.unwrap_or_default();
     let knot_extension_times = options.knot_extension_times.unwrap_or_default();
+    let symbolification_times = options.symbolification_times.unwrap_or_default();
 
     // do several "dummy" passes so we can udpate the knots to span the proper ranges before we start training
     // we need to do one round of pre-setting per layer, since the knot ranges of layer n depend on the output of layer n-1
@@ -317,6 +318,8 @@ pub fn train_model(
                 }
             }
         } // end single-thread-specific code
+
+        // log the epoch loss, and the validation loss if necessary
         match options.each_epoch {
             EachEpoch::ValidateModel(validation_data) => {
                 let validation_lostt = validate_model(validation_data, &mut model);
@@ -327,7 +330,12 @@ pub fn train_model(
             }
             EachEpoch::DoNotValidateModel => info!("Epoch: {}, Epoch Loss: {}", epoch, epoch_loss),
         };
-        // notify the observer that the epoch has ended
+
+        // symbolify the model if necessary
+        if symbolification_times.contains(&epoch) {
+            info!("Symbolifying model");
+            model.test_and_set_symbolic(options.symbolification_threshold);
+        }
 
         // update the knots if necessary
         if knot_extensions_completed < knot_extension_targets.len()

@@ -154,8 +154,20 @@ struct TrainArgs {
         requires = "knot_extension_targets",
         value_delimiter = ','
     )]
-    /// A comma delimmited list numbers representing the epochs after which to extend the knots. Must be equal in length to `knot_extension_targets`. If not set, no extension will occur. Example: `10,50,100` would extend the knots to the lengths specified in `knot_extension_targets` after the 10th, 50th, and 100th epochs (zero indexed)
+    /// A comma delimmited list numbers representing the epochs after which to extend the knots. Must be equal in length to `knot_extension_targets`. If not set, no extension will occur. Example: `10,50,100` would extend the knots to the lengths specified in `knot_extension_targets` after the 10th, 50th, and 100th epochs (one-indexed)
     knot_extension_times: Option<Vec<usize>>,
+
+    #[arg(long = "sym-times", global = true)]
+    /// a comma delimmited list of numbers representing the epochs after which to run symbolification. During symbolification, edges are tested for fit against a variety of symbolic functions (e.g. sin(x), x^2, etc) and will be locked to the best fit function, if R2 is above a certain threshold. If not set, no symbolification will occur. Example: `10,50,100` would run symbolification after the 10th, 50th, and 100th epochs (one indexed)
+    symbolification_times: Option<Vec<usize>>,
+
+    #[arg(
+        long = "sym-threshold",
+        requires = "symbolification_times",
+        global = true
+    )]
+    /// the R2 threshold above which to lock edges to symbolic functions during symbolification. Any edges who's best-fit function has an R2 below this threshold will be left as a spline. If not set, no symbolification will occur
+    symbolification_threshold: Option<f64>,
 
     #[arg(long, global = true)]
     /// if set, the model will be run against the validation data after each epoch, and the loss will be reported to the observer
@@ -231,6 +243,8 @@ impl TrainArgs {
             self.learning_rate,
             self.knot_extension_targets.clone(),
             self.knot_extension_times.clone(),
+            self.symbolification_times.clone(),
+            self.symbolification_threshold,
             num_threads,
             match self.validate_each_epoch {
                 true => EachEpoch::ValidateModel(validation_data),
