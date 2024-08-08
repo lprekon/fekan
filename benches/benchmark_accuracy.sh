@@ -22,7 +22,7 @@ if [ -n "$KNOT_EXTENSION_TARGETS" ]; then
     KNOT_EXTENSION_FLAG="--knot-extension-targets $KNOT_EXTENSION_TARGETS --knot-extension-times $KNOT_EXTENSION_TIMES"
 fi
 if [ -n "$SYMBOLIFICATION_TIMES" ]; then
-    SYMBOLIFICATION_FLAG="--sym-times \"$SYMBOLIFICATION_TIMES\" --sym-threshold \"$SYMBOLIFICATION_THRESHOLD\""
+    SYMBOLIFICATION_FLAG="--sym-times $SYMBOLIFICATION_TIMES --sym-threshold $SYMBOLIFICATION_THRESHOLD"
 fi
 if [ -n "$HIDDEN_LAYER_SIZES" ]; then
     HIDDEN_LAYER_SIZES_FLAG="--hidden-layer-sizes $HIDDEN_LAYER_SIZES"
