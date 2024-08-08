@@ -31,7 +31,8 @@ struct Cli {
     #[arg(long, global = true)]
     num_threads: Option<usize>,
 
-    #[arg(long, action=clap::ArgAction::Count, global = true)]
+    #[arg(short, action=clap::ArgAction::Count, global = true)]
+    /// set the verbosity level. Use -v for debug, -vv for trace
     verbosity: u8,
 }
 
