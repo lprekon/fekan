@@ -17,14 +17,13 @@ git rev-parse HEAD
 python3 generate_feynman_I-9-18_data.py 1000 > "$DATA_FILE"
 
 
-cargo run --features serialization -- build regressor --data "$DATA_FILE" \
-   --learning-rate 0.01 \
+cargo run --features serialization --profile release -- build regressor --data "$DATA_FILE" \
+   --learning-rate 0.005 \
    --no-save \
-   --coefs 10 \
+   --coefs 20 \
    --hidden-layer-sizes "6,4,1" \
-   --knot-extension-targets "20" \
    --validate-each-epoch \
-   --knot-extension-times "30" \
+   -e 500 \
    -v
 
 

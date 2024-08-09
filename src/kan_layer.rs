@@ -76,7 +76,7 @@ impl KanLayer {
     pub fn new(options: &KanLayerOptions) -> Self {
         let num_edges = options.input_dimension * options.output_dimension;
         let num_knots = options.coef_size + options.degree + 1;
-        let normal_dist = Normal::new(0.0, 1.0).expect("unable to create normal distribution");
+        let normal_dist = Normal::new(0.0, 0.1).expect("unable to create normal distribution");
         let mut randomness = thread_rng();
         let splines = (0..num_edges)
             .map(|_| {
