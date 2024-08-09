@@ -390,7 +390,7 @@ impl Edge {
     /// # Errors
     /// * returns [`SplineError::ActivationsEmpty`] if the activations cache is empty. The most likely cause of this is calling `set_knot_length`  after initializing the spline or calling `update_knots_from_samples`, without first calling `forward` at least once.
     /// * returns [`SplineError::NansInControlPoints`] if the calculated control points contain `NaN` values
-    pub(super) fn set_knot_length(&mut self, knot_length: usize) -> Result<(), EdgeError> {
+    pub(super) fn set_knot_length(&mut self, new_knot_length: usize) -> Result<(), EdgeError> {
         match &mut self.kind {
             EdgeType::Spline {
                 degree,
@@ -400,50 +400,36 @@ impl Edge {
                 gradients,
             } => {
                 let degree = *degree;
-                let new_knots = linspace(knots[0], knots[knots.len() - 1], knot_length);
+                let new_knots = linspace(knots[0], knots[knots.len() - 1], new_knot_length);
                 // build regressor matrix
-                let mut something = activations
+                let inputs = linspace(
+                    knots[0],
+                    knots[knots.len() - 1],
+                    100.max(knots.len() * degree * 2),
+                );
+                let copy_edge = Edge {
+                    // dummy edge to infer outputs, to play nice with the borrow checker
+                    kind: EdgeType::Spline {
+                        degree,
+                        control_points: control_points.clone(),
+                        knots: knots.clone(),
+                        activations: activations.clone(),
+                        gradients: gradients.clone(),
+                    },
+                    last_t: None,
+                };
+                let target_outputs = inputs
                     .iter()
-                    .filter(|((_i, k, _t), _b)| *k == degree)
-                    .map(|((i, _k, t), b)| (*i, f64::from_bits(*t), *b))
-                    .collect::<Vec<_>>();
-                if something.is_empty() {
-                    return Err(EdgeError::ActivationsEmpty);
-                }
-                // put the activations in the correct order. We want each row of the final matrix to be all the basis functions for a single value of t, but since the nalgebra constructors take
-                // inputs in column major order, we build the transpose of the matrix we actually want, and sort by 't' first, then 'i'.
-                something.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                something.sort_by_key(|(i, _t, _b)| *i);
-                /* something = [
-                    (0, t_0, B_0(t_0)), (0, t_1, B_0(t_1)), ..., (0, t_m, B_0(t_m)),
-                    (1, t_0, B_1(t_0)), (1, t_1, B_1(t_1)), ..., (1, t_m, B_1(t_m)),
-                    ...
-                    (n, t_0, B_n(t_0)), (n, t_1, B_n(t_1)), ..., (n, t_m, B_n(t_m))
-                ]
-                 */
-                let num_samples = something.len() / control_points.len();
+                    .map(|t| copy_edge.infer(*t))
+                    .collect::<Vec<f64>>();
+
                 let new_control_point_len = new_knots.len() - degree - 1;
-                let activation_matrix =
-                    DMatrix::from_vec(num_samples, control_points.len(), something);
-                /* activation_matrix = [
-                    [(0, t_0, B_0(t_0)), (1, t_0, B_1(t_0)), ..., (n, t_0, B_n(t_0))],
-                    [(0, t_1, B_0(t_1)), (1, t_1, B_1(t_1)), ..., (n, t_1, B_n(t_1))],
-                    ...
-                    [(0, t_m, B_0(t_m)), (1, t_m, B_1(t_m)), ..., (n, t_m, B_n(t_m))]
-                ]
-                 */
+                let target_matrix = DVector::from_vec(target_outputs);
                 let regressor_matrix =
-                    DMatrix::from_fn(num_samples, new_control_point_len, |i, j| {
-                        let this_t = activation_matrix.row(i)[0].1;
-                        basis_no_cache(j, degree, this_t, &new_knots)
+                    DMatrix::from_fn(inputs.len(), new_control_point_len, |i, j| {
+                        basis_no_cache(j, degree, inputs[i], &new_knots)
                     });
 
-                // build the target matrix by recombining the basis values in the activation matrix with the control points
-                let target_matrix = DVector::from_fn(num_samples, |row, _| {
-                    let row = activation_matrix.row(row);
-                    row.iter()
-                        .fold(0.0, |sum, (i, _t, b)| sum + control_points[*i] * b)
-                });
                 // solve the least squares problem
                 let xtx = regressor_matrix.tr_mul(&regressor_matrix);
                 assert_eq!(xtx.nrows(), xtx.ncols());
