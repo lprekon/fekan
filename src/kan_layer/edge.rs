@@ -57,6 +57,7 @@ enum EdgeType {
         d: f64,
         function: SymbolicFunction,
     },
+    Pruned,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, EnumIter)]
@@ -136,7 +137,7 @@ impl Edge {
                 }
                 sum
             }
-            EdgeType::Symbolic { .. } => self.infer(t), // symbolic edges don't cache activations, so they have the same forward and infer implementations
+            _ => self.infer(t), // symbolic edges don't cache activations, so they have the same forward and infer implementations
         }
     }
 
@@ -181,6 +182,7 @@ impl Edge {
                     SymbolicFunction::Inverse => c / (a * t.max(f64::EPSILON) + b) + d,
                 }
             }
+            EdgeType::Pruned => 0.0, // pruned edges always return 0
         }
     }
 
@@ -262,6 +264,7 @@ impl Edge {
                 };
                 Ok(input_gradient * error)
             }
+            EdgeType::Pruned => Ok(0.0), // pruned edges always return 0
         }
     }
 
@@ -278,7 +281,7 @@ impl Edge {
                     control_points[i] -= learning_rate * gradients[i];
                 }
             }
-            EdgeType::Symbolic { .. } => (), // update on a symbolic edge is a no-op
+            _ => (), // update on a non-spline edge is a no-op
         }
     }
 
@@ -295,7 +298,7 @@ impl Edge {
                     gradients[i] = 0.0;
                 }
             }
-            EdgeType::Symbolic { .. } => (), // zeroing gradients on a symbolic edge is a no-op
+            _ => (), // zeroing gradients on a non-spline edge is a no-op
         }
     }
 
@@ -310,13 +313,7 @@ impl Edge {
                 activations: _,
                 gradients: _,
             } => knots.iter(),
-            EdgeType::Symbolic {
-                a: _,
-                b: _,
-                c: _,
-                d: _,
-                function: _,
-            } => Iter::default(),
+            _ => Iter::default(),
         }
     }
 
@@ -381,7 +378,7 @@ impl Edge {
                 }
                 *knots = new_knots;
             }
-            EdgeType::Symbolic { .. } => (), // symbolic edges don't have knots, so this is a no-op
+            _ => (), // non-spline edges don't have knots, so this is a no-op
         }
     }
 
@@ -450,7 +447,7 @@ impl Edge {
                 *gradients = vec![0.0; control_points.len()];
                 Ok(())
             }
-            EdgeType::Symbolic { .. } => Ok(()), // setting the knot length on a symbolic edge is a no-op
+            _ => Ok(()), // setting the knot length on a non-spline edge is a no-op
         }
     }
 
@@ -460,10 +457,13 @@ impl Edge {
     const PARAM_STEPS: usize = 21;
     const PARAM_ITERATIONS: usize = 5;
 
-    // Find symbolic functions that best fit the spline over the given input data. Return the `num_suggestions` best fits, along with their coefficients of determination (R^2)
-    // IMPORTANT NOTE: despite my wishes, this function does an unreliable job at suggesting constant functions. I'm not going to make constant function a class, because I'm just going to add a bias node at some point
+    /// Find symbolic functions that best fit the spline over the given input data. Return the `num_suggestions` best fits, along with their coefficients of determination (R^2)
+    ///
+    /// IMPORTANT NOTE: despite my wishes, this function does an unreliable job at suggesting constant functions. I'm not going to make constant function a class, because I'm just going to add a bias node at some point
     pub(super) fn suggest_symbolic(&self, num_suggestions: usize) -> Vec<(Edge, f64)> {
-        if let EdgeType::Symbolic { .. } = &self.kind {
+        // if the edge is pruned or symbolic, don't suggest anything
+        if matches!(&self.kind, EdgeType::Pruned) || matches!(&self.kind, EdgeType::Symbolic { .. })
+        {
             return vec![];
         }
         trace!("suggesting symbolic functions for spline {}", self);
@@ -712,6 +712,31 @@ impl Edge {
         best_edge
     }
 
+    /// If the average absolute value of the output of the spline over it's input range (defined as the range between the first and last non-padding knot) is less than `threshold`, lock the edge to y=0;
+    /// If called on a symbolic edge... do nothing(?)
+    fn prune(&mut self, threshold: f64) {
+        match &mut self.kind {
+            EdgeType::Spline {
+                degree,
+                control_points: _,
+                knots,
+                activations,
+                gradients: _,
+            } => {
+                let inputs = linspace(
+                    knots[*degree],
+                    knots[knots.len() - 1 - *degree],
+                    100.max(knots.len() * *degree), // make sure we have enough points to get a good estimate.
+                );
+                let outputs: Vec<f64> = inputs.iter().map(|t| self.infer(*t)).collect();
+                let mean_displacement =
+                    outputs.iter().map(|v| v.abs()).sum::<f64>() / outputs.len() as f64;
+                if mean_displacement < threshold {}
+            }
+            _ => (), // trying to prune a non-spline edge is a no-op
+        }
+    }
+
     /// return the number of control points and knots in the spline
     pub(super) fn parameter_count(&self) -> usize {
         match &self.kind {
@@ -723,6 +748,7 @@ impl Edge {
                 gradients: _,
             } => control_points.len() + knots.len(),
             EdgeType::Symbolic { .. } => 4, // every symbolic edge has 4 parameters - a, b, c, and d
+            EdgeType::Pruned => 0,          // pruned edges have no parameters
         }
     }
 
@@ -737,6 +763,7 @@ impl Edge {
                 gradients: _,
             } => control_points.len(),
             EdgeType::Symbolic { .. } => 0, // symbolic edges have no trainable parameters
+            EdgeType::Pruned => 0,          // pruned edges have no parameters
         }
     }
 
@@ -1083,6 +1110,7 @@ impl std::fmt::Display for Edge {
                     }
                 }
             }
+            EdgeType::Pruned => write!(f, "Pruned"),
         }
     }
 }
