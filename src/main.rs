@@ -158,7 +158,7 @@ struct TrainArgs {
     /// A comma delimmited list numbers representing the epochs after which to extend the knots. Must be equal in length to `knot_extension_targets`. If not set, no extension will occur. Example: `10,50,100` would extend the knots to the lengths specified in `knot_extension_targets` after the 10th, 50th, and 100th epochs (one-indexed)
     knot_extension_times: Option<Vec<usize>>,
 
-    #[arg(long = "sym-times", global = true)]
+    #[arg(long = "sym-times", global = true, value_delimiter = ',')]
     /// a comma delimmited list of numbers representing the epochs after which to run symbolification. During symbolification, edges are tested for fit against a variety of symbolic functions (e.g. sin(x), x^2, etc) and will be locked to the best fit function, if R2 is above a certain threshold. If not set, no symbolification will occur. Example: `10,50,100` would run symbolification after the 10th, 50th, and 100th epochs (one indexed)
     symbolification_times: Option<Vec<usize>>,
 
