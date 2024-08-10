@@ -388,8 +388,7 @@ impl Edge {
     /// set the length of the knot vector to `knot_length` by linearly interpolating between the first and last knot.
     /// calculates a new set of control points using least squares regression over any and all cached activations. Clears the cache after use.
     /// # Errors
-    /// * returns [`SplineError::ActivationsEmpty`] if the activations cache is empty. The most likely cause of this is calling `set_knot_length`  after initializing the spline or calling `update_knots_from_samples`, without first calling `forward` at least once.
-    /// * returns [`SplineError::NansInControlPoints`] if the calculated control points contain `NaN` values
+    /// * returns an [`EdgeError::NansInControlPoints`] if the calculated control points contain `NaN` values
     pub(super) fn set_knot_length(&mut self, new_knot_length: usize) -> Result<(), EdgeError> {
         match &mut self.kind {
             EdgeType::Spline {

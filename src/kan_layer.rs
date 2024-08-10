@@ -454,10 +454,9 @@ impl KanLayer {
     ///
     /// Generally used multiple times throughout training to increase the number of knots in the spline to increase fidelity of the curve
     /// # Notes
-    /// * The number of control points is set to `knot_length - degree - 1`, and the control points are calculated using lstsq over cached samples to approximate the previous curve
-    /// * This method clears the internal cache of samples used to update knots in [`KanLayer::update_knots_from_samples`] (as if [`KanLayer::clear_samples`] was called) so this function and [`update_knots_from_samples`](KanLayer::update_knots_from_samples) should not be called in the same training step (ideally, they should be separated by many training steps - at least as many steps as there are control-points/spline, if not twice that)
+    /// * The number of control points is set to `knot_length - degree - 1`, and the control points are calculated using lstsq to approximate the previous curve
     /// # Errors
-    /// Returns a [`KanLayerError`] if the layer has no samples in the internal cache . This error is usually caused by calling this function before calling [`KanLayer::forward`], or by not calling [`KanLayer::forward`] between the last call to a cache-clearing function and this function
+    /// * Returns an error if any of the splines' updated control points include NaNs. This should never happen, but if it does, it's a bug
     /// # Examples
     /// Extend the knot vectors during training to increase the fidelity of the splines
     /// ```
@@ -480,64 +479,16 @@ impl KanLayer {
     /// assert_eq!(my_layer.parameter_count(), num_splines * (coef_size + my_layer.knot_length()), "starting parameter count");
     ///
     /// /* train the layer a bit to start shaping the splines */
-    /// # let sample = vec![0.0; input_dimension];
-    /// # let _ = my_layer.forward(&sample);
     ///
     /// let new_knot_length = my_layer.knot_length() * 2;
     /// let update_result = my_layer.set_knot_length(new_knot_length);
-    /// assert!(update_result.is_ok(), "update knots"); // we have samples from training, so we can update the knot vectors
+    /// assert!(update_result.is_ok(), "update knots");
     ///
     /// assert_eq!(my_layer.knot_length(), new_knot_length, "ending knots per edge");
     /// let new_coef_size = new_knot_length - degree - 1;
     /// assert_eq!(my_layer.parameter_count(), num_splines * (new_coef_size + new_knot_length), "ending parameter count");
     ///
     /// /* continue training layer, now with increased fidelity in the spline */
-    /// ```
-    /// Try to extend the knot vectors without first calling [`KanLayer::forward`]
-    /// ```
-    /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
-    /// # let input_dimension = 2;
-    /// # let output_dimension = 4;
-    /// # let degree = 5;
-    /// # let coef_size = 6;
-    /// # let layer_options = KanLayerOptions {
-    /// #     input_dimension,
-    /// #     output_dimension,
-    /// #     degree,
-    /// #     coef_size
-    /// # };
-    ///
-    /// let mut my_layer = KanLayer::new(&layer_options);
-    ///
-    /// // oops - I wanted splines with greater fidelity. I'll just extend the knot vector real quick...
-    /// let the_knot_lenght_i_really_wanted = my_layer.knot_length() * 2;
-    /// let update_result = my_layer.set_knot_length(the_knot_lenght_i_really_wanted);
-    /// assert!(update_result.is_err(), "update knots"); // we haven't called forward, so we can't update the knot vectors
-    /// ```
-    /// Try to extend the knot vectors immediately after updating them with [`KanLayer::update_knots_from_samples`]
-    /// ```
-    /// # use fekan::kan_layer::KanLayerOptions;
-    /// use fekan::kan_layer::KanLayer;
-    /// # let input_dimension = 2;
-    /// # let output_dimension = 4;
-    /// # let degree = 3;
-    /// # let coef_size = 10;
-    /// # let layer_options = KanLayerOptions {
-    /// #     input_dimension,
-    /// #     output_dimension,
-    /// #     degree,
-    /// #     coef_size
-    /// # };
-    /// # let mut my_layer = KanLayer::new(&layer_options);
-    /// # let sample1 = vec![0.0; input_dimension];
-    /// # let sample2 = vec![0.0; input_dimension];
-    /// let _acts = my_layer.forward(&sample1);
-    /// let _acts = my_layer.forward(&sample2);
-    /// let update_knot_range_result = my_layer.update_knots_from_samples(0.0);
-    /// assert!(update_knot_range_result.is_ok(), "update knot range"); // we have samples from training, so we can update the knot vectors
-    /// // Well, that's the end of the epoch. I guess now's a good time to extend the knot vectors...
-    /// let extend_knot_vector_result = my_layer.set_knot_length(my_layer.knot_length() * 2);
-    /// assert!(extend_knot_vector_result.is_err(), "extend knot vector"); // we've cleared the samples, so we can't update the knot vectors
     /// ```
     /// # Panics
     /// Panics if the Singular Value Decomposition (SVD) used to calculate the control points fails. This should never happen, but if it does, it's a bug
@@ -664,7 +615,7 @@ impl KanLayer {
     ///     }).collect();
     ///     handles.into_iter().map(|handle| handle.join().unwrap()).collect()
     /// });
-    /// let fully_trained_layer = KanLayer::merge_layers(&partially_trained_layers)?;
+    /// let fully_trained_layer = KanLayer::merge_layers(partially_trained_layers)?;
     /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
     pub fn merge_layers(kan_layers: Vec<KanLayer>) -> Result<KanLayer, KanLayerError> {

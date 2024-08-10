@@ -480,7 +480,7 @@ impl Kan {
     ///     }).collect();
     ///     handles.into_iter().map(|handle| handle.join().unwrap()).collect()
     /// });
-    /// let fully_trained_model = Kan::merge_models(&partially_trained_models)?;
+    /// let fully_trained_model = Kan::merge_models(partially_trained_models)?;
     /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     ///
