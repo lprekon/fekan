@@ -100,9 +100,14 @@ fn bench_update_knots_from_samples(b: &mut Bencher) {
     b.iter(|| layer.update_knots_from_samples(0.1));
 }
 
-// #[bench]
+#[bench]
 fn bench_set_knot_length(b: &mut Bencher) {
-    let mut layer = big_layer_big_spline();
+    let mut layer = KanLayer::new(&KanLayerOptions {
+        input_dimension: 1,
+        output_dimension: 1,
+        degree: 3,
+        coef_size: COEF_SIZE_BIG,
+    });
 
     b.iter(|| layer.set_knot_length(COEF_SIZE_BIG * 2));
 }
