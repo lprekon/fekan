@@ -520,8 +520,8 @@ impl KanLayer {
     /// use fekan::kan_layer::KanLayer;
     /// # let input_dimension = 2;
     /// # let output_dimension = 4;
-    /// # let degree = 5;
-    /// # let coef_size = 6;
+    /// # let degree = 3;
+    /// # let coef_size = 10;
     /// # let layer_options = KanLayerOptions {
     /// #     input_dimension,
     /// #     output_dimension,

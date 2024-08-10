@@ -16,7 +16,7 @@ use log::trace;
 use nalgebra::{DMatrix, DVector, SVD};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, slice::Iter};
+use std::{collections::VecDeque, slice::Iter, thread};
 use strum::{EnumIter, IntoEnumIterator};
 
 pub(crate) mod edge_errors;
@@ -476,64 +476,85 @@ impl Edge {
         let expected_outputs: Vec<f64> = inputs.iter().map(|t| self.infer(*t)).collect();
         trace!("inputs: {:?}", inputs);
         trace!("expected_outputs: {:?}", expected_outputs);
-        let mut best_functions: Vec<(Edge, f64)> = vec![];
         // iterate over all possible symbolic functions
-        for edge_type in SymbolicFunction::iter() {
-            // create a default symbolic edge of the current type, which will be used to store the best edge of the current type (storing the a and b values for us)
-            trace!("trying symbolic function {:?}", edge_type);
-            match edge_type {
-                SymbolicFunction::Linear => {
-                    let x_matrix = DMatrix::from_fn(inputs.len(), 2, |i, j| {
-                        // add a constant column so we can calculate the intercept aka b
-                        if j == 0 {
-                            inputs[i]
-                        } else {
-                            1.0
-                        }
-                    });
-                    let y_matrix = DVector::from_vec(expected_outputs.to_vec());
-                    let xtx = x_matrix.tr_mul(&x_matrix);
-                    let xty = x_matrix.tr_mul(&y_matrix);
-                    let svd = SVD::new(xtx, true, true);
-                    let solution = svd.solve(&xty, 1e-6).expect("SVD solve failed");
-                    let best_linear_edge = Edge {
-                        kind: EdgeType::Symbolic {
-                            a: solution[0],
-                            b: solution[1],
-                            c: 1.0,
-                            d: 0.0,
-                            function: edge_type,
-                        },
-                        last_t: None,
-                    };
-                    let function_outputs: Vec<f64> =
-                        inputs.iter().map(|t| best_linear_edge.infer(*t)).collect();
-                    let r2 = calculate_coef_of_determination(&expected_outputs, &function_outputs);
-                    best_functions.push((best_linear_edge, r2));
-                }
-                _ => {
-                    let best_edge_of_the_type = Self::parameter_search(
-                        edge_type,
-                        Self::PARAM_STEPS,
-                        Self::PARAM_ITERATIONS,
-                        &inputs,
-                        &expected_outputs,
-                    );
-                    let function_outputs: Vec<f64> = inputs
-                        .iter()
-                        .map(|t| best_edge_of_the_type.infer(*t))
-                        .collect();
-                    let r2 = calculate_coef_of_determination(&expected_outputs, &function_outputs);
-                    trace!(
-                        "Best edge of type {:?} - R2: {} {}",
-                        edge_type,
-                        r2,
-                        best_edge_of_the_type
-                    );
-                    best_functions.push((best_edge_of_the_type, r2));
+        let mut best_functions = thread::scope(|s| {
+            let mut handles: Vec<thread::ScopedJoinHandle<(Edge, f64)>> = vec![];
+            let mut best_functions: Vec<(Edge, f64)> = vec![];
+            for edge_type in SymbolicFunction::iter() {
+                trace!("trying symbolic function {:?}", edge_type);
+                match edge_type {
+                    SymbolicFunction::Linear => {
+                        let x_matrix = DMatrix::from_fn(inputs.len(), 2, |i, j| {
+                            // add a constant column so we can calculate the intercept aka b
+                            if j == 0 {
+                                inputs[i]
+                            } else {
+                                1.0
+                            }
+                        });
+                        let y_matrix = DVector::from_vec(expected_outputs.to_vec());
+                        let xtx = x_matrix.tr_mul(&x_matrix);
+                        let xty = x_matrix.tr_mul(&y_matrix);
+                        let svd = SVD::new(xtx, true, true);
+                        let solution = svd.solve(&xty, 1e-6).expect("SVD solve failed");
+                        let best_linear_edge = Edge {
+                            kind: EdgeType::Symbolic {
+                                a: solution[0],
+                                b: solution[1],
+                                c: 1.0,
+                                d: 0.0,
+                                function: edge_type,
+                            },
+                            last_t: None,
+                        };
+                        let function_outputs: Vec<f64> =
+                            inputs.iter().map(|t| best_linear_edge.infer(*t)).collect();
+                        let r2 =
+                            calculate_coef_of_determination(&expected_outputs, &function_outputs);
+                        best_functions.push((best_linear_edge, r2));
+                    }
+                    _ => {
+                        let edge_type = edge_type.clone();
+                        // a bit of clever shadowing to work with the borrow checker
+                        let inputs = &inputs;
+                        let expected_outputs = &expected_outputs;
+                        let handle: thread::ScopedJoinHandle<(Edge, f64)> = s.spawn(move || {
+                            let best_edge_of_the_type = Self::parameter_search(
+                                edge_type,
+                                Self::PARAM_STEPS,
+                                Self::PARAM_ITERATIONS,
+                                inputs,
+                                expected_outputs,
+                            );
+                            let function_outputs: Vec<f64> = inputs
+                                .iter()
+                                .map(|t| best_edge_of_the_type.infer(*t))
+                                .collect();
+                            let r2 = calculate_coef_of_determination(
+                                &expected_outputs,
+                                &function_outputs,
+                            );
+                            trace!(
+                                "Best edge of type {:?} - R2: {} {}",
+                                edge_type,
+                                r2,
+                                best_edge_of_the_type
+                            );
+                            return (best_edge_of_the_type, r2);
+                        });
+                        handles.push(handle);
+                    }
                 }
             }
-        }
+            [
+                best_functions,
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().unwrap())
+                    .collect::<Vec<(Edge, f64)>>(),
+            ]
+            .concat()
+        });
 
         best_functions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         let max_suggestions = best_functions.len().min(num_suggestions);
