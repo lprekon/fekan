@@ -100,11 +100,11 @@ fn bench_update_knots_from_samples(b: &mut Bencher) {
     b.iter(|| layer.update_knots_from_samples(0.1));
 }
 
-#[bench]
+// #[bench]
 fn bench_set_knot_length(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
 
-    b.iter(|| layer.set_knot_length(COEF_SIZE_BIG * 3));
+    b.iter(|| layer.set_knot_length(COEF_SIZE_BIG * 2));
 }
 
 #[bench]

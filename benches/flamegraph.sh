@@ -14,7 +14,7 @@ build regressor \
 --coefs 5 \
 --knot-extension-targets 20 \
 --knot-extension-times 4 \
---sym-times 4 \
+--sym-times "3,10" \
 --sym-threshold 0.98 \
 --learning-rate 0.01 \
 --validate-each-epoch  \
