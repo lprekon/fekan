@@ -9,7 +9,6 @@ pub(crate) enum EdgeError {
         actual: usize,
     },
     BackwardBeforeForward,
-    ActivationsEmpty,
     NansInControlPoints {
         offending_spline: Edge,
     },
@@ -53,9 +52,6 @@ impl fmt::Display for EdgeError {
             }
             EdgeError::BackwardBeforeForward => {
                 write!(f, "backward called before forward")
-            }
-            EdgeError::ActivationsEmpty => {
-                write!(f, "activations cache is empty")
             }
             EdgeError::NansInControlPoints{offending_spline} => {
                 write!(f, "updated control points contain NaN values - {:?}", offending_spline)
