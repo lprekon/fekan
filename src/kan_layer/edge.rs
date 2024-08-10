@@ -186,7 +186,7 @@ impl Edge {
         }
     }
 
-    const L1_LAMBDA: f64 = 0.001;
+    const L1_LAMBDA: f64 = 0.0;
     /// compute the gradients for each control point  on the spline and accumulate them internally.
     ///
     /// returns the gradient of the input used in the forward pass,to be accumulated by the caller and passed back to the pervious layer as its error
@@ -218,7 +218,7 @@ impl Edge {
                     // dC_i = B_ik(t) * adjusted_error
                     let basis_activation = activations.get(&(i, k, last_t.to_bits())).unwrap();
                     // gradients aka drt_output_wrt_control_point * error
-                    let l1_loss = control_points[i] * Self::L1_LAMBDA;
+                    let l1_loss = control_points[i].signum() * Self::L1_LAMBDA;
                     let gradient_update = (adjusted_error + l1_loss) * basis_activation;
                     gradients[i] += gradient_update;
 
