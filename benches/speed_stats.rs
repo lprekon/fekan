@@ -9,9 +9,9 @@ use fekan::kan_layer::{KanLayer, KanLayerOptions};
 const DEGREE: usize = 5;
 
 const INPUT_DIMENSION_BIG: usize = 128;
-const INPUT_DIMENSION_SMALL: usize = 2;
+// const INPUT_DIMENSION_SMALL: usize = 2;
 const OUTPUT_DIMENSION_BIG: usize = 12;
-const OUTPUT_DIMENSION_SMALL: usize = 2;
+// const OUTPUT_DIMENSION_SMALL: usize = 2;
 
 const COEF_SIZE_BIG: usize = 100;
 // const COEF_SIZE_SMALL: usize = 10;
@@ -25,14 +25,14 @@ const COEF_SIZE_BIG: usize = 100;
 //     })
 // }
 
-fn small_layer_big_spline() -> KanLayer {
-    KanLayer::new(&KanLayerOptions {
-        input_dimension: INPUT_DIMENSION_SMALL,
-        output_dimension: OUTPUT_DIMENSION_SMALL,
-        degree: DEGREE,
-        coef_size: OUTPUT_DIMENSION_BIG,
-    })
-}
+// fn small_layer_big_spline() -> KanLayer {
+//     KanLayer::new(&KanLayerOptions {
+//         input_dimension: INPUT_DIMENSION_SMALL,
+//         output_dimension: OUTPUT_DIMENSION_SMALL,
+//         degree: DEGREE,
+//         coef_size: OUTPUT_DIMENSION_BIG,
+//     })
+// }
 
 fn big_layer_big_spline() -> KanLayer {
     KanLayer::new(&KanLayerOptions {
@@ -103,24 +103,18 @@ fn bench_update_knots_from_samples(b: &mut Bencher) {
 #[bench]
 fn bench_set_knot_length(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
-    for _ in 0..100 {
-        let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
-            .map(|_| thread_rng().gen())
-            .collect();
-        let _ = layer.forward(&input);
-    }
+
     b.iter(|| layer.set_knot_length(COEF_SIZE_BIG * 3));
 }
 
 #[bench]
 fn bench_suggest_symbolic(b: &mut Bencher) {
-    let mut layer = small_layer_big_spline();
-    for _ in 0..100 {
-        let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
-            .map(|_| thread_rng().gen())
-            .collect();
-        let _ = layer.forward(&input);
-    }
+    let layer = KanLayer::new(&KanLayerOptions {
+        input_dimension: 1,
+        output_dimension: 1,
+        degree: 3,
+        coef_size: 10,
+    });
     b.iter(|| {
         let _ = layer.bench_suggest_symbolic();
     });
