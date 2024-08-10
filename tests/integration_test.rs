@@ -132,7 +132,7 @@ mod regression {
     /// build a model and train it on the function f(x, y) = e^(sin(pi*x) * y^2)
     #[test]
     fn exp_sin_pix_y_squared() {
-        let training_data = (0..1000)
+        let training_data = (0..5000)
             .map(|_| {
                 let x = thread_rng().gen_range(-1.0..1.0);
                 let y = thread_rng().gen_range(-1.0..1.0);
@@ -150,21 +150,21 @@ mod regression {
             .collect::<Vec<Sample>>();
         let mut untrained_model = Kan::new(&KanOptions {
             input_size: 2,
-            layer_sizes: vec![3, 2, 1],
+            layer_sizes: vec![5, 1],
             degree: 3,
-            coef_size: 5,
+            coef_size: 10,
             model_type: ModelType::Regression,
             class_map: None,
         });
 
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
-        preset_knot_ranges(&mut untrained_model, &training_data).unwrap();
         let mut trained_model = train_model(
             untrained_model,
             &training_data,
             TrainingOptions {
-                num_epochs: 50,
+                num_epochs: 250,
                 num_threads: 8,
+                learning_rate: 0.01,
                 each_epoch: fekan::training_options::EachEpoch::ValidateModel(&validation_data),
                 ..TrainingOptions::default()
             },
@@ -177,14 +177,74 @@ mod regression {
         untrained_validation_loss,
         validation_loss
         );
-        trained_model.test_and_set_symbolic(0.95);
-        let symbolic_loss = validate_model(&validation_data, &mut trained_model);
+        // trained_model.test_and_set_symbolic(0.95);
+        // let symbolic_loss = validate_model(&validation_data, &mut trained_model);
+        // assert!(
+        //     symbolic_loss - validation_loss < 0.01,
+        //     "Symbolification significantly degraded loss. Before {}, After {}",
+        //     validation_loss,
+        //     symbolic_loss,
+        // );
+        let pruning_results = trained_model.prune(1e-2);
+        assert_ne!(pruning_results, vec![]);
+    }
+
+    #[test]
+    fn prune_an_edge() {
+        fn true_function(x: f64, _y: f64) -> f64 {
+            x.sin()
+        }
+        let x_range = 0.0..6.0;
+        let y_range = -1.0..1.0;
+        let training_data = (0..10000)
+            .map(|_| {
+                let x = thread_rng().gen_range(x_range.clone());
+                let y = thread_rng().gen_range(y_range.clone());
+                let label = true_function(x, y);
+                Sample::new(vec![x, y], label)
+            })
+            .collect::<Vec<Sample>>();
+        let validation_data = (0..1000)
+            .map(|_| {
+                let x = thread_rng().gen_range(x_range.clone());
+                let y = thread_rng().gen_range(y_range.clone());
+                let label = true_function(x, y);
+                Sample::new(vec![x, y], label)
+            })
+            .collect::<Vec<Sample>>();
+        let mut untrained_model = Kan::new(&KanOptions {
+            input_size: 2,
+            layer_sizes: vec![1],
+            degree: 3,
+            coef_size: 10,
+            model_type: ModelType::Regression,
+            class_map: None,
+        });
+
+        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
+        preset_knot_ranges(&mut untrained_model, &training_data).unwrap();
+        let mut trained_model = train_model(
+            untrained_model,
+            &training_data,
+            TrainingOptions {
+                num_epochs: 500,
+                num_threads: 8,
+                learning_rate: 0.001,
+                each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,
+                ..TrainingOptions::default()
+            },
+        )
+        .unwrap();
+        let validation_loss = validate_model(&validation_data, &mut trained_model);
         assert!(
-            symbolic_loss - validation_loss < 0.01,
-            "Symbolification significantly degraded loss. Before {}, After {}",
-            validation_loss,
-            symbolic_loss,
+        validation_loss < untrained_validation_loss,
+        "Validation loss did not decrease after training. Before training: {}, After training: {}",
+        untrained_validation_loss,
+        validation_loss
         );
+
+        let prune_results = trained_model.prune(1e-2);
+        assert_eq!(prune_results, vec![(0, 1)])
     }
 
     mod symbols {

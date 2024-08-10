@@ -719,6 +719,20 @@ impl KanLayer {
         debug!("Symbolified layer:\n{}", self);
     }
 
+    /// Any edges in this layer with an average absolute output value less than `threshold` will be 'pruned' - that is, they will be replaced with a constant edge that outputs 0.0
+    /// # Returns
+    /// A vector of the indices of the pruned edges
+    pub fn prune(&mut self, threshold: f64) -> Vec<usize> {
+        let mut pruned_indices = Vec::new();
+        for i in 0..self.splines.len() {
+            trace!("Pruning edge {}", i);
+            if self.splines[i].prune(threshold) {
+                pruned_indices.push(i);
+            }
+        }
+        pruned_indices
+    }
+
     /// return the input dimension of this layer
     pub fn input_dimension(&self) -> usize {
         self.input_dimension

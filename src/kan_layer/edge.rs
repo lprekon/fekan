@@ -714,15 +714,12 @@ impl Edge {
 
     /// If the average absolute value of the output of the spline over it's input range (defined as the range between the first and last non-padding knot) is less than `threshold`, lock the edge to y=0;
     /// If called on a symbolic edge... do nothing(?)
-    fn prune(&mut self, threshold: f64) {
+    /// # Returns
+    /// * `true` if the edge was pruned, `false` otherwise
+    pub(super) fn prune(&mut self, threshold: f64) -> bool {
+        trace!("pruning edge {}", self);
         match &mut self.kind {
-            EdgeType::Spline {
-                degree,
-                control_points: _,
-                knots,
-                activations,
-                gradients: _,
-            } => {
+            EdgeType::Spline { degree, knots, .. } => {
                 let inputs = linspace(
                     knots[*degree],
                     knots[knots.len() - 1 - *degree],
@@ -731,9 +728,19 @@ impl Edge {
                 let outputs: Vec<f64> = inputs.iter().map(|t| self.infer(*t)).collect();
                 let mean_displacement =
                     outputs.iter().map(|v| v.abs()).sum::<f64>() / outputs.len() as f64;
-                if mean_displacement < threshold {}
+                trace!(
+                    "inputs = {:?}\noutputs = {:?}\nmean_displacement: {}",
+                    inputs,
+                    outputs,
+                    mean_displacement
+                );
+                if mean_displacement < threshold {
+                    self.kind = EdgeType::Pruned;
+                    return true;
+                }
+                return false;
             }
-            _ => (), // trying to prune a non-spline edge is a no-op
+            _ => return false, // trying to prune a non-spline edge is a no-op
         }
     }
 
@@ -916,6 +923,10 @@ impl Edge {
                     last_t: None,
                 })
             }
+            EdgeType::Pruned => Ok(Edge {
+                kind: EdgeType::Pruned,
+                last_t: None,
+            }),
         }
     }
 }
@@ -1614,15 +1625,27 @@ mod tests {
     }
 
     #[test]
-    fn test_spline_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<Edge>();
+    fn prune_dead_edge() {
+        let mut spline = Edge::new(
+            3,
+            vec![1e-7, 2e-7, 3e-7],
+            vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        )
+        .unwrap();
+        spline.prune(1e-6);
+        assert!(matches!(spline.kind, EdgeType::Pruned));
     }
 
     #[test]
-    fn test_spline_sync() {
-        fn assert_sync<T: Sync>() {}
-        assert_sync::<Edge>();
+    fn prune_alive_edge() {
+        let mut spline = Edge::new(
+            3,
+            vec![1.0, 2.0, 3.0],
+            vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        )
+        .unwrap();
+        spline.prune(1e-6);
+        assert!(matches!(spline.kind, EdgeType::Spline { .. }));
     }
 
     mod symbolic_tests {
@@ -1741,5 +1764,16 @@ mod tests {
             let expected_gradient = 900.7646484375; // (d/dx c(ax + b)^3 + d) * gradient
             assert_almost_eq!(gradient, expected_gradient, 1e-6);
         }
+    }
+    #[test]
+    fn test_spline_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<Edge>();
+    }
+
+    #[test]
+    fn test_spline_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<Edge>();
     }
 }

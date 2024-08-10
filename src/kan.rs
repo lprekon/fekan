@@ -573,6 +573,18 @@ impl Kan {
             self.layers[i].test_and_set_symbolic(r2_threshold)
         }
     }
+
+    /// Prune the model, removing any edges that have low average output. See [`KanLayer::prune`] for more information
+    /// Returns a list of the indices of pruned edges (i,j), where i is the index of the layer, and j is the index of the edge in that layer that was pruned
+    pub fn prune(&mut self, threshold: f64) -> Vec<(usize, usize)> {
+        let mut pruned_edges = Vec::new();
+        for i in 0..self.layers.len() {
+            debug!("Pruning layer {}", i);
+            let layer_prunings = self.layers[i].prune(threshold);
+            pruned_edges.extend(layer_prunings.into_iter().map(|j| (i, j)));
+        }
+        pruned_edges
+    }
 }
 
 impl PartialEq for Kan {
