@@ -132,11 +132,14 @@ mod regression {
     /// build a model and train it on the function f(x, y) = e^(sin(pi*x) * y^2)
     #[test]
     fn exp_sin_pix_y_squared() {
+        fn true_function(x: f64, y: f64) -> f64 {
+            ((std::f64::consts::PI * x).sin() + y.powi(2)).exp()
+        }
         let training_data = (0..5000)
             .map(|_| {
                 let x = thread_rng().gen_range(-1.0..1.0);
                 let y = thread_rng().gen_range(-1.0..1.0);
-                let label = ((std::f64::consts::PI * x).sin() * (y * y)).exp();
+                let label = true_function(x, y);
                 Sample::new(vec![x, y], label)
             })
             .collect::<Vec<Sample>>();
@@ -144,7 +147,7 @@ mod regression {
             .map(|_| {
                 let x = thread_rng().gen_range(-1.0..1.0);
                 let y = thread_rng().gen_range(-1.0..1.0);
-                let label = ((std::f64::consts::PI * x).sin() * (y * y)).exp();
+                let label = true_function(x, y);
                 Sample::new(vec![x, y], label)
             })
             .collect::<Vec<Sample>>();
@@ -165,7 +168,7 @@ mod regression {
                 num_epochs: 250,
                 num_threads: 8,
                 learning_rate: 0.01,
-                each_epoch: fekan::training_options::EachEpoch::ValidateModel(&validation_data),
+                each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,
                 ..TrainingOptions::default()
             },
         )
