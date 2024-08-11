@@ -16,7 +16,7 @@ use log::trace;
 use nalgebra::{DMatrix, DVector, SVD};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, slice::Iter, thread};
+use std::{collections::VecDeque, slice::Iter, thread, vec};
 use strum::{EnumIter, IntoEnumIterator};
 
 pub(crate) mod edge_errors;
@@ -45,7 +45,8 @@ enum EdgeType {
 
         /// the activations of the spline at each interval, stored from calls to [`forward()`](Spline::forward) and cleared on calls to [`update_knots_from_samples()`](Spline::update_knots_from_samples)
         #[serde(skip)] // only used during training
-        activations: FxHashMap<(usize, usize, u64), f64>,
+        /// dim0: degree (idx 0 = self.degree, idx 1 = self.degree - 1, etc.), dim1: control point index, dim2: t value
+        activations: Vec<Vec<FxHashMap<u64, f64>>>,
         /// accumulated gradients for each control point
         #[serde(skip)] // only used during training
         gradients: Vec<f64>,
@@ -104,12 +105,13 @@ impl Edge {
                 actual: knots.len(),
             });
         }
+        let num_control_points = control_points.len();
         Ok(Edge {
             kind: EdgeType::Spline {
                 degree,
                 control_points,
                 knots,
-                activations: FxHashMap::default(),
+                activations: vec![vec![FxHashMap::default(); num_control_points + degree]; degree],
                 gradients: vec![0.0; size],
             },
             last_t: None,
@@ -216,7 +218,7 @@ impl Edge {
                 for i in 0..control_points.len() {
                     // calculate control point gradients
                     // dC_i = B_ik(t) * adjusted_error
-                    let basis_activation = activations.get(&(i, k, last_t.to_bits())).unwrap();
+                    let basis_activation = activations[0][i].get(&last_t.to_bits()).unwrap();
                     // gradients aka drt_output_wrt_control_point * error
                     let l1_loss = control_points[i].signum() * Self::L1_LAMBDA;
                     let gradient_update = (adjusted_error + l1_loss) * basis_activation;
@@ -445,7 +447,8 @@ impl Edge {
                 *control_points = new_control_points;
                 *knots = new_knots;
                 // reset state
-                activations.clear();
+                *activations =
+                    vec![vec![FxHashMap::default(); new_control_point_len + degree]; degree];
                 *gradients = vec![0.0; control_points.len()];
                 Ok(())
             }
@@ -974,7 +977,7 @@ fn basis_cached(
     k: usize,
     t: f64,
     knots: &[f64],
-    cache: &mut FxHashMap<(usize, usize, u64), f64>,
+    cache: &mut [Vec<FxHashMap<u64, f64>>],
     degree: usize,
 ) -> f64 {
     if k == 0 {
@@ -986,7 +989,7 @@ fn basis_cached(
     }
     // only cache the resuts of the initial call and the first recursion
     if k > degree - 2 {
-        if let Some(cached_result) = cache.get(&(i, k, t.to_bits())) {
+        if let Some(cached_result) = cache[degree - k][i].get(&t.to_bits()) {
             return *cached_result;
         }
         let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
@@ -994,7 +997,7 @@ fn basis_cached(
         let left_val = basis_cached(i, k - 1, t, knots, cache, degree);
         let right_val = basis_cached(i + 1, k - 1, t, knots, cache, degree);
         let result = left_coefficient * left_val + right_coefficient * right_val;
-        cache.insert((i, k, t.to_bits()), result);
+        cache[degree - k][i].insert(t.to_bits(), result);
         return result;
     }
     let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
@@ -1151,8 +1154,14 @@ mod tests {
         let k = 3;
         let t = 0.95;
         for i in 0..4 {
-            let result_from_caching_function =
-                basis_cached(i, k, t, &knots, &mut FxHashMap::default(), k);
+            let result_from_caching_function = basis_cached(
+                i,
+                k,
+                t,
+                &knots,
+                &mut vec![vec![FxHashMap::default(); knots.len() - 1]; k],
+                k,
+            );
             let result_from_non_caching_function = basis_no_cache(i, k, t, &knots);
             assert_eq!(
                 result_from_caching_function, result_from_non_caching_function,
@@ -1171,8 +1180,14 @@ mod tests {
         let k = 3;
         let t = 0.0;
         for i in 0..4 {
-            let result_from_caching_function =
-                basis_cached(i, k, t, &knots, &mut FxHashMap::default(), k);
+            let result_from_caching_function = basis_cached(
+                i,
+                k,
+                t,
+                &knots,
+                &mut vec![vec![FxHashMap::default(); knots.len() - 1]; k],
+                k,
+            );
             let result_from_non_caching_function = basis_no_cache(i, k, t, &knots);
             assert_eq!(
                 result_from_caching_function, result_from_non_caching_function,
