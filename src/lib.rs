@@ -340,23 +340,21 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
     }
     
     for set_layer in 0..model.layers.len() {
-        let features = preset_data.iter().map(|s| s.features.clone()).collect::<Vec<Vec<f64>>>();
-            model
-                .forward(features)
-                .map_err(|e| TrainingError {
-                    source: e,
+        let mut features = preset_data.iter().map(|s| s.features.clone()).collect::<Vec<Vec<f64>>>();
+            for forward_layer in 0..=set_layer {
+                debug!("forwarding through layer {}", forward_layer);
+                features = model.layers[forward_layer].forward(features).map_err(|e| TrainingError {
+                    source: KanError::forward(e, forward_layer),
                     epoch: 0,
                     sample: set_layer * preset_data.len(),
                 })?;
-        
-
-        model
-            .update_knots_from_samples(0.0)
-            .map_err(|e| TrainingError {
-                source: e,
-                epoch: 0,
-                sample: set_layer * preset_data.len(),
-            })?; // we only want to get the proper input ranges - we're not worried about high-frequency resolution
+            }
+        debug!("Setting knots for layer {}", set_layer);
+        model.layers[set_layer].update_knots_from_samples(0.0).map_err(|e| TrainingError {
+            source: KanError::update_knots(e, set_layer),
+            epoch: 0,
+            sample: set_layer * preset_data.len(),
+        })?;
 
         debug!("Layer {} knot ranges set.", set_layer);
         if log::log_enabled!(log::Level::Debug) && set_layer < model.layers.len() - 1 {
@@ -365,7 +363,7 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
             
                 let mut outputs = preset_data.iter().map(|s| s.features.clone()).collect::<Vec<Vec<f64>>>();
                 for layer_idx in 0..=set_layer {
-                    outputs = model.layers[layer_idx].forward(outputs).unwrap();
+                    outputs = model.layers[layer_idx].infer(&outputs).unwrap();
                 }
                 for pass in outputs {
                     for idx in 0..pass.len() {
@@ -376,6 +374,7 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
             
             debug!("Layer {} input ranges: {:#?}", set_layer + 1, output_ranges);
         }
+        model.clear_samples();
     }
     info!("Presetting complete");
     Ok(())
