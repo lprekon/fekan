@@ -425,6 +425,7 @@ impl Edge {
     ///
     /// If `samples` is not sorted, the results of the update and future spline operation are undefined.
     pub(super) fn update_knots_from_samples(&mut self, samples: &[f64], knot_adaptivity: f64) {
+        trace!("updating knots from samples: {:?}", samples);
         match &mut self.kind {
             EdgeType::Spline {
                 degree,
@@ -436,7 +437,7 @@ impl Edge {
                 activations
                     .iter_mut()
                     .for_each(|v| v.iter_mut().for_each(|h| h.clear())); // clear the memoized activations. They're no longer valid, now that the knots are changing
-
+                self.last_t.clear(); // clear the last_t cache, since the activations cache is clear
                 let knot_count = knots.len();
                 let base_knot_count = knot_count - 2 * (*degree);
                 let mut adaptive_knots: Vec<f64> = Vec::with_capacity(base_knot_count);
@@ -459,16 +460,6 @@ impl Edge {
 
                 // make sure new_knots doesn't have too many duplicates
                 let mut duplicate_count = 0;
-                for i in 1..new_knots.len() {
-                    if new_knots[i] == new_knots[i - 1] {
-                        duplicate_count += 1;
-                    } else {
-                        duplicate_count = 0;
-                    }
-                    if duplicate_count >= *degree {
-                        return; // we have too many duplicate knots, so we don't update the knots
-                    }
-                }
 
                 // pad the knot vectors at either end to prevent edge effects
                 let step_size = (span_max - span_min) / (knot_count as f64);
@@ -476,9 +467,21 @@ impl Edge {
                     new_knots.insert(0, new_knots[0] - step_size);
                     new_knots.push(new_knots[new_knots.len() - 1] + step_size);
                 }
+
+                for i in 1..new_knots.len() {
+                    if new_knots[i] == new_knots[i - 1] {
+                        duplicate_count += 1;
+                    } else {
+                        duplicate_count = 0;
+                    }
+                    if duplicate_count >= base_knot_count.min(*degree) {
+                        trace!("too many duplicate knots, not updating");
+                        return; // we have too many duplicate knots, so we don't update the knots
+                    }
+                }
                 *knots = new_knots;
             }
-            _ => (), // non-spline edges don't have knots, so this is a no-op
+            _ => trace!("We don't update knots for non-spline edges"), // non-spline edges don't have knots, so this is a no-op
         }
     }
 
