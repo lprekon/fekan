@@ -207,6 +207,7 @@ pub fn train_model(
                             // forward
                             // let batch_inputs: Vec<Vec<f64>> = batch.iter().map(|s| s.features.clone()).collect();
                             // let batch_labels: Vec<f64> = batch.iter().map(|s| s.label).collect();
+                            debug!("Forwarding batch");
                             let (batch_inputs, batch_labels): (Vec<Vec<f64>>, Vec<f64>) = batch.iter().map(|s| (s.features.clone(), s.label)).collect();
                             let batch_logits =
                                 model.forward(batch_inputs).map_err(|e| {
@@ -217,6 +218,7 @@ pub fn train_model(
                                     }
                                 })?;
                             // backward
+                            debug!("calculating loss and gradients");
                             let (batch_loss, batch_gradients) = match model.model_type() {
                                 ModelType::Classification => calculate_nll_loss_and_gradient(
                                     &batch_logits,
@@ -233,15 +235,19 @@ pub fn train_model(
                             };
                             debug!("Batch loss: {}", batch_loss.iter().sum::<f64>() / batch_loss.len() as f64);
                             chunk_loss += batch_loss.iter().sum::<f64>();
+                            debug!("Backwarding batch");
                             model.backward(batch_gradients).map_err(|e| TrainingError {
                                 source: e,
                                 epoch,
                                 sample: chunk_samples_seen,
                             })?;
                             // update weights
+                            debug!("Updating model");
                             model.update(options.learning_rate);
+                            debug!("zeroing gradients");
                             model.zero_gradients();
                             // update knots
+                            debug!("Updating knots");
                             model
                                 .update_knots_from_samples(options.knot_adaptivity)
                                 .map_err(|e| TrainingError {
@@ -249,6 +255,7 @@ pub fn train_model(
                                     epoch,
                                     sample: chunk_samples_seen,
                                 })?;
+                            debug!("clearing samples");
                             model.clear_samples();
                             
                         }
@@ -370,6 +377,7 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
             debug!("Layer {} input ranges: {:#?}", set_layer + 1, output_ranges);
         }
     }
+    info!("Presetting complete");
     Ok(())
 }
 

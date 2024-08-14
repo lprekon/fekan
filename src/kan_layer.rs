@@ -158,6 +158,7 @@ impl KanLayer {
 
         // not the cleanest implementation maybe, but it'll work
         for edge_index in 0..self.splines.len() {
+            trace!("Calculating activations for edge {}", edge_index);
             let in_node_idx = edge_index / self.output_dimension;
             let out_node_idx = edge_index % self.output_dimension;
             let sample_wise_outputs =
@@ -173,7 +174,7 @@ impl KanLayer {
                 activations[sample_idx][out_node_idx] += sample_wise_outputs[sample_idx];
             }
         }
-
+        trace!("Activations: {:?}", activations);
         Ok(activations)
     }
 
@@ -291,10 +292,10 @@ impl KanLayer {
     /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f64) -> Result<(), KanLayerError> {
+        debug!("Updating knots from {} samples", self.samples.len());
         if self.samples.is_empty() {
             return Err(KanLayerError::no_samples());
         }
-
         // lets construct a sorted vector of the samples for each incoming value
         // first we transpose the samples, so that dim0 = input_dimension, dim1 = number of samples
         let mut sorted_samples: Vec<Vec<f64>> =
@@ -314,7 +315,15 @@ impl KanLayer {
         for (idx, spline) in self.splines.iter_mut().enumerate() {
             let sample_idx = idx % self.input_dimension; // the first `input_dimension` splines belong to the first "node", so every `input_dimension` splines, we move to the next node and reset which inner sample vector we're looking at
             let sample = &sorted_samples[sample_idx];
+            trace!("Updating knots for edge {} from samples", idx);
             spline.update_knots_from_samples(sample, knot_adaptivity);
+        }
+        if log::log_enabled!(log::Level::Debug) {
+            let mut ranges = vec![(0.0, 0.0); self.splines.len()];
+            for (idx, spline) in self.splines.iter().enumerate() {
+                ranges[idx] = spline.get_full_input_range();
+            }
+            debug!("Supported input ranges after knot update: {:#?}", ranges);
         }
 
         Ok(())
@@ -401,8 +410,9 @@ impl KanLayer {
         let num_gradients = gradients.len();
         let mut transposed_gradients = vec![vec![0.0; num_gradients]; self.output_dimension];
         for i in 0..num_gradients {
-            for j in 0..self.input_dimension {
-                transposed_gradients[j][i] = gradients[i][j];
+            for j in 0..self.output_dimension {
+                let to_move_gradient = gradients[i][j]; // separate the lines for easier debugging
+                transposed_gradients[j][i] = to_move_gradient;
             }
         }
         let mut backpropped_gradients = vec![vec![0.0; self.input_dimension]; num_gradients];
@@ -412,6 +422,11 @@ impl KanLayer {
             let sample_wise_outputs = self.splines[edge_index]
                 .backward(&transposed_gradients[out_node_idx], 1.0, 0.1, 0.1)
                 .map_err(|e| KanLayerError::backward_before_forward(e, edge_index))?; // TODO incorporate sparsity losses
+            trace!(
+                "Backpropped gradients for edge {}: {:?}",
+                edge_index,
+                sample_wise_outputs
+            );
             for sample_idx in 0..num_gradients {
                 backpropped_gradients[sample_idx][in_node_idx] += sample_wise_outputs[sample_idx];
             }
@@ -782,6 +797,7 @@ impl std::fmt::Display for KanLayer {
 mod test {
 
     use edge::Edge;
+    use test_log::test;
 
     use super::*;
 
@@ -790,11 +806,7 @@ mod test {
         let k = 3;
         let coef_size = 4;
         let knot_size = coef_size + k + 1;
-        let mut knots = vec![0.0; knot_size];
-        knots[0] = -1.0;
-        for i in 1..knots.len() {
-            knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
-        }
+        let knots = linspace(-1.0, 1.0, knot_size);
         let spline1 = Edge::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
         let spline2 = Edge::new(k, vec![-1.0; coef_size], knots.clone()).unwrap();
         KanLayer {

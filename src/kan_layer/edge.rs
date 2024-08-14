@@ -138,7 +138,7 @@ impl Edge {
                 control_points,
                 knots,
                 activations,
-                gradients: _gradients,
+                ..
             } => {
                 for t in inputs.iter() {
                     let mut sum = 0.0;
@@ -149,6 +149,7 @@ impl Edge {
                     }
                     outputs.push(sum);
                 }
+                trace!("edge activations: {:?}", outputs);
                 outputs
             }
             _ => self.infer(inputs), // symbolic edges don't cache activations, so they have the same forward and infer implementations
@@ -1022,6 +1023,17 @@ impl Edge {
                 kind: EdgeType::Pruned,
                 last_t: vec![],
             }),
+        }
+    }
+
+    pub(super) fn get_full_input_range(&self) -> (f64, f64) {
+        match &self.kind {
+            EdgeType::Spline { knots, .. } => {
+                let min = knots[0];
+                let max = knots[knots.len() - 1];
+                (min, max)
+            }
+            _ => (f64::NEG_INFINITY, f64::INFINITY), // symbolic edges have unbounded input range
         }
     }
 }

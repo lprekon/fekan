@@ -3,7 +3,7 @@ pub mod kan_error;
 use std::collections::VecDeque;
 
 use kan_error::KanError;
-use log::debug;
+use log::{debug, trace};
 
 use crate::kan_layer::{KanLayer, KanLayerOptions};
 
@@ -243,8 +243,11 @@ impl Kan {
     /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     pub fn forward(&mut self, input: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, KanError> {
+        debug!("Forwarding {} samples through model", input.len());
         let mut preacts = input;
+        trace!("Preactivations: {:?}", preacts);
         for (idx, layer) in self.layers.iter_mut().enumerate() {
+            debug!("Forwarding through layer {}", idx);
             preacts = layer
                 .forward(preacts)
                 .map_err(|e| KanError::forward(e, idx))?;
@@ -330,6 +333,7 @@ impl Kan {
     /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     pub fn backward(&mut self, gradients: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, KanError> {
+        debug!("Backwarding {} gradients through model", gradients.len());
         let mut gradients = gradients;
         for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
             gradients = layer
@@ -407,6 +411,7 @@ impl Kan {
     /// see [`KanLayer::update_knots_from_samples`] for examples
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f64) -> Result<(), KanError> {
         for (idx, layer) in self.layers.iter_mut().enumerate() {
+            debug!("Updating knots for layer {}", idx);
             if let Err(e) = layer.update_knots_from_samples(knot_adaptivity) {
                 return Err(KanError::update_knots(e, idx));
             }
@@ -418,8 +423,10 @@ impl Kan {
     ///
     /// see [`KanLayer::clear_samples`] for more information
     pub fn clear_samples(&mut self) {
-        for layer in self.layers.iter_mut() {
-            layer.clear_samples();
+        debug!("Clearing samples from model");
+        for layer_idx in 0..self.layers.len() {
+            debug!("Clearing samples from layer {}", layer_idx);
+            self.layers[layer_idx].clear_samples();
         }
     }
 
