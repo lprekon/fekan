@@ -227,10 +227,10 @@ pub fn train_model(
                                 ModelType::Regression => {
                                     assert!(batch_logits.iter().all(|logits| logits.len() == 1), "Regression models must have a single output node");
                                     let (loss, dlogit) = calculate_huber_loss_and_gradient(
-                                        &batch_logits.iter().map(|logits| logits[0]).collect::<Vec<f64>>(),
-                                        &batch_labels,
+                                        &batch_logits,
+                                        &batch_labels.iter().map(|l| vec![*l]).collect::<Vec<Vec<f64>>>(),  
                                     );
-                                    (loss, vec![dlogit])
+                                    (loss, dlogit)
                                 }
                             };
                             debug!("Batch loss: {}", batch_loss.iter().sum::<f64>() / batch_loss.len() as f64);
@@ -394,7 +394,7 @@ pub fn validate_model(validation_data: &[Sample], model: &mut Kan) -> f64 {
         }
         ModelType::Regression => {
             assert!(batch_logits.iter().all(|logits| logits.len() == 1), "Regression models must have a single output node");
-            let (loss, _) = calculate_huber_loss_and_gradient(batch_logits.iter().map(|logits| logits[0]).collect::<Vec<f64>>().as_slice(), &batch_labels); //TODO allow different delta values
+            let (loss, _) = calculate_huber_loss_and_gradient(&batch_logits, &batch_labels.iter().map(|l| vec![*l]).collect::<Vec<Vec<f64>>>()); //TODO allow different delta values
             loss
         }
     };
@@ -460,26 +460,24 @@ const HUBER_DELTA: f64 = 1.3407807929942596e154 - 1.0; // f64::MAX ^ 0.5 - 1.0. 
 /// Calculates the huber loss and the gradient of the loss with respect to the actual value
 /// NOTE: currently only supports a single output node
 fn calculate_huber_loss_and_gradient(
-    batch_actual: &[f64],
-    batch_expected: &[f64],
-) -> (Vec<f64>, Vec<f64>) {
-    let batch_diff = batch_actual
-        .iter()
-        .zip(batch_expected.iter())
-        .map(|(a, e)| a - e);
-    let (batch_loss, batch_gradients) = batch_diff
-        .map(|diff| {
+    batch_actual: &[Vec<f64>],
+    batch_expected: &[Vec<f64>],
+) -> (Vec<f64>, Vec<Vec<f64>>) {
+    let mut loss = vec![0.0; batch_actual.len()];
+    let mut gradients = vec![vec![0.0; batch_actual[0].len()]; batch_actual.len()];
+    for i in 0..batch_actual.len(){
+        for j in 0..batch_actual[0].len(){
+            let diff = batch_actual[i][j] - batch_expected[i][j];
             if diff.abs() < HUBER_DELTA {
-                (0.5 * diff.powi(2), diff)
+                loss[i] += 0.5 * diff.powi(2);
+                gradients[i][j] = diff;
             } else {
-                (
-                    HUBER_DELTA * diff.abs() - 0.5 * HUBER_DELTA.powi(2),
-                    HUBER_DELTA * diff.signum(),
-                )
+                loss[i] += HUBER_DELTA * diff.abs() - 0.5 * HUBER_DELTA.powi(2);
+                gradients[i][j] = HUBER_DELTA * diff.signum();
             }
-        })
-        .collect();
-    (batch_loss, batch_gradients)
+        }
+    }
+    (loss, gradients)
 }
 
 #[cfg(test)]
