@@ -616,9 +616,11 @@ mod test {
         let mut second_kan = Kan::new(&second_kan_config);
         let input = vec![vec![0.5, 0.4, 0.5]];
         let result = first_kan.forward(input.clone()).unwrap();
-        assert_eq!(result.len(), 3);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].len(), 3);
         let result = second_kan.forward(input).unwrap();
-        assert_eq!(result.len(), 3);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].len(), 3);
     }
 
     #[test]
@@ -634,10 +636,12 @@ mod test {
         let mut first_kan = Kan::new(options);
         let input = vec![vec![0.5, 0.4, 0.5, 0.5, 0.4]];
         let result = first_kan.forward(input.clone()).unwrap();
-        assert_eq!(result.len(), options.layer_sizes.last().unwrap().clone());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].len(), options.layer_sizes.last().unwrap().clone());
         let error = vec![vec![0.5, 0.4, 0.5]];
         let result = first_kan.backward(error).unwrap();
-        assert_eq!(result.len(), options.input_size);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].len(), options.input_size);
     }
 
     #[test]
