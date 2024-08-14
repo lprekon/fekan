@@ -27,7 +27,7 @@ pub(crate) struct Edge {
     kind: EdgeType,
     #[serde(skip)]
     // only used during operation
-    last_t: Option<f64>,
+    last_t: Vec<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -106,23 +106,32 @@ impl Edge {
             });
         }
         let num_control_points = control_points.len();
+        let mut activations_cache = Vec::with_capacity(degree);
+        for _ in 0..degree {
+            let mut activations = Vec::with_capacity(num_control_points + degree);
+            for _ in 0..num_control_points + degree {
+                activations.push(FxHashMap::default());
+            }
+            activations_cache.push(activations);
+        }
         Ok(Edge {
             kind: EdgeType::Spline {
                 degree,
                 control_points,
                 knots,
-                activations: vec![vec![FxHashMap::default(); num_control_points + degree]; degree],
+                activations: activations_cache,
                 gradients: vec![0.0; size],
             },
-            last_t: None,
+            last_t: vec![],
         })
     }
 
     /// compute the point on the spline at the given parameter `t`
     ///
     /// accumulate the activations of the spline at each interval in the internal `activations` field
-    pub fn forward(&mut self, t: f64) -> f64 {
-        self.last_t = Some(t); // store the most recent input for use in the backward pass. This happens regardless of the edge type
+    pub fn forward(&mut self, inputs: &[f64]) -> Vec<f64> {
+        self.last_t.extend(inputs.iter()); // store the most recent input for use in the backward pass. This happens regardless of the edge type
+        let mut outputs = Vec::with_capacity(inputs.len());
         match &mut self.kind {
             EdgeType::Spline {
                 degree,
@@ -131,34 +140,42 @@ impl Edge {
                 activations,
                 gradients: _gradients,
             } => {
-                let mut sum = 0.0;
-                for (idx, coef) in control_points.iter().enumerate() {
-                    let basis_activation =
-                        basis_cached(idx, *degree, t, &knots, activations, *degree);
-                    sum += *coef * basis_activation;
+                for t in inputs.iter() {
+                    let mut sum = 0.0;
+                    for (idx, coef) in control_points.iter().enumerate() {
+                        let basis_activation =
+                            basis_cached(idx, *degree, *t, &knots, activations, *degree);
+                        sum += *coef * basis_activation;
+                    }
+                    outputs.push(sum);
                 }
-                sum
+                outputs
             }
-            _ => self.infer(t), // symbolic edges don't cache activations, so they have the same forward and infer implementations
+            _ => self.infer(inputs), // symbolic edges don't cache activations, so they have the same forward and infer implementations
         }
     }
 
     /// comput the point on the spline at given parameter `t`
     ///
     /// Does not accumulate the activations of the spline at each interval in the internal `activations` field, or any other internal state
-    pub fn infer(&self, t: f64) -> f64 {
+    pub fn infer(&self, inputs: &[f64]) -> Vec<f64> {
+        let mut outputs = Vec::with_capacity(inputs.len());
         match &self.kind {
             EdgeType::Spline {
                 degree,
                 control_points,
                 knots,
-                activations: _,
-                gradients: _,
-            } => control_points
-                .iter()
-                .enumerate()
-                .map(|(idx, coef)| *coef * basis_no_cache(idx, *degree, t, knots))
-                .sum(),
+                ..
+            } => {
+                for t in inputs.iter() {
+                    let mut sum = 0.0;
+                    for (idx, coef) in control_points.iter().enumerate() {
+                        let basis_activation = basis_no_cache(idx, *degree, *t, &knots);
+                        sum += *coef * basis_activation;
+                    }
+                    outputs.push(sum);
+                }
+            }
             EdgeType::Symbolic {
                 a,
                 b,
@@ -167,28 +184,31 @@ impl Edge {
                 function,
             } => {
                 let (a, b, c, d) = (*a, *b, *c, *d);
-                match function {
-                    SymbolicFunction::Linear => c * (a * t + b) + d,
-                    SymbolicFunction::Quadratic => c * (a * t + b).powi(2) + d,
-                    SymbolicFunction::Cubic => c * (a * t + b).powi(3) + d,
-                    SymbolicFunction::Quartic => c * (a * t + b).powi(4) + d,
-                    SymbolicFunction::Quintic => c * (a * t + b).powi(5) + d,
-                    SymbolicFunction::SquareRoot => c * (a * t + b).sqrt() + d,
-                    SymbolicFunction::CubeRoot => c * (a * t + b).cbrt() + d,
-                    SymbolicFunction::FourthRoot => c * (a * t + b).powf(0.25) + d,
-                    SymbolicFunction::FifthRoot => c * (a * t + b).powf(0.2) + d,
-                    SymbolicFunction::Sin => c * (a * t + b).sin() + d,
-                    SymbolicFunction::Tan => c * (a * t + b).tan() + d,
-                    SymbolicFunction::Log => c * (a * t + b).ln() + d,
-                    SymbolicFunction::Exp => c * (a * t + b).exp() + d,
-                    SymbolicFunction::Inverse => c / (a * t.max(f64::EPSILON) + b) + d,
+                for t in inputs {
+                    let value = match function {
+                        SymbolicFunction::Linear => c * (a * t + b) + d,
+                        SymbolicFunction::Quadratic => c * (a * t + b).powi(2) + d,
+                        SymbolicFunction::Cubic => c * (a * t + b).powi(3) + d,
+                        SymbolicFunction::Quartic => c * (a * t + b).powi(4) + d,
+                        SymbolicFunction::Quintic => c * (a * t + b).powi(5) + d,
+                        SymbolicFunction::SquareRoot => c * (a * t + b).sqrt() + d,
+                        SymbolicFunction::CubeRoot => c * (a * t + b).cbrt() + d,
+                        SymbolicFunction::FourthRoot => c * (a * t + b).powf(0.25) + d,
+                        SymbolicFunction::FifthRoot => c * (a * t + b).powf(0.2) + d,
+                        SymbolicFunction::Sin => c * (a * t + b).sin() + d,
+                        SymbolicFunction::Tan => c * (a * t + b).tan() + d,
+                        SymbolicFunction::Log => c * (a * t + b).ln() + d,
+                        SymbolicFunction::Exp => c * (a * t + b).exp() + d,
+                        SymbolicFunction::Inverse => c / (a * t.max(f64::EPSILON) + b) + d,
+                    };
+                    outputs.push(value);
                 }
             }
-            EdgeType::Pruned => 0.0, // pruned edges always return 0
+            EdgeType::Pruned => outputs = vec![0.0; inputs.len()], // pruned edges always return 0
         }
+        outputs
     }
 
-    const L1_LAMBDA: f64 = 0.0;
     /// compute the gradients for each control point  on the spline and accumulate them internally.
     ///
     /// returns the gradient of the input used in the forward pass,to be accumulated by the caller and passed back to the pervious layer as its error
@@ -197,48 +217,99 @@ impl Edge {
     ///
     /// # Errors
     /// * Returns [`SplineError::BackwardBeforeForward`] if called before a forward pass
-    pub(super) fn backward(&mut self, error: f64) -> Result<f64, EdgeError> {
-        if let None = self.last_t {
+    pub(super) fn backward(
+        &mut self,
+        edge_gradients: &[f64],
+        layer_l1: f64,
+        l1_lambda: f64,
+        entropy_lambda: f64,
+    ) -> Result<Vec<f64>, EdgeError> {
+        if self.last_t.is_empty() {
             return Err(EdgeError::BackwardBeforeForward);
         }
-        let last_t = self.last_t.unwrap();
+        let edge_l1_norm = self.l1_norm();
+        assert_eq!(edge_l1_norm.signum(), 1.0);
+        assert_eq!(layer_l1.signum(), 1.0);
         match &mut self.kind {
             EdgeType::Spline {
                 degree,
                 control_points,
                 knots,
                 activations,
-                gradients,
+                gradients: control_point_gradients,
             } => {
-                let adjusted_error = error / control_points.len() as f64; // distribute the error evenly across all control points
+                let adjusted_error: Vec<f64> = edge_gradients
+                    .iter()
+                    .map(|e| e / control_points.len() as f64)
+                    .collect(); // distribute the error evenly across all control points
 
                 // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
-                let mut drt_output_wrt_input = 0.0;
+                let mut drts_output_wrt_input = vec![0.0; edge_gradients.len()];
                 let k = *degree;
                 for i in 0..control_points.len() {
-                    // calculate control point gradients
-                    // dC_i = B_ik(t) * adjusted_error
-                    let basis_activation = activations[0][i].get(&last_t.to_bits()).unwrap();
-                    // gradients aka drt_output_wrt_control_point * error
-                    let l1_loss = control_points[i].signum() * Self::L1_LAMBDA;
-                    let gradient_update = (adjusted_error + l1_loss) * basis_activation;
-                    gradients[i] += gradient_update;
+                    // L1 norm of edge = 1/N * Σself.infer(t).abs())
+                    // L1 loss of model = ΣL1 norm of edge ( * L1_LAMBDA)
+                    // ∴ d_model_L1/d_C_i = d_model_L1/d_edge_L1 * d_edge_L1/d_C_i
+                    // d_model_L1/d_edge_L1 = 1
+                    // d_edge_L1/d_C_i = 1/N * ΣB_i(t) * sign(C_i)
+                    assert!(!activations[0][i].is_empty());
+                    let l1_gradient = activations[0][i]
+                        .iter()
+                        .map(|(_t, basis_activation)| basis_activation)
+                        .sum::<f64>()
+                        / activations[0][i].len() as f64
+                        * control_points[i].signum();
+
+                    // Entropy loss of layer = -Σ (edge_L1/layer_L1 * log(edge_L1/layer_L1))
+                    // ∴ d_layer_entropy/d_C_i = d_layer_entropy/d_edge_L1 * d_edge_L1/d_C_i
+                    // d_layer_entropy/d_edge_L1 = -log(edge_L1/layer_L1)
+                    assert_ne!(edge_l1_norm, 0.0, "edge_l1_norm is 0");
+                    assert_ne!(layer_l1, 0.0, "layer_l1 is 0");
+                    let entropy_gradient = (edge_l1_norm / layer_l1).ln() * l1_gradient;
+                    // d_pred_loss/d_C_i = d_pred_loss/d_edge_output * d_edge_output/d_C_i
+                    // d_pred_loss/d_edge_output = 1
+                    // d_edge_output/d_C_i = B_i(t)
+                    let basis_activations = self
+                        .last_t
+                        .iter()
+                        .map(|t| activations[0][i].get(&t.to_bits()).unwrap());
+                    let prediction_gradients = adjusted_error
+                        .iter()
+                        .zip(basis_activations)
+                        .map(|(e, a)| e * a);
+                    control_point_gradients[i] += prediction_gradients.sum::<f64>()
+                        + l1_lambda * l1_gradient
+                        + entropy_lambda * entropy_gradient;
 
                     // calculate the derivative of the spline output with respect to the input (as opposed to wrt the control points)
                     // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
-                    let left = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
-                    let right = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
-                    let left_recurse = basis_cached(i, k - 1, last_t, knots, activations, k);
-                    let right_recurse = basis_cached(i + 1, k - 1, last_t, &knots, activations, k);
+                    let left_coef = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
+                    let right_coef = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
+                    let recurses = self.last_t.iter().map(|t| {
+                        (
+                            basis_cached(i, k - 1, *t, knots, activations, k),
+                            basis_cached(i + 1, k - 1, *t, &knots, activations, k),
+                        )
+                    });
+
                     // println!(
                     //     "i: {} left: {}, right: {}, left_recurse: {}, right_recurse: {}",
                     //     i, left, right, left_recurse, right_recurse
                     // );
-                    let basis_derivative = left * left_recurse - right * right_recurse;
-                    drt_output_wrt_input += control_points[i] * basis_derivative;
+                    let basis_derivative =
+                        recurses.map(|(left, right)| left * left_coef - right * right_coef);
+                    drts_output_wrt_input = drts_output_wrt_input
+                        .iter()
+                        .zip(basis_derivative)
+                        .map(|(drt, bd)| drt + bd * control_points[i])
+                        .collect();
                 }
                 // input_gradient = drt_output_wrt_input * error
-                return Ok(drt_output_wrt_input * error);
+                return Ok(drts_output_wrt_input
+                    .iter()
+                    .zip(edge_gradients.iter())
+                    .map(|(drt, g)| drt * g)
+                    .collect());
             }
             EdgeType::Symbolic {
                 a,
@@ -248,27 +319,50 @@ impl Edge {
                 function,
             } => {
                 let (a, b, c, _) = (*a, *b, *c, *d);
-                let input_gradient = match function {
+                let drts_output_wrt_input = self.last_t.iter().map(|t| match function {
                     SymbolicFunction::Linear => c * a,
-                    SymbolicFunction::Quadratic => 2.0 * a * c * (a * last_t + b),
-                    SymbolicFunction::Cubic => 3.0 * a * c * (a * last_t + b).powi(2),
-                    SymbolicFunction::Quartic => 4.0 * a * c * (a * last_t + b).powi(3),
-                    SymbolicFunction::Quintic => 5.0 * a * c * (a * last_t + b).powi(4),
-                    SymbolicFunction::SquareRoot => 0.5 * c * (a * last_t + b).powf(-0.5),
-                    SymbolicFunction::CubeRoot => {
-                        (1.0 / 3.0) * c * (a * last_t + b).powf(-2.0 / 3.0)
-                    }
-                    SymbolicFunction::FourthRoot => 0.25 * c * (a * last_t + b).powf(-0.75),
-                    SymbolicFunction::FifthRoot => 0.2 * c * (a * last_t + b).powf(-0.8),
-                    SymbolicFunction::Sin => c * a * (a * last_t + b).cos(),
-                    SymbolicFunction::Tan => c * a / (a * last_t + b).cos().powi(2),
-                    SymbolicFunction::Log => c * a / (a * last_t + b),
-                    SymbolicFunction::Exp => c * a * (a * last_t + b).exp(),
-                    SymbolicFunction::Inverse => -c * a / (a * last_t + b).powi(2),
-                };
-                Ok(input_gradient * error)
+                    SymbolicFunction::Quadratic => 2.0 * a * c * (a * t + b),
+                    SymbolicFunction::Cubic => 3.0 * a * c * (a * t + b).powi(2),
+                    SymbolicFunction::Quartic => 4.0 * a * c * (a * t + b).powi(3),
+                    SymbolicFunction::Quintic => 5.0 * a * c * (a * t + b).powi(4),
+                    SymbolicFunction::SquareRoot => 0.5 * c * (a * t + b).powf(-0.5),
+                    SymbolicFunction::CubeRoot => (1.0 / 3.0) * c * (a * t + b).powf(-2.0 / 3.0),
+                    SymbolicFunction::FourthRoot => 0.25 * c * (a * t + b).powf(-0.75),
+                    SymbolicFunction::FifthRoot => 0.2 * c * (a * t + b).powf(-0.8),
+                    SymbolicFunction::Sin => c * a * (a * t + b).cos(),
+                    SymbolicFunction::Tan => c * a / (a * t + b).cos().powi(2),
+                    SymbolicFunction::Log => c * a / (a * t + b),
+                    SymbolicFunction::Exp => c * a * (a * t + b).exp(),
+                    SymbolicFunction::Inverse => -c * a / (a * t + b).powi(2),
+                });
+                Ok(drts_output_wrt_input
+                    .zip(edge_gradients.iter())
+                    .map(|(ig, g)| ig * g)
+                    .collect())
             }
-            EdgeType::Pruned => Ok(0.0), // pruned edges always return 0
+            EdgeType::Pruned => Ok(vec![0.0; edge_gradients.len()]), // pruned edges always return 0
+        }
+    }
+
+    pub(super) fn l1_norm(&self) -> f64 {
+        match &self.kind {
+            EdgeType::Spline {
+                control_points,
+                activations,
+                ..
+            } => {
+                let mut sum = 0.0;
+                let mut count = 0;
+                for hashmap in activations[0][0..control_points.len()].iter() {
+                    assert!(hashmap.len() > 0);
+                    for (_, basis_activation) in hashmap.iter() {
+                        sum += basis_activation.abs();
+                        count += 1;
+                    }
+                }
+                sum / count as f64
+            }
+            _ => 0.0, // symbolic edges have no activations to sum
         }
     }
 
@@ -339,7 +433,9 @@ impl Edge {
                 activations,
                 gradients: _,
             } => {
-                activations.clear(); // clear the memoized activations. They're no longer valid, now that the knots are changing
+                activations
+                    .iter_mut()
+                    .for_each(|v| v.iter_mut().for_each(|h| h.clear())); // clear the memoized activations. They're no longer valid, now that the knots are changing
 
                 let knot_count = knots.len();
                 let base_knot_count = knot_count - 2 * (*degree);
@@ -416,12 +512,9 @@ impl Edge {
                         activations: activations.clone(),
                         gradients: gradients.clone(),
                     },
-                    last_t: None,
+                    last_t: vec![],
                 };
-                let target_outputs = inputs
-                    .iter()
-                    .map(|t| copy_edge.infer(*t))
-                    .collect::<Vec<f64>>();
+                let target_outputs = copy_edge.infer(&inputs);
 
                 let new_control_point_len = new_knots.len() - degree - 1;
                 let target_matrix = DVector::from_vec(target_outputs);
@@ -477,7 +570,7 @@ impl Edge {
             _ => unreachable!(),
         };
         let inputs = linspace(knots[*degree], knots[knots.len() - degree - 1], 100);
-        let expected_outputs: Vec<f64> = inputs.iter().map(|t| self.infer(*t)).collect();
+        let expected_outputs: Vec<f64> = self.infer(&inputs);
         trace!("inputs: {:?}", inputs);
         trace!("expected_outputs: {:?}", expected_outputs);
         // iterate over all possible symbolic functions
@@ -509,10 +602,9 @@ impl Edge {
                                 d: 0.0,
                                 function: edge_type,
                             },
-                            last_t: None,
+                            last_t: vec![],
                         };
-                        let function_outputs: Vec<f64> =
-                            inputs.iter().map(|t| best_linear_edge.infer(*t)).collect();
+                        let function_outputs: Vec<f64> = best_linear_edge.infer(&inputs);
                         let r2 =
                             calculate_coef_of_determination(&expected_outputs, &function_outputs);
                         best_functions.push((best_linear_edge, r2));
@@ -530,10 +622,7 @@ impl Edge {
                                 inputs,
                                 expected_outputs,
                             );
-                            let function_outputs: Vec<f64> = inputs
-                                .iter()
-                                .map(|t| best_edge_of_the_type.infer(*t))
-                                .collect();
+                            let function_outputs: Vec<f64> = best_edge_of_the_type.infer(&inputs);
                             let r2 = calculate_coef_of_determination(
                                 &expected_outputs,
                                 &function_outputs,
@@ -586,7 +675,7 @@ impl Edge {
                 d: 0.0,
                 function: kind,
             },
-            last_t: None,
+            last_t: vec![],
         }; // arbitrary initial value
         let mut a_min = Self::PARAM_MIN;
         let mut a_max = Self::PARAM_MAX;
@@ -616,12 +705,9 @@ impl Edge {
                                 d: 0.0,
                                 function: kind,
                             },
-                            last_t: None,
+                            last_t: vec![],
                         };
-                        let function_outputs: Vec<f64> = inputs
-                            .iter()
-                            .map(|t| function_under_test.infer(*t))
-                            .collect();
+                        let function_outputs: Vec<f64> = function_under_test.infer(inputs);
                         let r2 =
                             calculate_coef_of_determination(expected_outputs, &function_outputs);
                         if r2 > iteration_best_r2 {
@@ -696,10 +782,11 @@ impl Edge {
         // let solution = svd.solve(&xty, 1e-6).expect("SVD solve failed");
         // let best_c = solution[0];
         // let best_d = solution[1];
-        let best_d = inputs
+        let best_d = best_edge
+            .infer(inputs)
             .iter()
-            .enumerate()
-            .map(|(idx, t)| best_edge.infer(*t) - expected_outputs[idx])
+            .zip(expected_outputs.iter())
+            .map(|(y_pred, y)| y - y_pred)
             .sum::<f64>()
             / inputs.len() as f64;
         let (best_a, best_b, best_c) = match best_edge.kind {
@@ -730,7 +817,7 @@ impl Edge {
                     knots[knots.len() - 1 - *degree],
                     100.max(knots.len() * *degree), // make sure we have enough points to get a good estimate.
                 );
-                let outputs: Vec<f64> = inputs.iter().map(|t| self.infer(*t)).collect();
+                let outputs: Vec<f64> = self.infer(&inputs);
                 let mean_displacement =
                     outputs.iter().map(|v| v.abs()).sum::<f64>() / outputs.len() as f64;
                 trace!(
@@ -925,12 +1012,12 @@ impl Edge {
                         d: new_d,
                         function: expected_function,
                     },
-                    last_t: None,
+                    last_t: vec![],
                 })
             }
             EdgeType::Pruned => Ok(Edge {
                 kind: EdgeType::Pruned,
-                last_t: None,
+                last_t: vec![],
             }),
         }
     }
@@ -1206,13 +1293,13 @@ mod tests {
         let mut spline = Edge::new(3, control_points, knots).unwrap();
         let t = 0.95;
         //0.02535 + 0.5316 + 0.67664 - 0.0117 = 1.22189
-        let result = spline.forward(t);
-        let infer_result = spline.infer(t);
+        let result = spline.forward(&vec![t]);
+        let infer_result = spline.infer(&vec![t]);
         assert_eq!(
             result, infer_result,
             "forward and infer should return the same result"
         );
-        let rounded_result = (result * 10000.0).round() / 10000.0;
+        let rounded_result = (result[0] * 10000.0).round() / 10000.0;
         assert_eq!(rounded_result, 1.1946);
     }
 
@@ -1228,28 +1315,30 @@ mod tests {
         }
         let mut spline1 = Edge::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
         println!("{:#?}", spline1);
-        let t: f64 = 0.0;
-        let result = spline1.forward(t);
-        let infer_result = spline1.infer(t);
+        let t = vec![0.0];
+        let result = spline1.forward(&t);
+        let infer_result = spline1.infer(&t);
         assert_eq!(
             result, infer_result,
             "forward and infer should return the same result"
         );
         println!("{:#?}", spline1);
-        let rounded_activation = (result * 10000.0).round() / 10000.0;
+        let rounded_activation = (result[0] * 10000.0).round() / 10000.0;
         assert_eq!(rounded_activation, 1.0);
     }
 
     #[test]
+    // backward can't be run without forward, so we include forward in the name to make it obvious that if forward fails, backward will also fail
     fn test_forward_then_backward() {
-        // backward can't be run without forward, so we include forward in the name to make it obvious that if forward fails, backward will also fail
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
         let mut spline = Edge::new(3, control_points, knots).unwrap();
-        let t = 0.95;
-        let _result = spline.forward(t);
-        let error = -0.6;
-        let input_gradient = spline.backward(error).unwrap();
+        let t = vec![0.95];
+        let _result = spline.forward(&t);
+        trace!("post forward {:#?}", spline);
+        let error = vec![-0.6];
+        let input_gradient = spline.backward(&error, 1.0, 0.0, 0.0).unwrap();
+        trace!("post backward {:#?}", spline);
         let expected_spline_drt_wrt_input = 1.2290;
         let expedted_control_point_gradients = vec![-0.0077, -0.0867, -0.0547, -0.0009];
         let rounded_control_point_gradients: Vec<f64> = match spline.kind {
@@ -1263,10 +1352,10 @@ mod tests {
             rounded_control_point_gradients, expedted_control_point_gradients,
             "control point gradients"
         );
-        let rounded_input_gradient = (input_gradient * 10000.0).round() / 10000.0;
+        let rounded_input_gradient = (input_gradient[0] * 10000.0).round() / 10000.0;
         assert_eq!(
             rounded_input_gradient,
-            expected_spline_drt_wrt_input * error
+            expected_spline_drt_wrt_input * error[0]
         );
     }
 
@@ -1283,15 +1372,15 @@ mod tests {
         let mut spline1 = Edge::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
         println!("setup: {:#?}", spline1);
 
-        let activation = spline1.forward(0.0);
+        let activation = spline1.forward(&vec![0.0]);
         println!("forward: {:#?}", spline1);
-        let rounded_activation = (activation * 10000.0).round() / 10000.0;
+        let rounded_activation = (activation[0] * 10000.0).round() / 10000.0;
         assert_eq!(rounded_activation, 1.0);
 
-        let input_gradient = spline1.backward(0.5).unwrap();
+        let input_gradient = spline1.backward(&vec![0.5], 1.0, 0.0, 0.0).unwrap();
         println!("backward: {:#?}", spline1);
         let expected_input_gradient = 0.0;
-        let rounded_input_gradient = (input_gradient * 10000.0).round() / 10000.0;
+        let rounded_input_gradient = (input_gradient[0] * 10000.0).round() / 10000.0;
         assert_eq!(rounded_input_gradient, expected_input_gradient);
     }
 
@@ -1300,8 +1389,8 @@ mod tests {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
         let mut spline = Edge::new(3, control_points, knots).unwrap();
-        let error = -0.6;
-        let result = spline.backward(error);
+        let error = vec![-0.6];
+        let result = spline.backward(&error, 1.0, 0.0, 0.0);
         assert!(result.is_err());
     }
 
@@ -1310,9 +1399,9 @@ mod tests {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
         let mut spline = Edge::new(3, control_points, knots).unwrap();
-        let _ = spline.infer(0.95);
-        let error = -0.6;
-        let result = spline.backward(error);
+        let _ = spline.infer(&vec![0.95]);
+        let error = vec![-0.6];
+        let result = spline.backward(&error, 1.0, 0.0, 0.0);
         assert!(result.is_err());
     }
 
@@ -1353,18 +1442,12 @@ mod tests {
 
         let sample_size = 100;
         let inputs = linspace(-1., 1.0, sample_size);
-        let expected_outputs = inputs
-            .iter()
-            .map(|i| spline.forward(*i))
-            .collect::<Vec<f64>>(); // use forward because we want the activations to be memoized
+        let expected_outputs = spline.forward(&inputs); // use forward because we want the activations to be memoized
 
         let new_knot_length = knot_length * 2 - 1; // increase knot length
         spline.set_knot_length(new_knot_length).unwrap();
 
-        let test_outputs = inputs
-            .iter()
-            .map(|i| spline.forward(*i))
-            .collect::<Vec<f64>>();
+        let test_outputs = spline.forward(&inputs);
 
         let rmse = (expected_outputs
             .iter()
@@ -1392,18 +1475,12 @@ mod tests {
 
         let sample_size = 100;
         let inputs = linspace(-1., 1.0, sample_size);
-        let expected_outputs = inputs
-            .iter()
-            .map(|i| spline.forward(*i))
-            .collect::<Vec<f64>>(); // use forward because we want the activations to be memoized
+        let expected_outputs = spline.forward(&inputs); // use forward because we want the activations to be memoized
 
         let new_knot_length = knot_length - 2; // decrease knot length
         spline.set_knot_length(new_knot_length).unwrap();
 
-        let test_outputs = inputs
-            .iter()
-            .map(|i| spline.forward(*i))
-            .collect::<Vec<f64>>();
+        let test_outputs = spline.forward(&inputs);
 
         let rmse = (expected_outputs
             .iter()
@@ -1514,12 +1591,12 @@ mod tests {
         )
         .unwrap();
         let mut spline2 = spline1.clone();
-        let t = 0.5;
-        let output1 = spline1.forward(t);
-        let output2 = spline2.forward(t);
+        let t = vec![0.5];
+        let output1 = spline1.forward(&t);
+        let output2 = spline2.forward(&t);
         assert_eq!(output1, output2);
         let mut new_spline = Edge::merge_edges(vec![spline1, spline2]).unwrap();
-        let output3 = new_spline.forward(t);
+        let output3 = new_spline.forward(&t);
         assert_eq!(output1, output3);
     }
 
@@ -1625,7 +1702,7 @@ mod tests {
         let (edge, r2) = &suggest_symbolic[0];
         println!("R2: {:?}\n{}", r2, edge);
         assert_almost_eq!(*r2, 1.0, 1e-2);
-        let final_outputs = inputs.iter().map(|i| edge.infer(*i)).collect::<Vec<f64>>();
+        let final_outputs = edge.infer(&inputs);
         println!("{:?}", final_outputs);
         assert!(matches!(edge.kind, EdgeType::Symbolic { .. }));
         let symbolic_function = match &edge.kind {
@@ -1679,9 +1756,9 @@ mod tests {
                     d: 0.0,
                     function: SymbolicFunction::Linear,
                 },
-                last_t: None,
+                last_t: vec![],
             };
-            let result = edge.backward(0.5);
+            let result = edge.backward(&vec![0.5], 1.0, 0.0, 0.0);
             assert!(result.is_err());
         }
 
@@ -1695,12 +1772,12 @@ mod tests {
                     d: 5.0,
                     function: SymbolicFunction::Linear,
                 },
-                last_t: None,
+                last_t: vec![],
             };
-            let result = edge.forward(0.5);
-            assert_eq!(result, 21.0, "forward");
-            let backward = edge.backward(-0.5).unwrap();
-            assert_eq!(backward, -4.0, "backward");
+            let result = edge.forward(&vec![0.5]);
+            assert_eq!(result[0], 21.0, "forward");
+            let backward = edge.backward(&vec![-0.5], 1.0, 0.0, 0.0).unwrap();
+            assert_eq!(backward[0], -4.0, "backward");
         }
 
         #[test]
@@ -1713,13 +1790,13 @@ mod tests {
                     d: 7.0,
                     function: SymbolicFunction::Quadratic,
                 },
-                last_t: None,
+                last_t: vec![],
             };
-            let result = edge.forward(2.0);
-            assert_eq!(82.0, result, "forward");
-            let gradient = edge.backward(0.7).unwrap();
+            let result = edge.forward(&vec![2.0]);
+            assert_eq!(82.0, result[0], "forward");
+            let gradient = edge.backward(&vec![0.7], 1.0, 0.0, 0.0).unwrap();
             let expected_gradient = 31.5; // (d/dx c(ax + b)^2 + d) * gradient
-            assert_almost_eq!(gradient, expected_gradient, 1e-6);
+            assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
         }
 
         #[test]
@@ -1732,14 +1809,14 @@ mod tests {
                     d: 7.0,
                     function: SymbolicFunction::Cubic,
                 },
-                last_t: None,
+                last_t: vec![],
             };
-            let result = edge.forward(2.0);
+            let result = edge.forward(&vec![2.0]);
             let expected_result = 3.0 * ((1.5 * 2.0 + 2.0) as f64).powf(3.0) + 7.0;
-            assert_almost_eq!(result, expected_result, 1e-6);
-            let gradient = edge.backward(0.7).unwrap();
+            assert_almost_eq!(result[0], expected_result, 1e-6);
+            let gradient = edge.backward(&vec![0.7], 1.0, 0.0, 0.0).unwrap();
             let expected_gradient = 236.25; // (d/dx c(ax + b)^3 + d) * gradient
-            assert_almost_eq!(gradient, expected_gradient, 1e-6);
+            assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
         }
 
         #[test]
@@ -1752,14 +1829,14 @@ mod tests {
                     d: 7.0,
                     function: SymbolicFunction::Quartic,
                 },
-                last_t: None,
+                last_t: vec![],
             };
-            let result = edge.forward(2.0);
+            let result = edge.forward(&vec![2.0]);
             let expected_result = 1882.0; // 3.0 * ((1.5 * 2.0 + 2.0) as f64).powf(4.0) + 7.0;
-            assert_almost_eq!(result, expected_result, 1e-6);
-            let gradient = edge.backward(0.7).unwrap();
+            assert_almost_eq!(result[0], expected_result, 1e-6);
+            let gradient = edge.backward(&vec![0.7], 1.0, 0.0, 0.0).unwrap();
             let expected_gradient = 1575.0; // (d/dx c(ax + b)^3 + d) * gradient
-            assert_almost_eq!(gradient, expected_gradient, 1e-6);
+            assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
         }
 
         #[test]
@@ -1772,14 +1849,14 @@ mod tests {
                     d: 7.0,
                     function: SymbolicFunction::Quintic,
                 },
-                last_t: None,
+                last_t: vec![],
             };
-            let result = edge.forward(0.5);
+            let result = edge.forward(&vec![0.5]);
             let expected_result = 478.8291015625; //3.0 * ((1.5 * 0.5 + 2.0) as f64).powf(5.0) + 7.0;
-            assert_almost_eq!(result, expected_result, 1e-6);
-            let gradient = edge.backward(0.7).unwrap();
+            assert_almost_eq!(result[0], expected_result, 1e-6);
+            let gradient = edge.backward(&vec![0.7], 1.0, 0.0, 0.0).unwrap();
             let expected_gradient = 900.7646484375; // (d/dx c(ax + b)^3 + d) * gradient
-            assert_almost_eq!(gradient, expected_gradient, 1e-6);
+            assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
         }
     }
     #[test]

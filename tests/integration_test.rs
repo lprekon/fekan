@@ -261,7 +261,7 @@ mod regression {
                 4.0 * x.sin()
             }
 
-            let training_data = (0..1000)
+            let training_data = (0..2400)
                 .map(|_| {
                     let x: f64 = thread_rng().gen_range(input_range.clone());
                     let label = true_function(x);
@@ -314,7 +314,7 @@ mod regression {
                 &training_data,
                 TrainingOptions {
                     num_threads: 8,
-                    knot_update_interval: 1001,
+                    batch_size: 150,
                     num_epochs: 500,
                     learning_rate: 0.01,
                     each_epoch: fekan::training_options::EachEpoch::ValidateModel(&validation_data),
@@ -347,7 +347,7 @@ mod regression {
                 -0.5 * (x - 4.0).powi(3) + 2.0
             }
 
-            let training_data = (0..1000)
+            let training_data = (0..2400)
                 .map(|_| {
                     let x: f64 = thread_rng().gen_range(input_range.clone());
                     let label = true_function(x);
@@ -400,7 +400,7 @@ mod regression {
                 &training_data,
                 TrainingOptions {
                     num_threads: 8,
-                    knot_update_interval: 1001,
+                    batch_size: 150,
                     num_epochs: 500,
                     learning_rate: 0.01,
                     each_epoch: fekan::training_options::EachEpoch::ValidateModel(&validation_data),
@@ -433,7 +433,7 @@ mod regression {
                 -1.0 * (-1.0 * x + 3.0).sqrt() - 4.0
             }
 
-            let training_data = (0..1000)
+            let training_data = (0..2400)
                 .map(|_| {
                     let x: f64 = thread_rng().gen_range(input_range.clone());
                     let label = true_function(x);
@@ -486,7 +486,7 @@ mod regression {
                 &training_data,
                 TrainingOptions {
                     num_threads: 8,
-                    knot_update_interval: 1001,
+                    batch_size: 150,
                     num_epochs: 500,
                     learning_rate: 0.01,
                     each_epoch: fekan::training_options::EachEpoch::ValidateModel(&validation_data),

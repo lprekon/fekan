@@ -46,26 +46,33 @@ fn big_layer_big_spline() -> KanLayer {
 #[bench]
 fn bench_forward(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
-    let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
-        .map(|_| thread_rng().gen())
-        .collect();
+    let inputs = vec![
+        (0..INPUT_DIMENSION_BIG)
+            .map(|_| thread_rng().gen())
+            .collect::<Vec<f64>>();
+        4 // create multiple inputs so we can see parallelism improvements later
+    ];
     b.iter(|| {
-        // run multiple times per iteration so cache improvements will show.
-
-        let _ = layer.forward(&input);
+        let _ = layer.forward(inputs.clone());
     });
 }
 
 #[bench]
 fn bench_backward(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
-    let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
-        .map(|_| thread_rng().gen())
-        .collect();
-    let _ = layer.forward(&input);
-    let error: Vec<f64> = (0..OUTPUT_DIMENSION_BIG)
-        .map(|_| thread_rng().gen())
-        .collect();
+    let inputs = vec![
+        (0..INPUT_DIMENSION_BIG)
+            .map(|_| thread_rng().gen())
+            .collect::<Vec<f64>>();
+        4 // create multiple inputs so we can see parallelism improvements later
+    ];
+    let _ = layer.forward(inputs);
+    let error = vec![
+        (0..OUTPUT_DIMENSION_BIG)
+            .map(|_| thread_rng().gen())
+            .collect::<Vec<f64>>();
+        4 // create multiple inputs so we can see parallelism improvements later
+    ];
     b.iter(|| {
         // run multiple times per iteration so cache improvements will show
 
@@ -76,13 +83,13 @@ fn bench_backward(b: &mut Bencher) {
 #[bench]
 fn bench_update(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
-    let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
+    let input = vec![(0..INPUT_DIMENSION_BIG)
         .map(|_| thread_rng().gen())
-        .collect();
-    let _ = layer.forward(&input);
-    let error: Vec<f64> = (0..OUTPUT_DIMENSION_BIG)
+        .collect()];
+    let _ = layer.forward(input);
+    let error = vec![(0..OUTPUT_DIMENSION_BIG)
         .map(|_| thread_rng().gen())
-        .collect();
+        .collect()];
     let _ = layer.backward(&error);
     b.iter(|| layer.update(0.1));
 }
@@ -90,12 +97,13 @@ fn bench_update(b: &mut Bencher) {
 #[bench]
 fn bench_update_knots_from_samples(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
-    for _ in 0..100 {
-        let input: Vec<f64> = (0..INPUT_DIMENSION_BIG)
-            .map(|_| thread_rng().gen())
-            .collect();
-        let _ = layer.forward(&input);
+    let mut batch_inputs = vec![vec![0.0; INPUT_DIMENSION_BIG]; 100];
+    for i in 0..100 {
+        for j in 0..INPUT_DIMENSION_BIG {
+            batch_inputs[i][j] = thread_rng().gen();
+        }
     }
+    let _ = layer.forward(batch_inputs);
 
     b.iter(|| layer.update_knots_from_samples(0.1));
 }

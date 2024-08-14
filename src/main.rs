@@ -469,8 +469,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
                 WhyCommands::Infer { data_file } => {
                     let data = load_inference_data(&data_file)?;
-                    for sample in data.iter() {
-                        let activation = loaded_model.forward(sample.features().clone())?;
+                    let batch_features: Vec<Vec<f64>> =
+                        data.into_iter().map(|s| s.features().to_owned()).collect();
+                    let batch_activations = loaded_model.forward(batch_features)?;
+                    for activation in batch_activations {
                         let output_string = "[".to_string()
                             + &activation
                                 .iter()
@@ -487,7 +489,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 .collect::<Vec<String>>()
                                 .join(", ")
                             + "]";
-                        println!("{}", output_string);
+                        info!("{}", output_string);
                     }
                     Ok(())
                 }
@@ -873,28 +875,28 @@ mod test_main {
     }
 
     // #[test]
-    fn read_avro_classifcation_data() {
-        let tmp_dir = tempdir().unwrap();
-        let file_path = tmp_dir.path().join("test.avro");
-        let mut file = File::create(&file_path).unwrap();
-        let (test_data, class_list) = classification_data();
-        let schema = apache_avro::Schema::parse_str(r#"{"type": "record", "name": "test", "fields": [{"name": "features", "type": {"type": "array", "items": "float"}}, {"name": "label", "type": "string"}]}"#).unwrap();
-        let mut writer = apache_avro::Writer::new(&schema, &mut file);
-        for sample in &test_data {
-            writer
-                .append(apache_avro::to_value(sample).unwrap())
-                .unwrap();
-        }
-        writer.flush().unwrap();
-        file.seek(std::io::SeekFrom::Start(0)).unwrap();
-        let (loaded_data, _) = load_classification_data(&file_path, 0.0, &class_list).unwrap();
-        let expected_data: Vec<Sample> = test_data
-            .iter()
-            .enumerate()
-            .map(|(i, sample)| Sample::new(sample.features.clone(), i as f64))
-            .collect();
-        assert_eq!(expected_data, loaded_data);
-    }
+    // fn read_avro_classifcation_data() {
+    //     let tmp_dir = tempdir().unwrap();
+    //     let file_path = tmp_dir.path().join("test.avro");
+    //     let mut file = File::create(&file_path).unwrap();
+    //     let (test_data, class_list) = classification_data();
+    //     let schema = apache_avro::Schema::parse_str(r#"{"type": "record", "name": "test", "fields": [{"name": "features", "type": {"type": "array", "items": "float"}}, {"name": "label", "type": "string"}]}"#).unwrap();
+    //     let mut writer = apache_avro::Writer::new(&schema, &mut file);
+    //     for sample in &test_data {
+    //         writer
+    //             .append(apache_avro::to_value(sample).unwrap())
+    //             .unwrap();
+    //     }
+    //     writer.flush().unwrap();
+    //     file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    //     let (loaded_data, _) = load_classification_data(&file_path, 0.0, &class_list).unwrap();
+    //     let expected_data: Vec<Sample> = test_data
+    //         .iter()
+    //         .enumerate()
+    //         .map(|(i, sample)| Sample::new(sample.features.clone(), i as f64))
+    //         .collect();
+    //     assert_eq!(expected_data, loaded_data);
+    // }
 
     #[test]
     fn read_pickle_regression_data() {
@@ -929,25 +931,25 @@ mod test_main {
     }
 
     // #[test]
-    fn read_avro_regression_data() {
-        let tmp_dir = tempdir().unwrap();
-        let file_path = tmp_dir.path().join("test.avro");
-        let mut file = File::create(&file_path).unwrap();
-        let test_data = regression_data();
-        let schema = apache_avro::Schema::parse_str(r#"{"type": "record", "name": "test", "fields": [{"name": "features", "type": {"type": "array", "items": "float"}}, {"name": "label", "type": "float"}]}"#).unwrap();
-        let mut writer = apache_avro::Writer::new(&schema, &mut file);
-        for sample in &test_data {
-            writer
-                .append(apache_avro::to_value(sample).unwrap())
-                .unwrap();
-        }
-        writer.flush().unwrap();
-        file.seek(std::io::SeekFrom::Start(0)).unwrap();
-        let (loaded_data, _) = load_regression_data(&file_path, 0.0).unwrap();
-        let expected_data: Vec<Sample> = test_data
-            .iter()
-            .map(|sample| Sample::new(sample.features.clone(), sample.label))
-            .collect();
-        assert_eq!(expected_data, loaded_data);
-    }
+    // fn read_avro_regression_data() {
+    //     let tmp_dir = tempdir().unwrap();
+    //     let file_path = tmp_dir.path().join("test.avro");
+    //     let mut file = File::create(&file_path).unwrap();
+    //     let test_data = regression_data();
+    //     let schema = apache_avro::Schema::parse_str(r#"{"type": "record", "name": "test", "fields": [{"name": "features", "type": {"type": "array", "items": "float"}}, {"name": "label", "type": "float"}]}"#).unwrap();
+    //     let mut writer = apache_avro::Writer::new(&schema, &mut file);
+    //     for sample in &test_data {
+    //         writer
+    //             .append(apache_avro::to_value(sample).unwrap())
+    //             .unwrap();
+    //     }
+    //     writer.flush().unwrap();
+    //     file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    //     let (loaded_data, _) = load_regression_data(&file_path, 0.0).unwrap();
+    //     let expected_data: Vec<Sample> = test_data
+    //         .iter()
+    //         .map(|sample| Sample::new(sample.features.clone(), sample.label))
+    //         .collect();
+    //     assert_eq!(expected_data, loaded_data);
+    // }
 }

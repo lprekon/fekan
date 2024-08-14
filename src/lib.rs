@@ -185,139 +185,93 @@ pub fn train_model(
     // if the number of threads is <= 1, run the training loop in a single thread
 
     for epoch in 1..=options.num_epochs {
-        let mut epoch_loss = 0.0;
-        let mut samples_seen = 0;
         // shuffle the training data
         let mut shuffled_data = training_data.to_vec();
         fys.shuffle(&mut shuffled_data, &mut randomness)
             .expect("Shuffling can't fail");
         // multi-threaded training
-        if options.num_threads > 1 {
-            let chunk_size =
-                f32::ceil(shuffled_data.len() as f32 / options.num_threads as f32) as usize;
-            let multithreaded_training: Result<Vec<(Kan, f64)>, TrainingError> = // I love that Result implements FromIterator, so Vec<Result<T,E>> gets automatically converted to Result<Vec<T>, E>
-            thread::scope(|s| {
-                let handles: Vec<_> = training_data
-                    .chunks(chunk_size)
-                    .map(|training_data_chunk| {
-                        let cloned_model = model.clone();
-                        s.spawn(move || {
-                            let mut model = cloned_model;
-                            let mut chunk_loss = 0.0;
-                            let mut chunk_samples_seen = 0;
-                            for sample in training_data_chunk {
-                                chunk_samples_seen += 1;
-                                // forward
-                                let logits =
-                                    model.forward(sample.clone().features).map_err(|e| {
-                                        TrainingError {
-                                            source: e,
-                                            epoch,
-                                            sample: chunk_samples_seen,
-                                        }
-                                    })?;
-                                // backward
-                                let (loss, gradient) = match model.model_type() {
-                                    ModelType::Classification => calculate_nll_loss_and_gradient(
-                                        &logits,
-                                        sample.label as usize,
-                                    ),
-                                    ModelType::Regression => {
-                                        let (loss, dlogit) = calculate_huber_loss_and_gradient(
-                                            logits[0],
-                                            sample.label,
-                                        );
-                                        (loss, vec![dlogit])
+        let chunk_size =
+            f32::ceil(shuffled_data.len() as f32 / options.num_threads as f32) as usize;
+        let multithreaded_training: Result<Vec<(Kan, f64)>, TrainingError> = // I love that Result implements FromIterator, so Vec<Result<T,E>> gets automatically converted to Result<Vec<T>, E>
+        thread::scope(|s| {
+            let handles: Vec<_> = training_data
+                .chunks(chunk_size)
+                .map(|training_data_chunk| {
+                    let cloned_model = model.clone();
+                    s.spawn(move || {
+                        let mut model = cloned_model;
+                        let mut chunk_loss = 0.0;
+                        let mut chunk_samples_seen = 0;
+                        for batch in training_data_chunk.chunks(options.batch_size) {
+                            chunk_samples_seen += options.batch_size;
+                            // forward
+                            // let batch_inputs: Vec<Vec<f64>> = batch.iter().map(|s| s.features.clone()).collect();
+                            // let batch_labels: Vec<f64> = batch.iter().map(|s| s.label).collect();
+                            let (batch_inputs, batch_labels): (Vec<Vec<f64>>, Vec<f64>) = batch.iter().map(|s| (s.features.clone(), s.label)).collect();
+                            let batch_logits =
+                                model.forward(batch_inputs).map_err(|e| {
+                                    TrainingError {
+                                        source: e,
+                                        epoch,
+                                        sample: chunk_samples_seen,
                                     }
-                                };
-                                chunk_loss += loss;
-                                model.backward(gradient).map_err(|e| TrainingError {
+                                })?;
+                            // backward
+                            let (batch_loss, batch_gradients) = match model.model_type() {
+                                ModelType::Classification => calculate_nll_loss_and_gradient(
+                                    &batch_logits,
+                                    batch_labels.iter().map(|l| *l as usize).collect::<Vec<usize>>().as_slice(),
+                                ),
+                                ModelType::Regression => {
+                                    assert!(batch_logits.iter().all(|logits| logits.len() == 1), "Regression models must have a single output node");
+                                    let (loss, dlogit) = calculate_huber_loss_and_gradient(
+                                        &batch_logits.iter().map(|logits| logits[0]).collect::<Vec<f64>>(),
+                                        &batch_labels,
+                                    );
+                                    (loss, vec![dlogit])
+                                }
+                            };
+                            debug!("Batch loss: {}", batch_loss.iter().sum::<f64>() / batch_loss.len() as f64);
+                            chunk_loss += batch_loss.iter().sum::<f64>();
+                            model.backward(batch_gradients).map_err(|e| TrainingError {
+                                source: e,
+                                epoch,
+                                sample: chunk_samples_seen,
+                            })?;
+                            // update weights
+                            model.update(options.learning_rate);
+                            model.zero_gradients();
+                            // update knots
+                            model
+                                .update_knots_from_samples(options.knot_adaptivity)
+                                .map_err(|e| TrainingError {
                                     source: e,
                                     epoch,
                                     sample: chunk_samples_seen,
                                 })?;
-                                // update
-                                model.update(options.learning_rate);
-                                model.zero_gradients();
-                                // update the knots if necessary
-                                if chunk_samples_seen % options.knot_update_interval == 0 {
-                                    model
-                                        .update_knots_from_samples(options.knot_adaptivity)
-                                        .map_err(|e| TrainingError {
-                                            source: e,
-                                            epoch,
-                                            sample: chunk_samples_seen,
-                                        })?;
-                                    model.clear_samples();
-                                }
-                            }
-                            Ok((model, chunk_loss))
-                        })
+                            model.clear_samples();
+                            
+                        }
+                        Ok((model, chunk_loss))
                     })
-                    .collect();
-                handles
-                    .into_iter()
-                    .map(|handle| handle.join().unwrap())
-                    .collect()
-            });
-            // recombine the models and losses
-            let multithreaded_training_result = multithreaded_training?;
-            let (partially_trained_models, chunk_losses): (Vec<Kan>, Vec<f64>) =
-                multithreaded_training_result.into_iter().unzip();
-            model = Kan::merge_models(partially_trained_models).map_err(|e| TrainingError {
-                source: e,
-                epoch,
-                sample: 0,
-            })?;
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect()
+        });
+        // recombine the models and losses
+        let multithreaded_training_result = multithreaded_training?;
+        let (partially_trained_models, chunk_losses): (Vec<Kan>, Vec<f64>) =
+            multithreaded_training_result.into_iter().unzip();
+        model = Kan::merge_models(partially_trained_models).map_err(|e| TrainingError {
+            source: e,
+            epoch,
+            sample: 0,
+        })?;
 
-            epoch_loss = chunk_losses.iter().sum::<f64>() / training_data.len() as f64;
-        }
-        // end multi-threaded code
-        // single-thread-specific training
-        else {
-            for sample in shuffled_data.iter() {
-                samples_seen += 1;
-                // forward
-                let logits = model
-                    .forward(sample.clone().features)
-                    .map_err(|e| TrainingError {
-                        source: e,
-                        epoch,
-                        sample: samples_seen,
-                    })?;
-                // backward
-                let (loss, gradient) = match model.model_type() {
-                    ModelType::Classification => {
-                        calculate_nll_loss_and_gradient(&logits, sample.label as usize)
-                    }
-                    ModelType::Regression => {
-                        let (loss, dlogit) =
-                            calculate_huber_loss_and_gradient(logits[0], sample.label);
-                        (loss, vec![dlogit])
-                    }
-                };
-                epoch_loss += loss;
-                model.backward(gradient).map_err(|e| TrainingError {
-                    source: e,
-                    epoch,
-                    sample: samples_seen,
-                })?;
-                // update
-                model.update(options.learning_rate);
-                model.zero_gradients();
-                // update the knots if necessary
-                if samples_seen % options.knot_update_interval == 0 {
-                    model
-                        .update_knots_from_samples(options.knot_adaptivity)
-                        .map_err(|e| TrainingError {
-                            source: e,
-                            epoch,
-                            sample: samples_seen,
-                        })?;
-                    model.clear_samples();
-                }
-            }
-        } // end single-thread-specific code
+        let epoch_loss = chunk_losses.iter().sum::<f64>() / training_data.len() as f64;
 
         // log the epoch loss, and the validation loss if necessary
         match options.each_epoch {
@@ -344,15 +298,16 @@ pub fn train_model(
             let target_length = knot_extension_targets[knot_extensions_completed];
             let old_length = model.knot_length();
             // get some samples for knot extension
-            for i in 0..(2 * old_length) {
-                model.forward(shuffled_data[i].features.clone()).unwrap();
-            }
+            // for i in 0..(2 * old_length) {
+            //     model.forward(shuffled_data[i].features.clone()).unwrap();
+            // }
+            // we don't do this anymore
             model
                 .set_knot_length(target_length)
                 .map_err(|e| TrainingError {
                     source: e,
                     epoch,
-                    sample: samples_seen,
+                    sample: training_data.len(),
                 })?;
             info!("Knot extension: {} -> {}", old_length, target_length);
             knot_extensions_completed += 1;
@@ -365,7 +320,7 @@ pub fn train_model(
 /// Scan over the training data and adjust model knot ranges. This is equivalent to calling [`Kan::forward`] on each sample in the training data, then calling [`Kan::update_knots_from_samples`] with a `knot_adaptivity` of 0.0.
 /// This presetting helps avoid large amounts of training inputs falling outside the knot ranges, which can cause the model to fail to converge.
 pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(), TrainingError> {
-    debug!("Presetting knot ranges");
+    info!("Presetting knot ranges...");
     if log::log_enabled!(log::Level::Debug) {
         let mut ranges: Vec<(f64, f64)> = vec![(0.0, 0.0); preset_data[0].features.len()];
         for sample in preset_data {
@@ -376,16 +331,17 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
         }
         debug!("Layer 0 input ranges: {:#?}", ranges);
     }
+    
     for set_layer in 0..model.layers.len() {
-        for i in 0..preset_data.len() {
+        let features = preset_data.iter().map(|s| s.features.clone()).collect::<Vec<Vec<f64>>>();
             model
-                .forward(preset_data[i].features().clone())
+                .forward(features)
                 .map_err(|e| TrainingError {
                     source: e,
                     epoch: 0,
-                    sample: i,
+                    sample: set_layer * preset_data.len(),
                 })?;
-        }
+        
 
         model
             .update_knots_from_samples(0.0)
@@ -399,18 +355,18 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
         if log::log_enabled!(log::Level::Debug) && set_layer < model.layers.len() - 1 {
             let mut output_ranges: Vec<(f64, f64)> =
                 vec![(0.0, 0.0); model.layers[set_layer].output_dimension()];
-            for sample in preset_data {
-                let mut outputs = sample.features.clone();
+            
+                let mut outputs = preset_data.iter().map(|s| s.features.clone()).collect::<Vec<Vec<f64>>>();
                 for layer_idx in 0..=set_layer {
-                    outputs = model.layers[layer_idx].forward(&outputs).unwrap();
+                    outputs = model.layers[layer_idx].forward(outputs).unwrap();
                 }
-                for output_idx in 0..outputs.len() {
-                    output_ranges[output_idx].0 =
-                        output_ranges[output_idx].0.min(outputs[output_idx]);
-                    output_ranges[output_idx].1 =
-                        output_ranges[output_idx].1.max(outputs[output_idx]);
+                for pass in outputs {
+                    for idx in 0..pass.len() {
+                        output_ranges[idx].0 = output_ranges[idx].0.min(pass[idx]);
+                        output_ranges[idx].1 = output_ranges[idx].1.max(pass[idx]);
+                    }
                 }
-            }
+            
             debug!("Layer {} input ranges: {:#?}", set_layer + 1, output_ranges);
         }
     }
@@ -421,55 +377,68 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
 /// If the model is a regression model, the mean squared error is calculated.
 ///
 pub fn validate_model(validation_data: &[Sample], model: &mut Kan) -> f64 {
-    let mut validation_loss = 0.0;
 
-    for sample in validation_data {
-        let output = model.infer(sample.features().clone()).unwrap();
-        let loss = match model.model_type() {
-            ModelType::Classification => {
-                let (loss, _) = calculate_nll_loss_and_gradient(&output, sample.label as usize);
-                loss
-            }
-            ModelType::Regression => {
-                let (loss, _) = calculate_huber_loss_and_gradient(output[0], sample.label as f64); //TODO allow different delta values
-                loss
-            }
-        };
-        validation_loss += loss;
-    }
-    validation_loss /= validation_data.len() as f64;
-
-    validation_loss
+    let (batch_features, batch_labels): (Vec<Vec<f64>>, Vec<f64>) = validation_data.iter().map(|s| (s.features.clone(), s.label)).unzip();
+    let batch_logits = model.infer(batch_features).unwrap();
+    let batch_loss = match model.model_type() {
+        ModelType::Classification => {
+            let (loss, _) = calculate_nll_loss_and_gradient(&batch_logits, batch_labels.iter().map(|l| *l as usize).collect::<Vec<usize>>().as_slice());
+            loss
+        }
+        ModelType::Regression => {
+            assert!(batch_logits.iter().all(|logits| logits.len() == 1), "Regression models must have a single output node");
+            let (loss, _) = calculate_huber_loss_and_gradient(batch_logits.iter().map(|logits| logits[0]).collect::<Vec<f64>>().as_slice(), &batch_labels); //TODO allow different delta values
+            loss
+        }
+    };
+        
+    batch_loss.iter().sum::<f64>() / validation_data.len() as f64
 }
 
 /// Returns the negative log liklihood loss and the gradient of the loss with respect to the logits,
-fn calculate_nll_loss_and_gradient(logits: &Vec<f64>, label: usize) -> (f64, Vec<f64>) {
+fn calculate_nll_loss_and_gradient(
+    batch_logits: &[Vec<f64>],
+    labels: &[usize],
+) -> (Vec<f64>, Vec<Vec<f64>>) {
     // calculate the classification probabilities
-    let logit_max = {
-        let mut max = f64::NEG_INFINITY;
-        for &logit in logits.iter() {
-            if logit > max {
-                max = logit;
-            }
-        }
-        max
-    };
-    let norm_logits = logits.iter().map(|&x| x - logit_max).collect::<Vec<f64>>(); // subtract the max logit to prevent overflow
-    let counts = norm_logits.iter().map(|&x| x.exp()).collect::<Vec<f64>>();
-
-    let count_sum = counts.iter().sum::<f64>();
-    let probs = counts.iter().map(|&x| x / count_sum).collect::<Vec<f64>>();
-
-    let logprobs = probs
+    let batch_logit_maxes = batch_logits.iter().map(|logits| {
+        logits
+            .iter()
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap()
+    });
+    let batch_norm_logits = batch_logits
         .iter()
-        .map(|&x| (x + f64::MIN_POSITIVE).ln()) // make sure we don't take the log of 0
-        .collect::<Vec<f64>>();
-    let loss = -logprobs[label];
+        .zip(batch_logit_maxes)
+        .map(|(logits, max_logit)| logits.iter().map(|logit| logit - max_logit).collect()); // subtract the max logit to prevent overflow
+    let batch_counts: Vec<Vec<f64>> = batch_norm_logits
+        .map(|norm_logits: Vec<f64>| norm_logits.iter().map(|nl| nl.exp()).collect())
+        .collect();
 
-    let mut dlogits = probs;
-    dlogits[label] -= 1.;
+    let batch_count_sum = batch_counts.iter().map(|counts| counts.iter().sum::<f64>());
+    let batch_probs: Vec<Vec<f64>> = batch_counts
+        .iter()
+        .zip(batch_count_sum)
+        .map(|(counts, sum)| counts.iter().map(|count| count / sum).collect::<Vec<f64>>())
+        .collect();
 
-    (loss, dlogits)
+    let batch_logprobs = batch_probs.iter().map(|probs| {
+        probs
+            .iter()
+            .map(|prob| (prob + f64::MIN_POSITIVE).ln()) // add a small number to prevent log(0)
+            .collect::<Vec<f64>>()
+    });
+    let batch_loss = batch_logprobs
+        .zip(labels.iter())
+        .map(|(logprobs, label)| -logprobs[*label])
+        .collect();
+
+    let mut batch_dlogits = batch_probs;
+    for i in 0..labels.len() {
+        batch_dlogits[i][labels[i]] -= 1.0;
+    }
+
+    (batch_loss, batch_dlogits)
 }
 
 /// Calculates the mean squared error loss and the gradient of the loss with respect to the actual value
@@ -482,16 +451,28 @@ fn calculate_nll_loss_and_gradient(logits: &Vec<f64>, label: usize) -> (f64, Vec
 const HUBER_DELTA: f64 = 1.3407807929942596e154 - 1.0; // f64::MAX ^ 0.5 - 1.0. Chosen so the loss is equivalent to the MSE loss until the error would be greater than f64::MAX, and then it becomes linear
 
 /// Calculates the huber loss and the gradient of the loss with respect to the actual value
-fn calculate_huber_loss_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
-    let diff = actual - expected;
-    if diff.abs() <= HUBER_DELTA {
-        (0.5 * diff.powi(2), diff)
-    } else {
-        (
-            HUBER_DELTA * (diff.abs() - 0.5 * HUBER_DELTA),
-            HUBER_DELTA * diff.signum(),
-        )
-    }
+/// NOTE: currently only supports a single output node
+fn calculate_huber_loss_and_gradient(
+    batch_actual: &[f64],
+    batch_expected: &[f64],
+) -> (Vec<f64>, Vec<f64>) {
+    let batch_diff = batch_actual
+        .iter()
+        .zip(batch_expected.iter())
+        .map(|(a, e)| a - e);
+    let (batch_loss, batch_gradients) = batch_diff
+        .map(|diff| {
+            if diff.abs() < HUBER_DELTA {
+                (0.5 * diff.powi(2), diff)
+            } else {
+                (
+                    HUBER_DELTA * diff.abs() - 0.5 * HUBER_DELTA.powi(2),
+                    HUBER_DELTA * diff.signum(),
+                )
+            }
+        })
+        .collect();
+    (batch_loss, batch_gradients)
 }
 
 #[cfg(test)]
@@ -503,21 +484,21 @@ mod test {
     #[test]
     fn test_nll_loss_and_gradient() {
         // values calculated using Karpathy's Makemore backpropogation example
-        let logits = vec![
+        let logits = vec![vec![
             0.0043, -0.2063, 0.0260, -0.1313, -0.2248, 0.0478, 0.1392, 0.1436, 0.0624, -0.1926,
             0.0551, -0.2938, 0.1467, -0.0836, -0.1743, -0.0238, -0.1242, -0.2127, -0.1016, 0.0549,
             -0.0582, -0.0845, 0.0619, -0.0104, -0.0895, 0.0112, -0.3106,
-        ];
-        let label = 1;
-        let (loss, gradient) = calculate_nll_loss_and_gradient(&logits, label);
+        ]];
+        let label = vec![1];
+        let (loss, gradient) = calculate_nll_loss_and_gradient(&logits, &label);
         let expected_loss = 3.4522;
         let expected_gradients = vec![
             0.0391, -0.9683, 0.0400, 0.0341, 0.0311, 0.0408, 0.0447, 0.0449, 0.0414, 0.0321,
             0.0411, 0.0290, 0.0451, 0.0358, 0.0327, 0.0380, 0.0344, 0.0315, 0.0352, 0.0411, 0.0367,
             0.0358, 0.0414, 0.0385, 0.0356, 0.0394, 0.0285,
         ];
-        let rounded_loss = (loss * 10000.0).round() / 10000.0;
-        let rounded_gradients = gradient
+        let rounded_loss = (loss[0] * 10000.0).round() / 10000.0;
+        let rounded_gradients = gradient[0]
             .iter()
             .map(|x| (x * 10000.0).round() / 10000.0)
             .collect::<Vec<f64>>();
@@ -527,11 +508,11 @@ mod test {
 
     #[test]
     fn test_nll_loss_and_gradient_2() {
-        let logits = vec![50.4043, -42.404835];
-        let label = 1;
-        let (loss, gradient) = calculate_nll_loss_and_gradient(&logits, label);
-        println!("loss: {}, gradient: {:?}", loss, gradient);
-        assert!(gradient.iter().all(|x| x.is_normal()));
+        let logits = vec![vec![50.4043, -42.404835]];
+        let label = vec![1];
+        let (losses, gradients) = calculate_nll_loss_and_gradient(&logits, &label);
+        println!("loss: {}, gradient: {:?}", losses[0], gradients[0]);
+        assert!(gradients.iter().all(|gradient| gradient.iter().all(|x| x.is_finite())));
     }
 
     // // #[test]

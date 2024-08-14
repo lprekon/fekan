@@ -22,7 +22,12 @@ pub struct KanLayer {
     // I think it will make sense to have each KanLayer be a vector of splines, plus the input and output dimension.
     // the first `out_dim` splines will read from the first input, the second `out_dim` splines will read from the second input, etc., with `in_dim` such chunks
     // to caluclate the output of the layer, the first element is the sum of the output of splines 0, out_dim, 2*out_dim, etc., the second element is the sum of splines 1, out_dim+1, 2*out_dim+1, etc.
-    /// the splines in this layer. The first `input_dimension` splines belong to the first "node", the second `input_dimension` splines belong to the second "node", etc.
+    /// the splines in this layer. The first `output_dimension` splines read from the first "input node", the second `output_dimension` splines read from the second "input node", etc.
+    ///    /-1--X             /4---X
+    ///  O - 2            O  /
+    ///    \  \-X           /    /-X
+    ///  O  \             O ---5-
+    ///      3--X           \--6---X
     pub(crate) splines: Vec<Edge>,
     input_dimension: usize,
     output_dimension: usize,
@@ -132,74 +137,61 @@ impl KanLayer {
     /// assert_eq!(acts.len(), output_dimension);
     /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
-    pub fn forward(&mut self, preactivation: &[f64]) -> Result<Vec<f64>, KanLayerError> {
-        self.forward_preamble(preactivation)?;
+    pub fn forward(
+        &mut self,
+        preactivations: Vec<Vec<f64>>,
+    ) -> Result<Vec<Vec<f64>>, KanLayerError> {
+        let num_inputs = preactivations.len(); // grab this value, since we're about to move the preactivations into the internal cache
+        self.forward_preamble(preactivations)?;
+        // preactivations dim0 = number of samples, dim1 = input_dimension
 
-        // it probably makes sense to move straight down the list of splines, since that theoretically should have better cache performance
-        // also, I guess I haven't decided (in code) how the splines are ordered, so there's no reason I can't say the first n splines all belong to the first node, etc.
-        // I just have to be consistent when I get to back propagation
-        let mut activations: Vec<f64> = vec![0.0; self.output_dimension];
-        for (idx, spline) in self.splines.iter_mut().enumerate() {
-            let act = spline.forward(preactivation[idx % self.input_dimension]); // the first `input_dimension` splines belong to the first "node", the second `input_dimension` splines belong to the second node, etc.
-            if act.is_nan() {
+        // clone the last `num_inputs` preactivations from the internal cache (since we just moved them in), then transpose them so that dim0 = input_dimension, dim1 = number of samples
+        let mut transposed_preacts = vec![vec![0.0; num_inputs]; self.input_dimension];
+        for i in 0..num_inputs {
+            for j in 0..self.input_dimension {
+                transposed_preacts[j][i] = self.samples[i][j];
+            }
+        }
+        // go output-node-by-output-node so we can sum as we go and reduce memory usage
+        // dim0 = output_dimension, dim1 = num_inputs
+        let mut activations = vec![vec![0.0; self.output_dimension]; num_inputs];
+
+        // not the cleanest implementation maybe, but it'll work
+        for edge_index in 0..self.splines.len() {
+            let in_node_idx = edge_index / self.output_dimension;
+            let out_node_idx = edge_index % self.output_dimension;
+            let sample_wise_outputs =
+                self.splines[edge_index].forward(&transposed_preacts[in_node_idx]);
+            if sample_wise_outputs.iter().any(|v| v.is_nan()) {
                 return Err(KanLayerError::nans_in_activations(
-                    idx,
-                    preactivation.to_vec(),
-                    spline.clone(),
+                    edge_index,
+                    sample_wise_outputs,
+                    self.splines[edge_index].clone(),
                 ));
             }
-            activations[(idx / self.input_dimension) as usize] += act; // every `input_dimension` splines, we move to the next node
+            for sample_idx in 0..num_inputs {
+                activations[sample_idx][out_node_idx] += sample_wise_outputs[sample_idx];
+            }
         }
 
-        // if activations.iter().any(|x| x.is_nan()) {
-        //     return Err(ForwardLayerError::NaNsError);
-        // }
         Ok(activations)
     }
 
-    /// check the length of the preactivation vector and save a copy of it for updating the knot vectors later
-    fn forward_preamble(&mut self, preactivation: &[f64]) -> Result<(), KanLayerError> {
-        if preactivation.len() != self.input_dimension {
-            return Err(KanLayerError::missized_preacts(
-                preactivation.len(),
-                self.input_dimension,
-            ));
+    /// check the length of the preactivation vector and save the inputs to the internal cache
+    fn forward_preamble(&mut self, preactivations: Vec<Vec<f64>>) -> Result<(), KanLayerError> {
+        for preact in preactivations.iter() {
+            if preact.len() != self.input_dimension {
+                return Err(KanLayerError::missized_preacts(
+                    preact.len(),
+                    self.input_dimension,
+                ));
+            }
         }
-        // save a copy of the preactivation for updating the knot vectors later
-        self.samples.push(preactivation.into());
+        // the preactivations to the internal cache. We'll work from this cache during forward and backward passes
+        let mut preactivations = preactivations;
+        self.samples.append(&mut preactivations);
         Ok(())
     }
-
-    /// as [KanLayer::forward], but multi-threaded. No longer used in this crate
-    // pub fn forward_concurrent(
-    //     &mut self,
-    //     preactivation: &[f64],
-    //     thread_pool: &ThreadPool,
-    // ) -> Result<Vec<f64>, SplineError> {
-    //     self.forward_preamble(preactivation)?;
-
-    //     let num_splines = self.splines.len();
-    //     let thread_safe_splines = self
-    //         .splines
-    //         .iter_mut()
-    //         .map(|spline| Arc::new(Mutex::new(spline)))
-    //         .collect::<Vec<_>>();
-    //     let activations = thread_pool
-    //         .install(|| {
-    //             let acts = Arc::new(Mutex::new(vec![0.0; self.output_dimension]));
-    //             (0..num_splines).into_par_iter().for_each(|idx| {
-    //                 let mut acting_spline = thread_safe_splines[idx].lock().unwrap();
-    //                 let act = acting_spline.forward(preactivation[idx % self.input_dimension]);
-    //                 acts.lock().unwrap()[(idx / self.input_dimension) as usize] += act;
-    //                 // every `input_dimension` splines, we move to the next node
-    //             });
-    //             acts
-    //         })
-    //         .lock()
-    //         .unwrap()
-    //         .to_vec();
-    //     Ok(activations)
-    // }
 
     /// as [KanLayer::forward], but does not accumulate any internal state
     ///
@@ -210,25 +202,31 @@ impl KanLayer {
     /// * the length of `preactivation` is not equal to the input_dimension this layer
     /// * the output would contain NaNs.
 
-    pub fn infer(&self, preactivation: &[f64]) -> Result<Vec<f64>, KanLayerError> {
-        if preactivation.len() != self.input_dimension {
-            return Err(KanLayerError::missized_preacts(
-                preactivation.len(),
-                self.input_dimension,
-            ));
-        }
-
-        let mut activations: Vec<f64> = vec![0.0; self.output_dimension];
-        for (idx, spline) in self.splines.iter().enumerate() {
-            let act = spline.infer(preactivation[idx % self.input_dimension]);
-            if act.is_nan() {
-                return Err(KanLayerError::nans_in_activations(
-                    idx,
-                    preactivation.to_vec(),
-                    spline.clone(),
+    pub fn infer(&self, preactivations: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, KanLayerError> {
+        for preactivation in preactivations.iter() {
+            if preactivation.len() != self.input_dimension {
+                return Err(KanLayerError::missized_preacts(
+                    preactivation.len(),
+                    self.input_dimension,
                 ));
             }
-            activations[(idx / self.input_dimension) as usize] += act;
+        }
+        let num_inputs = preactivations.len();
+        let mut transposed_preacts = vec![vec![0.0; num_inputs]; self.input_dimension];
+        for i in 0..num_inputs {
+            for j in 0..self.input_dimension {
+                transposed_preacts[j][i] = preactivations[i][j];
+            }
+        }
+        let mut activations = vec![vec![0.0; self.output_dimension]; num_inputs];
+        for edge_index in 0..self.splines.len() {
+            let in_node_idx = edge_index / self.output_dimension;
+            let out_node_idx = edge_index % self.output_dimension;
+            let sample_wise_outputs =
+                self.splines[edge_index].infer(&transposed_preacts[in_node_idx]);
+            for sample_idx in 0..num_inputs {
+                activations[sample_idx][out_node_idx] += sample_wise_outputs[sample_idx];
+            }
         }
 
         Ok(activations)
@@ -386,29 +384,39 @@ impl KanLayer {
     /// second_layer.zero_gradients();
     /// /* continue training */
     /// ```
-    pub fn backward(&mut self, gradient: &[f64]) -> Result<Vec<f64>, KanLayerError> {
-        if gradient.len() != self.output_dimension {
-            return Err(KanLayerError::missized_gradient(
-                gradient.len(),
-                self.output_dimension,
-            ));
-        }
-        if gradient.iter().any(|f| f.is_nan()) {
-            return Err(KanLayerError::nans_in_gradient());
+    pub fn backward(&mut self, gradients: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, KanLayerError> {
+        for gradient in gradients.iter() {
+            if gradient.len() != self.output_dimension {
+                return Err(KanLayerError::missized_gradient(
+                    gradient.len(),
+                    self.output_dimension,
+                ));
+            }
+
+            if gradient.iter().any(|f| f.is_nan()) {
+                return Err(KanLayerError::nans_in_gradient());
+            }
         }
 
-        let mut input_error = vec![0.0; self.input_dimension];
-        for i in 0..self.splines.len() {
-            // every `input_dimension` splines belong to the same node, and thus will use the same error value.
-            // "Distribute" the error at a given node among all incoming edges
-            let error_at_edge_output =
-                gradient[i / self.input_dimension] / self.input_dimension as f64;
-            let error_at_edge_input = self.splines[i]
-                .backward(error_at_edge_output)
-                .map_err(|e| KanLayerError::backward_before_forward(e, i))?;
-            input_error[i % self.input_dimension] += error_at_edge_input;
+        let num_gradients = gradients.len();
+        let mut transposed_gradients = vec![vec![0.0; num_gradients]; self.output_dimension];
+        for i in 0..num_gradients {
+            for j in 0..self.input_dimension {
+                transposed_gradients[j][i] = gradients[i][j];
+            }
         }
-        Ok(input_error)
+        let mut backpropped_gradients = vec![vec![0.0; self.input_dimension]; num_gradients];
+        for edge_index in 0..self.splines.len() {
+            let in_node_idx = edge_index / self.output_dimension;
+            let out_node_idx = edge_index % self.output_dimension;
+            let sample_wise_outputs = self.splines[edge_index]
+                .backward(&transposed_gradients[out_node_idx], 1.0, 0.1, 0.1)
+                .map_err(|e| KanLayerError::backward_before_forward(e, edge_index))?; // TODO incorporate sparsity losses
+            for sample_idx in 0..num_gradients {
+                backpropped_gradients[sample_idx][in_node_idx] += sample_wise_outputs[sample_idx];
+            }
+        }
+        Ok(backpropped_gradients)
     }
 
     // /// as [KanLayer::backward], but divides the work among the passed thread pool
@@ -818,35 +826,21 @@ mod test {
     fn test_forward() {
         // to properly test layer forward, I need a layer with output and input dim = 2, which means 4 total edges
         let mut layer = build_test_layer();
-        let preacts = vec![0.0, 0.5];
-        let acts = layer.forward(&preacts).unwrap();
+        let preacts = vec![vec![0.0, 0.5]];
+        let acts = layer.forward(preacts).unwrap();
         let expected_activations = vec![0.3177, -0.3177];
-        let rounded_activations: Vec<f64> = acts
+        let rounded_activations: Vec<f64> = acts[0]
             .iter()
             .map(|x| (x * 10000.0).round() / 10000.0)
             .collect();
         assert_eq!(rounded_activations, expected_activations);
     }
 
-    // #[test]
-    // fn test_forward_concurrent() {
-    //     let mut layer = build_test_layer();
-    //     let preacts = vec![0.0, 0.5];
-    //     let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
-    //     let acts = layer.forward_concurrent(&preacts, &thread_pool).unwrap();
-    //     let expected_activations = vec![0.3177, -0.3177];
-    //     let rounded_activations: Vec<f64> = acts
-    //         .iter()
-    //         .map(|x| (x * 10000.0).round() / 10000.0)
-    //         .collect();
-    //     assert_eq!(rounded_activations, expected_activations);
-    // }
-
     #[test]
     fn test_forward_bad_activations() {
         let mut layer = build_test_layer();
-        let preacts = vec![0.0, 0.5, 0.5];
-        let acts = layer.forward(&preacts);
+        let preacts = vec![vec![0.0, 0.5, 0.5]];
+        let acts = layer.forward(preacts);
         assert!(acts.is_err());
         let error = acts.err().unwrap();
         assert_eq!(error, KanLayerError::missized_preacts(3, 2));
@@ -856,19 +850,19 @@ mod test {
     #[test]
     fn test_forward_then_backward() {
         let mut layer = build_test_layer();
-        let preacts = vec![0.0, 0.5];
-        let acts = layer.forward(&preacts).unwrap();
+        let preacts = vec![vec![0.0, 0.5]];
+        let acts = layer.forward(preacts).unwrap();
         let expected_activations = vec![0.3177, -0.3177];
-        let rounded_activations: Vec<f64> = acts
+        let rounded_activations: Vec<f64> = acts[0]
             .iter()
             .map(|x| (x * 10000.0).round() / 10000.0)
             .collect();
         assert_eq!(rounded_activations, expected_activations, "forward failed");
 
-        let error = vec![1.0, 0.5];
+        let error = vec![vec![1.0, 0.5]];
         let input_error = layer.backward(&error).unwrap();
         let expected_input_error = vec![0.0, 0.60156];
-        let rounded_input_error: Vec<f64> = input_error
+        let rounded_input_error: Vec<f64> = input_error[0]
             .iter()
             .map(|f| (f * 100000.0).round() / 100000.0)
             .collect();
@@ -924,7 +918,7 @@ mod test {
     #[test]
     fn test_backward_before_forward() {
         let mut layer = build_test_layer();
-        let error = vec![1.0, 0.5];
+        let error = vec![vec![1.0, 0.5]];
         let input_error = layer.backward(&error);
         assert!(input_error.is_err());
     }
@@ -941,9 +935,9 @@ mod test {
     #[test]
     fn test_backward_bad_error_length() {
         let mut layer = build_test_layer();
-        let preacts = vec![0.0, 0.5];
-        let _ = layer.forward(&preacts).unwrap();
-        let error = vec![1.0, 0.5, 0.5];
+        let preacts = vec![vec![0.0, 0.5]];
+        let _ = layer.forward(preacts).unwrap();
+        let error = vec![vec![1.0, 0.5, 0.5]];
         let input_error = layer.backward(&error);
         assert!(input_error.is_err());
     }
@@ -953,7 +947,7 @@ mod test {
     fn test_merge_identical_layers_yield_identical_output() {
         let layer1 = build_test_layer();
         let layer2 = layer1.clone();
-        let input = vec![0.0, 0.5];
+        let input = vec![vec![0.0, 0.5]];
         let acts1 = layer1.infer(&input).unwrap();
         let acts2 = layer2.infer(&input).unwrap();
         assert_eq!(acts1, acts2);

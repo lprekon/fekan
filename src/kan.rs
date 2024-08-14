@@ -242,15 +242,12 @@ impl Kan {
     /// /* interpret the output as you like, for example as logits in a classifier, or as predicted value in a regressor */
     /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
-    pub fn forward(&mut self, input: Vec<f64>) -> Result<Vec<f64>, KanError> {
+    pub fn forward(&mut self, input: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, KanError> {
         let mut preacts = input;
         for (idx, layer) in self.layers.iter_mut().enumerate() {
-            let result = layer.forward(&preacts);
-            if let Err(e) = result {
-                return Err(KanError::forward(e, idx));
-            }
-            let output = result.unwrap();
-            preacts = output;
+            preacts = layer
+                .forward(preacts)
+                .map_err(|e| KanError::forward(e, idx))?;
         }
         Ok(preacts)
     }
@@ -284,15 +281,12 @@ impl Kan {
     /// returns a [KanError] if any layer returns an error.
     /// # Example
     /// see [`Kan::forward`] for an example
-    pub fn infer(&self, input: Vec<f64>) -> Result<Vec<f64>, KanError> {
+    pub fn infer(&self, input: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, KanError> {
         let mut preacts = input;
         for (idx, layer) in self.layers.iter().enumerate() {
-            let result = layer.infer(&preacts);
-            if let Err(e) = result {
-                return Err(KanError::forward(e, idx));
-            }
-            let output = result.unwrap();
-            preacts = output;
+            preacts = layer
+                .infer(&preacts)
+                .map_err(|e| KanError::forward(e, idx))?;
         }
         Ok(preacts)
     }
@@ -335,14 +329,14 @@ impl Kan {
     /// model.zero_gradients(); // zero the gradients for the next batch of training data
     /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
-    pub fn backward(&mut self, error: Vec<f64>) -> Result<Vec<f64>, KanError> {
-        let mut error: Vec<f64> = error;
+    pub fn backward(&mut self, gradients: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, KanError> {
+        let mut gradients = gradients;
         for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
-            error = layer
-                .backward(&error)
+            gradients = layer
+                .backward(&gradients)
                 .map_err(|e| KanError::backward(e, idx))?;
         }
-        Ok(error)
+        Ok(gradients)
     }
 
     // /// as [Kan::backward], but uses a thread pool to multi-thread the backward pass
@@ -613,7 +607,7 @@ mod test {
             ..kan_config
         };
         let mut second_kan = Kan::new(&second_kan_config);
-        let input = vec![0.5, 0.4, 0.5];
+        let input = vec![vec![0.5, 0.4, 0.5]];
         let result = first_kan.forward(input.clone()).unwrap();
         assert_eq!(result.len(), 3);
         let result = second_kan.forward(input).unwrap();
@@ -631,10 +625,10 @@ mod test {
             class_map: None,
         };
         let mut first_kan = Kan::new(options);
-        let input = vec![0.5, 0.4, 0.5, 0.5, 0.4];
+        let input = vec![vec![0.5, 0.4, 0.5, 0.5, 0.4]];
         let result = first_kan.forward(input.clone()).unwrap();
         assert_eq!(result.len(), options.layer_sizes.last().unwrap().clone());
-        let error = vec![0.5, 0.4, 0.5];
+        let error = vec![vec![0.5, 0.4, 0.5]];
         let result = first_kan.backward(error).unwrap();
         assert_eq!(result.len(), options.input_size);
     }
@@ -651,7 +645,7 @@ mod test {
         };
         let first_kan = Kan::new(&kan_config);
         let second_kan = first_kan.clone();
-        let input = vec![0.5, 0.4, 0.5];
+        let input = vec![vec![0.5, 0.4, 0.5]];
         let first_result = first_kan.infer(input.clone()).unwrap();
         let second_result = second_kan.infer(input.clone()).unwrap();
         assert_eq!(first_result, second_result);

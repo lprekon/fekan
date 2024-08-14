@@ -7,9 +7,11 @@ use crate::Sample;
 pub struct TrainingOptions<'a> {
     /// number of epochs for which to train, where an epoch is one complete pass through the training data
     pub num_epochs: usize,
-    /// number of samples to pass through the model before updating the knots. See [`KanLayer::update_knots_from_samples`](crate::kan_layer::KanLayer::update_knots_from_samples) for more information about this process.
-    pub knot_update_interval: usize,
-    /// the adaptivity of the knots when updating them. See [`KanLayer::update_knots_from_samples`](crate::kan_layer::KanLayer::update_knots_from_samples) for more information about this process.
+    /// number of samples to pass through the model per batch. After each batch, the model's weights are updated, and the knots are adapted (see [`KanLayer::update_knots_from_samples`](crate::kan_layer::KanLayer::update_knots_from_samples) for more information about this process)
+    ///
+    /// for best results when the training data is small, let |training_data| % (batch_size * num_threads) = 0
+    pub batch_size: usize,
+    /// the adaptivity of the knots when updating them. See [`KanLayer::update_knots_from_samples`](crate::kan_layer::KanLayer::update_knots_from_samples) for more information about this process. Knots are updated after each batch
     pub knot_adaptivity: f64,
     /// the learning factor applied to the gradients when updating the model.
     pub learning_rate: f64,
@@ -44,7 +46,7 @@ impl<'a> TrainingOptions<'_> {
     /// * the lengths of `knot_extension_targets` and `knot_extension_times` are not equal.
     pub fn new(
         num_epochs: usize,
-        knot_update_interval: usize,
+        batch_size: usize,
         knot_adaptivity: f64,
         learning_rate: f64,
         knot_extension_targets: Option<Vec<usize>>,
@@ -94,7 +96,7 @@ impl<'a> TrainingOptions<'_> {
         };
         Ok(TrainingOptions {
             num_epochs,
-            knot_update_interval,
+            batch_size,
             knot_adaptivity,
             learning_rate,
             knot_extension_targets,
@@ -111,7 +113,7 @@ impl Default for TrainingOptions<'_> {
     fn default() -> Self {
         TrainingOptions {
             num_epochs: 100,
-            knot_update_interval: 100,
+            batch_size: 100,
             knot_adaptivity: 0.1,
             learning_rate: 0.001,
             knot_extension_targets: None,
