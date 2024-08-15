@@ -68,7 +68,7 @@ pub mod training_options;
 
 use std::thread;
 
-use kan::{Kan, ModelType};
+use kan::{kan_error::KanError, Kan, ModelType};
 use log::{debug, info};
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};

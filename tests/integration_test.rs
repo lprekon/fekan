@@ -105,7 +105,6 @@ mod regression {
             class_map: None,
         });
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
-        preset_knot_ranges(&mut untrained_model, &training_data).unwrap();
         let training_result = train_model(
             untrained_model,
             &training_data,
@@ -117,7 +116,7 @@ mod regression {
             },
         );
         if let Err(e) = training_result {
-            panic!("Error training model: {:#?}", e);
+            panic!("Error training model: {}", e);
         }
         let mut trained_model = training_result.unwrap();
         let validation_loss = validate_model(&validation_data, &mut trained_model);

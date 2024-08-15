@@ -417,6 +417,7 @@ impl KanLayer {
         }
         let mut backpropped_gradients = vec![vec![0.0; self.input_dimension]; num_gradients];
         for edge_index in 0..self.splines.len() {
+            trace!("Backpropping gradients for edge {}", edge_index);
             let in_node_idx = edge_index / self.output_dimension;
             let out_node_idx = edge_index % self.output_dimension;
             let sample_wise_outputs = self.splines[edge_index]
@@ -431,6 +432,7 @@ impl KanLayer {
                 backpropped_gradients[sample_idx][in_node_idx] += sample_wise_outputs[sample_idx];
             }
         }
+        trace!("Backpropped gradients: {:?}", backpropped_gradients);
         Ok(backpropped_gradients)
     }
 
