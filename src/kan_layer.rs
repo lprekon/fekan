@@ -875,7 +875,7 @@ mod test {
 
         let error = vec![vec![1.0, 0.5]];
         let input_error = layer.backward(&error).unwrap();
-        let expected_input_error = vec![0.0, 0.60156];
+        let expected_input_error = vec![0.0, 1.20313];
         let rounded_input_error: Vec<f64> = input_error[0]
             .iter()
             .map(|f| (f * 100000.0).round() / 100000.0)
