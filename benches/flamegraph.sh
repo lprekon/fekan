@@ -13,10 +13,12 @@ build regressor \
 -e 10 \
 --coefs 5 \
 --knot-extension-targets 20 \
---knot-extension-times 4 \
---sym-times "3,10" \
+--knot-extension-times "10" \
+--sym-times "10" \
 --sym-threshold 0.98 \
+--prune-times "10" \
+--prune-threshold 0.01 \
 --learning-rate 0.01 \
 --validate-each-epoch  \
---num-threads 8
+--num-threads 8 
 sudo cargo clean

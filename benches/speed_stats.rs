@@ -43,50 +43,57 @@ fn big_layer_big_spline() -> KanLayer {
     })
 }
 
+const BATCH_SIZE: usize = 4;
+
+fn generate_batch_inputs() -> Vec<Vec<f64>> {
+    let mut batch_inputs = vec![vec![0.0; INPUT_DIMENSION_BIG]; BATCH_SIZE];
+    for i in 0..BATCH_SIZE {
+        // create multiple samples so we can see parallelism improvements later
+        for j in 0..INPUT_DIMENSION_BIG {
+            batch_inputs[i][j] = thread_rng().gen();
+        }
+    }
+    batch_inputs
+}
+
+fn generate_batch_gradients() -> Vec<Vec<f64>> {
+    let mut batch_gradients = vec![vec![0.0; OUTPUT_DIMENSION_BIG]; BATCH_SIZE];
+    for i in 0..BATCH_SIZE {
+        // create multiple samples so we can see parallelism improvements later
+        for j in 0..OUTPUT_DIMENSION_BIG {
+            batch_gradients[i][j] = thread_rng().gen();
+        }
+    }
+    batch_gradients
+}
+
 #[bench]
 fn bench_forward(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
-    let inputs = vec![
-        (0..INPUT_DIMENSION_BIG)
-            .map(|_| thread_rng().gen())
-            .collect::<Vec<f64>>();
-        4 // create multiple inputs so we can see parallelism improvements later
-    ];
+    let batch_inputs = generate_batch_inputs();
     b.iter(|| {
-        let _ = layer.forward(inputs.clone());
+        let _ = layer.forward(batch_inputs.clone());
     });
 }
 
 #[bench]
 fn bench_backward(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
-    let inputs = vec![
-        (0..INPUT_DIMENSION_BIG)
-            .map(|_| thread_rng().gen())
-            .collect::<Vec<f64>>();
-        4 // create multiple inputs so we can see parallelism improvements later
-    ];
-    let _ = layer.forward(inputs);
-    let error = vec![
-        (0..OUTPUT_DIMENSION_BIG)
-            .map(|_| thread_rng().gen())
-            .collect::<Vec<f64>>();
-        4 // create multiple inputs so we can see parallelism improvements later
-    ];
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+    let batch_gradients = generate_batch_gradients();
     b.iter(|| {
         // run multiple times per iteration so cache improvements will show
 
-        let _ = layer.backward(&error, 0.75, 0.25);
+        let _ = layer.backward(&batch_gradients, 0.75, 0.25);
     });
 }
 
 #[bench]
 fn bench_update(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
-    let input = vec![(0..INPUT_DIMENSION_BIG)
-        .map(|_| thread_rng().gen())
-        .collect()];
-    let _ = layer.forward(input);
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
     let error = vec![(0..OUTPUT_DIMENSION_BIG)
         .map(|_| thread_rng().gen())
         .collect()];
@@ -97,12 +104,7 @@ fn bench_update(b: &mut Bencher) {
 #[bench]
 fn bench_update_knots_from_samples(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
-    let mut batch_inputs = vec![vec![0.0; INPUT_DIMENSION_BIG]; 100];
-    for i in 0..100 {
-        for j in 0..INPUT_DIMENSION_BIG {
-            batch_inputs[i][j] = thread_rng().gen();
-        }
-    }
+    let batch_inputs = generate_batch_inputs();
     let _ = layer.forward(batch_inputs);
 
     b.iter(|| layer.update_knots_from_samples(0.1));
@@ -130,5 +132,20 @@ fn bench_suggest_symbolic(b: &mut Bencher) {
     });
     b.iter(|| {
         let _ = layer.bench_suggest_symbolic();
+    });
+}
+
+#[bench]
+fn bench_prune(b: &mut Bencher) {
+    let mut layer = KanLayer::new(&KanLayerOptions {
+        input_dimension: 1,
+        output_dimension: 1,
+        degree: 3,
+        coef_size: 10,
+    });
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs); // we have to give the edges some output history in order to prune
+    b.iter(|| {
+        let _ = layer.prune(0.0);
     });
 }

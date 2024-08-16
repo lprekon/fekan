@@ -266,14 +266,24 @@ impl Edge {
                     let d_edge_l1_d_ci = basis_activations.iter().sum::<f64>()
                         / basis_activations.len() as f64
                         * control_points[i].signum();
+                    assert!(d_edge_l1_d_ci.is_finite(), "d_edge_l1_d_ci is not finite");
 
                     // Entropy loss of layer = -Σ (edge_L1/layer_L1 * log(edge_L1/layer_L1))
                     // ∴ d_layer_entropy/d_C_i = d_layer_entropy/d_edge_L1 * d_edge_L1/d_C_i
                     // assert_ne!(edge_l1_norm, 0.0, "edge_l1_norm is 0");
                     // assert_ne!(layer_l1, 0.0, "layer_l1 is 0");
-                    let d_entropy_d_edge_l1 =
-                        -1.0 * (layer_l1 - edge_l1) * ((edge_l1 / layer_l1).ln() + 1.0)
-                            / layer_l1.powi(2);
+                    let c = (layer_l1 - edge_l1);
+                    assert!(c.is_finite(), "c is not finite");
+                    let d =
+                        ((edge_l1 / (layer_l1 + f64::MIN_POSITIVE) + f64::MIN_POSITIVE).ln() + 1.0);
+                    assert!(d.is_finite(), "d is not finite");
+                    let e = (layer_l1.powi(2) + f64::MIN_POSITIVE);
+                    assert!(e.is_finite(), "e is not finite");
+                    let d_entropy_d_edge_l1 = -1.0 * c * d / e;
+                    assert!(
+                        d_entropy_d_edge_l1.is_finite(),
+                        "d_entropy_d_edge_l1 is not finite"
+                    );
 
                     let l1_gradient = l1_lambda * d_edge_l1_d_ci;
                     let entrop_gradient = d_entropy_d_edge_l1 * d_edge_l1_d_ci * entropy_lambda;
