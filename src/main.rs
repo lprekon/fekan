@@ -136,7 +136,7 @@ struct TrainArgs {
     /// 0 < knot_adaptivity < 1 interpolates between these two extremes.
     knot_adaptivity: f64,
 
-    #[arg(long, alias = "lr", default_value = "0.01", global = true)]
+    #[arg(long, alias = "lr", default_value = "0.001", global = true)]
     /// the learning rate used to update the model weights
     learning_rate: f64,
 
