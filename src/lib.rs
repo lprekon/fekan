@@ -177,6 +177,7 @@ pub fn train_model(
     let knot_extension_targets = options.knot_extension_targets.unwrap_or_default();
     let knot_extension_times = options.knot_extension_times.unwrap_or_default();
     let symbolification_times = options.symbolification_times.unwrap_or_default();
+    let pruning_times = options.pruning_times.unwrap_or_default();
 
     // do several "dummy" passes so we can udpate the knots to span the proper ranges before we start training
     // we need to do one round of pre-setting per layer, since the knot ranges of layer n depend on the output of layer n-1
@@ -292,6 +293,12 @@ pub fn train_model(
             EachEpoch::DoNotValidateModel => info!("Epoch: {}, Epoch Loss: {}", epoch, epoch_loss),
         };
 
+        // prune the model if necessary
+        if pruning_times.contains(&epoch) {
+            info!("Pruning model");
+            model.prune(options.pruning_threshold);
+        }
+
         // symbolify the model if necessary
         if symbolification_times.contains(&epoch) {
             info!("Symbolifying model");
@@ -299,16 +306,11 @@ pub fn train_model(
         }
 
         // update the knots if necessary
-        if knot_extensions_completed < knot_extension_targets.len()
-            && epoch == knot_extension_times[knot_extensions_completed]
+        if knot_extension_times.contains(&epoch)
         {
             let target_length = knot_extension_targets[knot_extensions_completed];
             let old_length = model.knot_length();
-            // get some samples for knot extension
-            // for i in 0..(2 * old_length) {
-            //     model.forward(shuffled_data[i].features.clone()).unwrap();
-            // }
-            // we don't do this anymore
+            info!("Extending knots from {} to {}", old_length, target_length);
             model
                 .set_knot_length(target_length)
                 .map_err(|e| TrainingError {
@@ -316,7 +318,6 @@ pub fn train_model(
                     epoch,
                     sample: training_data.len(),
                 })?;
-            info!("Knot extension: {} -> {}", old_length, target_length);
             knot_extensions_completed += 1;
         }
     }

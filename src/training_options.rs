@@ -27,6 +27,10 @@ pub struct TrainingOptions<'a> {
     pub symbolification_times: Option<Vec<usize>>,
     /// the R2 threshold for symbolification. See [`KanLayer::test_and_set_symbolic`](crate::kan_layer::KanLayer::test_and_set_symbolic) for more information about this process.
     pub symbolification_threshold: f64,
+    /// The epochs (one-indexed) after which to check edges for pruning. Must be sorted in ascending order. If not set, no pruning will occur. Which edges are pruned is determined by the `pruning_threshold`
+    pub pruning_times: Option<Vec<usize>>,
+    /// Any edges who's average absolute output was less than this threshold during the last batch will be pruned
+    pub pruning_threshold: f64,
     /// the number of threads to use when training the model. If <= 1, training will be single-threaded.
     pub num_threads: usize,
     /// whether to test the model against the validation data set after each epoch
@@ -59,6 +63,8 @@ impl<'a> TrainingOptions<'_> {
         knot_extension_times: Option<Vec<usize>>,
         symbolification_times: Option<Vec<usize>>,
         symbolification_threshold: Option<f64>,
+        pruning_times: Option<Vec<usize>>,
+        pruning_threshold: Option<f64>,
         num_threads: usize,
         each_epoch: EachEpoch<'a>,
     ) -> Result<TrainingOptions, TrainingOptionsError> {
@@ -100,6 +106,20 @@ impl<'a> TrainingOptions<'_> {
             }
             None => None,
         };
+        if pruning_times.is_some() && pruning_threshold.is_none() {
+            return Err(TrainingOptionsError::MissingPruningThreshold);
+        }
+        if pruning_times.is_none() && pruning_threshold.is_some() {
+            return Err(TrainingOptionsError::MissingPruningTimes);
+        }
+        let pruning_times: Option<Vec<usize>> = match pruning_times {
+            Some(times) => {
+                let mut times = times;
+                times.sort();
+                Some(times)
+            }
+            None => None,
+        };
         Ok(TrainingOptions {
             num_epochs,
             batch_size,
@@ -111,6 +131,8 @@ impl<'a> TrainingOptions<'_> {
             knot_extension_times: extension_times,
             symbolification_times: symbol_times,
             symbolification_threshold: symbolification_threshold.unwrap_or(0.0),
+            pruning_times,
+            pruning_threshold: pruning_threshold.unwrap_or(0.0),
             num_threads,
             each_epoch,
         })
@@ -143,6 +165,8 @@ impl Default for TrainingOptions<'_> {
             knot_extension_times: None,
             symbolification_times: None,
             symbolification_threshold: 0.0,
+            pruning_times: None,
+            pruning_threshold: 0.0,
             num_threads: 1,
             each_epoch: EachEpoch::DoNotValidateModel,
         }
@@ -167,6 +191,10 @@ pub enum TrainingOptionsError {
     MissingSymbolificationThreshold,
     /// Symbolification threshold was provided, but the symbolification times were not
     MissingSymbolificationTimes,
+    /// Pruning times were provided, but the pruning threshold was not
+    MissingPruningThreshold,
+    /// Pruning threshold was provided, but the pruning times were not
+    MissingPruningTimes,
 }
 
 impl fmt::Display for TrainingOptionsError {
@@ -177,6 +205,8 @@ impl fmt::Display for TrainingOptionsError {
             TrainingOptionsError::MismatchedKnotExtensionLengths { knot_extension_targets_length, knot_extension_times_length } => write!(f, "Mismatched knot extension lengths: knot extension targets length is {}, knot extension times length is {}", knot_extension_targets_length, knot_extension_times_length),
             TrainingOptionsError::MissingSymbolificationThreshold => write!(f, "Missing symbolification threshold"),
             TrainingOptionsError::MissingSymbolificationTimes => write!(f, "Missing symbolification times"),
+            TrainingOptionsError::MissingPruningThreshold => write!(f, "Missing pruning threshold"),
+            TrainingOptionsError::MissingPruningTimes => write!(f, "Missing pruning times"),
         }
     }
 }

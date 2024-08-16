@@ -107,7 +107,6 @@ struct GenericBuildParams {
 
 #[derive(Args, Clone, Debug)]
 #[command(group(ArgGroup::new("output").required(true).multiple(false)))]
-#[command(group(ArgGroup::new("knots").required(false).multiple(true)))]
 struct TrainArgs {
     /// path to the file containing the training data.
     /// The file format is determined by the file extension. Supported formats are: pickle, json, avro
@@ -166,7 +165,12 @@ struct TrainArgs {
     /// A comma delimmited list numbers representing the epochs after which to extend the knots. Must be equal in length to `knot_extension_targets`. If not set, no extension will occur. Example: `10,50,100` would extend the knots to the lengths specified in `knot_extension_targets` after the 10th, 50th, and 100th epochs (one-indexed)
     knot_extension_times: Option<Vec<usize>>,
 
-    #[arg(long = "sym-times", global = true, value_delimiter = ',')]
+    #[arg(
+        long = "sym-times",
+        global = true,
+        value_delimiter = ',',
+        requires = "symbolification-threshold"
+    )]
     /// a comma delimmited list of numbers representing the epochs after which to run symbolification. During symbolification, edges are tested for fit against a variety of symbolic functions (e.g. sin(x), x^2, etc) and will be locked to the best fit function, if R2 is above a certain threshold. If not set, no symbolification will occur. Example: `10,50,100` would run symbolification after the 10th, 50th, and 100th epochs (one indexed)
     symbolification_times: Option<Vec<usize>>,
 
@@ -177,6 +181,19 @@ struct TrainArgs {
     )]
     /// the R2 threshold above which to lock edges to symbolic functions during symbolification. Any edges who's best-fit function has an R2 below this threshold will be left as a spline. If not set, no symbolification will occur
     symbolification_threshold: Option<f64>,
+
+    #[arg(
+        long = "prune-times",
+        global = true,
+        value_delimiter = ',',
+        requires = "prune-threshold"
+    )]
+    /// A comma-delimited list of numbers representing the epochs after which to prune the model. If not set, no pruning will occur. Example: `10,50,100` would prune the model after the 10th, 50th, and 100th epochs (one-indexed)
+    pruning_times: Option<Vec<usize>>,
+
+    #[arg(long = "prune-threshold", requires = "prune-times", global = true)]
+    /// the threshold below which to prune edges from the model. Edges with average absolute output value for the last batch below this threshold will be removed. If not set, no pruning will occur
+    pruning_threshold: Option<f64>,
 
     #[arg(long, global = true)]
     /// if set, the model will be run against the validation data after each epoch, and the loss will be reported to the observer
@@ -256,6 +273,8 @@ impl TrainArgs {
             self.knot_extension_times.clone(),
             self.symbolification_times.clone(),
             self.symbolification_threshold,
+            self.pruning_times.clone(),
+            self.pruning_threshold,
             num_threads,
             match self.validate_each_epoch {
                 true => EachEpoch::ValidateModel(validation_data),
