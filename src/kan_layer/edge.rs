@@ -28,6 +28,8 @@ pub(crate) struct Edge {
     #[serde(skip)]
     // only used during operation
     last_t: Vec<f64>,
+    #[serde(skip)] // only used during training
+    l1_norm: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -123,6 +125,7 @@ impl Edge {
                 gradients: vec![0.0; size],
             },
             last_t: vec![],
+            l1_norm: None,
         })
     }
 
@@ -149,11 +152,12 @@ impl Edge {
                     }
                     outputs.push(sum);
                 }
-                trace!("edge activations: {:?}", outputs);
-                outputs
+                // trace!("edge activations: {:?}", outputs);
             }
-            _ => self.infer(inputs), // symbolic edges don't cache activations, so they have the same forward and infer implementations
+            _ => outputs = self.infer(inputs), // symbolic edges don't cache activations, so they have the same forward and infer implementations
         }
+        self.l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
+        outputs
     }
 
     /// comput the point on the spline at given parameter `t`
@@ -228,8 +232,7 @@ impl Edge {
         if self.last_t.is_empty() {
             return Err(EdgeError::BackwardBeforeForward);
         }
-        let edge_l1_norm = self.l1_norm();
-        assert_eq!(edge_l1_norm.signum(), 1.0);
+        let edge_l1 = self.l1_norm.expect("edge_l1 is None");
         assert_eq!(layer_l1.signum(), 1.0);
         match &mut self.kind {
             EdgeType::Spline {
@@ -239,6 +242,7 @@ impl Edge {
                 activations,
                 gradients: control_point_gradients,
             } => {
+                // assert_eq!(activations[0][0].len(), edge_gradients.len());
                 let adjusted_error: Vec<f64> = edge_gradients
                     .iter()
                     .map(|e| e / control_points.len() as f64)
@@ -254,19 +258,25 @@ impl Edge {
                     // d_model_L1/d_edge_L1 = 1
                     // d_edge_L1/d_C_i = 1/N * ΣB_i(t) * sign(C_i)
                     assert!(!activations[0][i].is_empty());
-                    let l1_gradient = activations[0][i]
+                    let basis_activations: Vec<f64> = self
+                        .last_t
                         .iter()
-                        .map(|(_t, basis_activation)| basis_activation)
-                        .sum::<f64>()
-                        / activations[0][i].len() as f64
+                        .map(|t| *activations[0][i].get(&t.to_bits()).unwrap())
+                        .collect();
+                    let d_edge_l1_d_ci = basis_activations.iter().sum::<f64>()
+                        / basis_activations.len() as f64
                         * control_points[i].signum();
 
                     // Entropy loss of layer = -Σ (edge_L1/layer_L1 * log(edge_L1/layer_L1))
                     // ∴ d_layer_entropy/d_C_i = d_layer_entropy/d_edge_L1 * d_edge_L1/d_C_i
-                    // d_layer_entropy/d_edge_L1 = -log(edge_L1/layer_L1)
-                    assert_ne!(edge_l1_norm, 0.0, "edge_l1_norm is 0");
-                    assert_ne!(layer_l1, 0.0, "layer_l1 is 0");
-                    let entropy_gradient = (edge_l1_norm / layer_l1).ln() * l1_gradient;
+                    // assert_ne!(edge_l1_norm, 0.0, "edge_l1_norm is 0");
+                    // assert_ne!(layer_l1, 0.0, "layer_l1 is 0");
+                    let d_entropy_d_edge_l1 =
+                        -1.0 * (layer_l1 - edge_l1) * ((edge_l1 / layer_l1).ln() + 1.0)
+                            / layer_l1.powi(2);
+
+                    let l1_gradient = l1_lambda * d_edge_l1_d_ci;
+                    let entrop_gradient = d_entropy_d_edge_l1 * d_edge_l1_d_ci * entropy_lambda;
                     // d_pred_loss/d_C_i = d_pred_loss/d_edge_output * d_edge_output/d_C_i
                     // d_pred_loss/d_edge_output = 1
                     // d_edge_output/d_C_i = B_i(t)
@@ -278,9 +288,8 @@ impl Edge {
                         .iter()
                         .zip(basis_activations)
                         .map(|(e, a)| e * a);
-                    control_point_gradients[i] += prediction_gradients.sum::<f64>()
-                        + l1_lambda * l1_gradient
-                        + entropy_lambda * entropy_gradient;
+                    control_point_gradients[i] +=
+                        prediction_gradients.sum::<f64>() + l1_gradient + entrop_gradient;
 
                     // calculate the derivative of the spline output with respect to the input (as opposed to wrt the control points)
                     // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
@@ -345,28 +354,6 @@ impl Edge {
         }
     }
 
-    pub(super) fn l1_norm(&self) -> f64 {
-        match &self.kind {
-            EdgeType::Spline {
-                control_points,
-                activations,
-                ..
-            } => {
-                let mut sum = 0.0;
-                let mut count = 0;
-                for hashmap in activations[0][0..control_points.len()].iter() {
-                    assert!(hashmap.len() > 0);
-                    for (_, basis_activation) in hashmap.iter() {
-                        sum += basis_activation.abs();
-                        count += 1;
-                    }
-                }
-                sum / count as f64
-            }
-            _ => 0.0, // symbolic edges have no activations to sum
-        }
-    }
-
     pub(super) fn update(&mut self, learning_rate: f64) {
         match &mut self.kind {
             EdgeType::Spline {
@@ -414,6 +401,10 @@ impl Edge {
             } => knots.iter(),
             _ => Iter::default(),
         }
+    }
+
+    pub(super) fn l1_norm(&self) -> Option<f64> {
+        self.l1_norm
     }
 
     // pub(super) fn control_points(&self) -> Iter<'_, f64> {
@@ -517,6 +508,7 @@ impl Edge {
                         gradients: gradients.clone(),
                     },
                     last_t: vec![],
+                    l1_norm: None,
                 };
                 let target_outputs = copy_edge.infer(&inputs);
 
@@ -607,6 +599,7 @@ impl Edge {
                                 function: edge_type,
                             },
                             last_t: vec![],
+                            l1_norm: None,
                         };
                         let function_outputs: Vec<f64> = best_linear_edge.infer(&inputs);
                         let r2 =
@@ -680,6 +673,7 @@ impl Edge {
                 function: kind,
             },
             last_t: vec![],
+            l1_norm: None,
         }; // arbitrary initial value
         let mut a_min = Self::PARAM_MIN;
         let mut a_max = Self::PARAM_MAX;
@@ -710,6 +704,7 @@ impl Edge {
                                 function: kind,
                             },
                             last_t: vec![],
+                            l1_norm: None,
                         };
                         let function_outputs: Vec<f64> = function_under_test.infer(inputs);
                         let r2 =
@@ -1017,11 +1012,13 @@ impl Edge {
                         function: expected_function,
                     },
                     last_t: vec![],
+                    l1_norm: None,
                 })
             }
             EdgeType::Pruned => Ok(Edge {
                 kind: EdgeType::Pruned,
                 last_t: vec![],
+                l1_norm: Some(0.0),
             }),
         }
     }
@@ -1448,6 +1445,23 @@ mod tests {
     }
 
     #[test]
+    fn test_update_knots_from_bad_samples() {
+        let knots = linspace(-1.0, 1.0, 10);
+        let control_points = vec![1.0; 6];
+        let mut spline = Edge::new(3, control_points, knots.clone()).unwrap();
+        let samples = vec![0.0; 20];
+        spline.update_knots_from_samples(&samples, 0.0);
+        let current_knots = match spline.kind {
+            EdgeType::Spline { knots, .. } => knots,
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            current_knots, knots,
+            "knots updated when they shouldn't have been"
+        );
+    }
+
+    #[test]
     fn test_set_knot_length_increasing() {
         let k = 3;
         let coef_size = 5;
@@ -1772,6 +1786,7 @@ mod tests {
                     function: SymbolicFunction::Linear,
                 },
                 last_t: vec![],
+                l1_norm: None,
             };
             let result = edge.backward(&vec![0.5], 1.0, 0.0, 0.0);
             assert!(result.is_err());
@@ -1788,6 +1803,7 @@ mod tests {
                     function: SymbolicFunction::Linear,
                 },
                 last_t: vec![],
+                l1_norm: None,
             };
             let result = edge.forward(&vec![0.5]);
             assert_eq!(result[0], 21.0, "forward");
@@ -1806,6 +1822,7 @@ mod tests {
                     function: SymbolicFunction::Quadratic,
                 },
                 last_t: vec![],
+                l1_norm: None,
             };
             let result = edge.forward(&vec![2.0]);
             assert_eq!(82.0, result[0], "forward");
@@ -1825,6 +1842,7 @@ mod tests {
                     function: SymbolicFunction::Cubic,
                 },
                 last_t: vec![],
+                l1_norm: None,
             };
             let result = edge.forward(&vec![2.0]);
             let expected_result = 3.0 * ((1.5 * 2.0 + 2.0) as f64).powf(3.0) + 7.0;
@@ -1845,6 +1863,7 @@ mod tests {
                     function: SymbolicFunction::Quartic,
                 },
                 last_t: vec![],
+                l1_norm: None,
             };
             let result = edge.forward(&vec![2.0]);
             let expected_result = 1882.0; // 3.0 * ((1.5 * 2.0 + 2.0) as f64).powf(4.0) + 7.0;
@@ -1865,6 +1884,7 @@ mod tests {
                     function: SymbolicFunction::Quintic,
                 },
                 last_t: vec![],
+                l1_norm: None,
             };
             let result = edge.forward(&vec![0.5]);
             let expected_result = 478.8291015625; //3.0 * ((1.5 * 0.5 + 2.0) as f64).powf(5.0) + 7.0;

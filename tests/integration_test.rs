@@ -134,7 +134,7 @@ mod regression {
         fn true_function(x: f64, y: f64) -> f64 {
             ((std::f64::consts::PI * x).sin() + y.powi(2)).exp()
         }
-        let training_data = (0..5000)
+        let training_data = (0..6400)
             .map(|_| {
                 let x = thread_rng().gen_range(-1.0..1.0);
                 let y = thread_rng().gen_range(-1.0..1.0);
@@ -164,9 +164,10 @@ mod regression {
             untrained_model,
             &training_data,
             TrainingOptions {
-                num_epochs: 250,
+                num_epochs: 200,
                 num_threads: 8,
                 learning_rate: 0.01,
+                batch_size: 400,
                 each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,
                 ..TrainingOptions::default()
             },

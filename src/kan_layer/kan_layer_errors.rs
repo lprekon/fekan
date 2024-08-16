@@ -79,10 +79,13 @@ impl KanLayerError {
     }
 
     // Initialization function for BackwardBeforeForward
-    pub(super) fn backward_before_forward(spline_error: EdgeError, spline_idx: usize) -> Self {
+    pub(super) fn backward_before_forward(
+        spline_error: Option<EdgeError>,
+        spline_idx: usize,
+    ) -> Self {
         Self {
             error_kind: KanLayerErrorType::BackwardBeforeForward,
-            source: Some(spline_error),
+            source: spline_error,
             spline_idx: Some(spline_idx),
         }
     }

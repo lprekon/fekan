@@ -38,6 +38,9 @@ pub struct KanLayer {
     /// dim1 = input_dimension
     #[serde(skip)] // part of the layer's operating state, not part of the model
     samples: Vec<Vec<f64>>,
+
+    #[serde(skip)] // part of the layer's operating state, not part of the model
+    layer_l1: Option<f64>,
 }
 
 /// Hyperparameters for a KanLayer
@@ -98,6 +101,7 @@ impl KanLayer {
             input_dimension: options.input_dimension,
             output_dimension: options.output_dimension,
             samples: Vec::new(),
+            layer_l1: None,
         }
     }
 
@@ -174,6 +178,16 @@ impl KanLayer {
                 activations[sample_idx][out_node_idx] += sample_wise_outputs[sample_idx];
             }
         }
+        self.layer_l1 = Some(
+            self.splines
+                .iter()
+                .map(|s| {
+                    s.l1_norm()
+                        .expect("edges should have L1 norm stored after forward pass")
+                })
+                .sum::<f64>()
+                / self.splines.len() as f64,
+        );
         trace!("Activations: {:?}", activations);
         Ok(activations)
     }
@@ -406,6 +420,10 @@ impl KanLayer {
                 return Err(KanLayerError::nans_in_gradient());
             }
         }
+        if let None = self.layer_l1 {
+            return Err(KanLayerError::backward_before_forward(None, 0));
+        }
+        let layer_l1 = self.layer_l1.unwrap();
 
         let num_gradients = gradients.len();
         let mut transposed_gradients = vec![vec![0.0; num_gradients]; self.output_dimension];
@@ -421,8 +439,8 @@ impl KanLayer {
             let in_node_idx = edge_index / self.output_dimension;
             let out_node_idx = edge_index % self.output_dimension;
             let sample_wise_outputs = self.splines[edge_index]
-                .backward(&transposed_gradients[out_node_idx], 1.0, 0.1, 0.1)
-                .map_err(|e| KanLayerError::backward_before_forward(e, edge_index))?; // TODO incorporate sparsity losses
+                .backward(&transposed_gradients[out_node_idx], layer_l1, 1.0, 1.0)
+                .map_err(|e| KanLayerError::backward_before_forward(Some(e), edge_index))?; // TODO incorporate sparsity losses
             trace!(
                 "Backpropped gradients for edge {}: {:?}",
                 edge_index,
@@ -433,6 +451,7 @@ impl KanLayer {
             }
         }
         trace!("Backpropped gradients: {:?}", backpropped_gradients);
+        self.layer_l1 = None; // The L1 should be re-set after the next forward pass, and backward should not be called before forward, so this serves as a (redundant) check
         Ok(backpropped_gradients)
     }
 
@@ -713,6 +732,7 @@ impl KanLayer {
             input_dimension: expected_input_dimension,
             output_dimension: expected_output_dimension,
             samples: vec![],
+            layer_l1: None,
         })
     }
 
@@ -816,6 +836,7 @@ mod test {
             samples: vec![],
             input_dimension: 2,
             output_dimension: 2,
+            layer_l1: None,
         }
     }
 
