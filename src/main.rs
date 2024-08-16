@@ -169,7 +169,7 @@ struct TrainArgs {
         long = "sym-times",
         global = true,
         value_delimiter = ',',
-        requires = "symbolification-threshold"
+        requires = "symbolification_threshold"
     )]
     /// a comma delimmited list of numbers representing the epochs after which to run symbolification. During symbolification, edges are tested for fit against a variety of symbolic functions (e.g. sin(x), x^2, etc) and will be locked to the best fit function, if R2 is above a certain threshold. If not set, no symbolification will occur. Example: `10,50,100` would run symbolification after the 10th, 50th, and 100th epochs (one indexed)
     symbolification_times: Option<Vec<usize>>,
@@ -186,12 +186,12 @@ struct TrainArgs {
         long = "prune-times",
         global = true,
         value_delimiter = ',',
-        requires = "prune-threshold"
+        requires = "pruning_threshold"
     )]
     /// A comma-delimited list of numbers representing the epochs after which to prune the model. If not set, no pruning will occur. Example: `10,50,100` would prune the model after the 10th, 50th, and 100th epochs (one-indexed)
     pruning_times: Option<Vec<usize>>,
 
-    #[arg(long = "prune-threshold", requires = "prune-times", global = true)]
+    #[arg(long = "prune-threshold", requires = "pruning_times", global = true)]
     /// the threshold below which to prune edges from the model. Edges with average absolute output value for the last batch below this threshold will be removed. If not set, no pruning will occur
     pruning_threshold: Option<f64>,
 
