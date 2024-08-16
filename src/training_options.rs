@@ -112,6 +112,9 @@ impl<'a> TrainingOptions<'_> {
         if pruning_times.is_none() && pruning_threshold.is_some() {
             return Err(TrainingOptionsError::MissingPruningTimes);
         }
+        if pruning_threshold.is_some() && pruning_threshold.unwrap() < 0.0 {
+            return Err(TrainingOptionsError::NegativePruningThrehsold);
+        }
         let pruning_times: Option<Vec<usize>> = match pruning_times {
             Some(times) => {
                 let mut times = times;
@@ -195,6 +198,8 @@ pub enum TrainingOptionsError {
     MissingPruningThreshold,
     /// Pruning threshold was provided, but the pruning times were not
     MissingPruningTimes,
+    /// Pruning threshold was negative (the pruning threshold is checked against edge absolute output values, so it must be non-negative)
+    NegativePruningThrehsold,
 }
 
 impl fmt::Display for TrainingOptionsError {
@@ -207,6 +212,7 @@ impl fmt::Display for TrainingOptionsError {
             TrainingOptionsError::MissingSymbolificationTimes => write!(f, "Missing symbolification times"),
             TrainingOptionsError::MissingPruningThreshold => write!(f, "Missing pruning threshold"),
             TrainingOptionsError::MissingPruningTimes => write!(f, "Missing pruning times"),
+            TrainingOptionsError::NegativePruningThrehsold => write!(f, "Pruning threshold must be non-negative"),
         }
     }
 }

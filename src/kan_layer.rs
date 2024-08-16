@@ -778,6 +778,7 @@ impl KanLayer {
     /// # Returns
     /// A vector of the indices of the pruned edges
     pub fn prune(&mut self, threshold: f64) -> Vec<usize> {
+        assert!(threshold >= 0.0, "Pruning threhsold must be >= 0.0");
         let mut pruned_indices = Vec::new();
         for i in 0..self.splines.len() {
             trace!("Pruning edge {}", i);
