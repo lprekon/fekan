@@ -136,9 +136,17 @@ struct TrainArgs {
     /// 0 < knot_adaptivity < 1 interpolates between these two extremes.
     knot_adaptivity: f64,
 
-    #[arg(long, alias = "lr", default_value = "0.001", global = true)]
-    /// the learning rate used to update the model weights
+    #[arg(long, visible_alias = "lr", default_value = "0.001", global = true)]
+    /// /// the overall learning factor used to update model weights. This factor is applied to prediction, L1, and entropy penalties.
     learning_rate: f64,
+
+    #[arg(long, visible_alias = "l1", default_value = "1.0", global = true)]
+    /// the amount by which to scale the L1 penalty, relative to the prediction penalty, when updating the model. The L1 penalty affects the rate at which weights are pushed to zero.
+    l1_penalty: f64,
+
+    #[arg(long, visible_alias = "entropy", default_value = "1.0", global = true)]
+    /// the amount by which to scale the entropy penalty, relative to the prediction penalty, when updating the model. The entropy penalty affects the rate at which layers are pushed to favor a few edges over others
+    entropy_penalty: f64,
 
     #[arg(
         long,
@@ -242,6 +250,8 @@ impl TrainArgs {
             self.knot_update_interval,
             self.knot_adaptivity,
             self.learning_rate,
+            self.l1_penalty,
+            self.entropy_penalty,
             self.knot_extension_targets.clone(),
             self.knot_extension_times.clone(),
             self.symbolification_times.clone(),

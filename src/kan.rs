@@ -332,12 +332,17 @@ impl Kan {
     /// model.zero_gradients(); // zero the gradients for the next batch of training data
     /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
-    pub fn backward(&mut self, gradients: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, KanError> {
+    pub fn backward(
+        &mut self,
+        gradients: Vec<Vec<f64>>,
+        l1_penalty: f64,
+        entropy_penalty: f64,
+    ) -> Result<Vec<Vec<f64>>, KanError> {
         debug!("Backwarding {} gradients through model", gradients.len());
         let mut gradients = gradients;
         for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
             gradients = layer
-                .backward(&gradients)
+                .backward(&gradients, l1_penalty, entropy_penalty)
                 .map_err(|e| KanError::backward(e, idx))?;
         }
         Ok(gradients)
@@ -639,7 +644,7 @@ mod test {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].len(), options.layer_sizes.last().unwrap().clone());
         let error = vec![vec![0.5, 0.4, 0.5]];
-        let result = first_kan.backward(error).unwrap();
+        let result = first_kan.backward(error, 1.0, 1.0).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].len(), options.input_size);
     }

@@ -13,8 +13,12 @@ pub struct TrainingOptions<'a> {
     pub batch_size: usize,
     /// the adaptivity of the knots when updating them. See [`KanLayer::update_knots_from_samples`](crate::kan_layer::KanLayer::update_knots_from_samples) for more information about this process. Knots are updated after each batch
     pub knot_adaptivity: f64,
-    /// the learning factor applied to the gradients when updating the model.
+    /// the overall learning factor applied to the gradients when updating the model. This factor is applied to prediction, L1, and entropy penalties.
     pub learning_rate: f64,
+    /// the amount by which to scale the L1 penalty, relative to the prediction penalty, when updating the model. The L1 penalty affects the rate at which weights are pushed to zero.
+    pub l1_penalty: f64,
+    /// the amount by which to scale the entropy penalty, relative to the prediction penalty, when updating the model. The entropy penalty affects the rate at which layers are pushed to favor a few edges over others
+    pub entropy_penalty: f64,
     /// The lengths to which the knot vectors should be extended. Extension will happen after the epochs specified in `knot_extension_times`
     pub knot_extension_targets: Option<Vec<usize>>,
     /// The epochs (one-indexed) after which to extend the knots. Must be sorted in ascending order and equal in length to `knot_extension_targets`
@@ -49,6 +53,8 @@ impl<'a> TrainingOptions<'_> {
         batch_size: usize,
         knot_adaptivity: f64,
         learning_rate: f64,
+        l1_penalty: f64,
+        entropy_penalty: f64,
         knot_extension_targets: Option<Vec<usize>>,
         knot_extension_times: Option<Vec<usize>>,
         symbolification_times: Option<Vec<usize>>,
@@ -99,6 +105,8 @@ impl<'a> TrainingOptions<'_> {
             batch_size,
             knot_adaptivity,
             learning_rate,
+            l1_penalty,
+            entropy_penalty,
             knot_extension_targets,
             knot_extension_times: extension_times,
             symbolification_times: symbol_times,
@@ -110,12 +118,27 @@ impl<'a> TrainingOptions<'_> {
 }
 
 impl Default for TrainingOptions<'_> {
+    /// Returns a TrainingOptions struct with the following default values:
+    /// * `num_epochs`: 100
+    /// * `batch_size`: 100
+    /// * `knot_adaptivity`: 0.1
+    /// * `learning_rate`: 0.001
+    /// * `l1_penalty`: 1.0
+    /// * `entropy_penalty`: 1.0
+    /// * `knot_extension_targets`: None
+    /// * `knot_extension_times`: None
+    /// * `symbolification_times`: None
+    /// * `symbolification_threshold`: 0.0
+    /// * `num_threads`: 1
+    /// * `each_epoch`: EachEpoch::DoNotValidateModel
     fn default() -> Self {
         TrainingOptions {
             num_epochs: 100,
             batch_size: 100,
             knot_adaptivity: 0.1,
             learning_rate: 0.001,
+            l1_penalty: 1.0,
+            entropy_penalty: 1.0,
             knot_extension_targets: None,
             knot_extension_times: None,
             symbolification_times: None,

@@ -407,7 +407,12 @@ impl KanLayer {
     /// second_layer.zero_gradients();
     /// /* continue training */
     /// ```
-    pub fn backward(&mut self, gradients: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, KanLayerError> {
+    pub fn backward(
+        &mut self,
+        gradients: &[Vec<f64>],
+        l1_penalty: f64,
+        entropy_penalty: f64,
+    ) -> Result<Vec<Vec<f64>>, KanLayerError> {
         for gradient in gradients.iter() {
             if gradient.len() != self.output_dimension {
                 return Err(KanLayerError::missized_gradient(
@@ -439,7 +444,12 @@ impl KanLayer {
             let in_node_idx = edge_index / self.output_dimension;
             let out_node_idx = edge_index % self.output_dimension;
             let sample_wise_outputs = self.splines[edge_index]
-                .backward(&transposed_gradients[out_node_idx], layer_l1, 1.0, 1.0)
+                .backward(
+                    &transposed_gradients[out_node_idx],
+                    layer_l1,
+                    l1_penalty,
+                    entropy_penalty,
+                )
                 .map_err(|e| KanLayerError::backward_before_forward(Some(e), edge_index))?; // TODO incorporate sparsity losses
             trace!(
                 "Backpropped gradients for edge {}: {:?}",
@@ -895,7 +905,7 @@ mod test {
         assert_eq!(rounded_activations, expected_activations, "forward failed");
 
         let error = vec![vec![1.0, 0.5]];
-        let input_error = layer.backward(&error).unwrap();
+        let input_error = layer.backward(&error, 0.0, 0.0).unwrap();
         let expected_input_error = vec![0.0, 1.20313];
         let rounded_input_error: Vec<f64> = input_error[0]
             .iter()
@@ -954,7 +964,7 @@ mod test {
     fn test_backward_before_forward() {
         let mut layer = build_test_layer();
         let error = vec![vec![1.0, 0.5]];
-        let input_error = layer.backward(&error);
+        let input_error = layer.backward(&error, 1.0, 1.0);
         assert!(input_error.is_err());
     }
 
@@ -973,7 +983,7 @@ mod test {
         let preacts = vec![vec![0.0, 0.5]];
         let _ = layer.forward(preacts).unwrap();
         let error = vec![vec![1.0, 0.5, 0.5]];
-        let input_error = layer.backward(&error);
+        let input_error = layer.backward(&error, 1.0, 1.0);
         assert!(input_error.is_err());
     }
 

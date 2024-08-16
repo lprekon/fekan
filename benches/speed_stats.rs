@@ -76,7 +76,7 @@ fn bench_backward(b: &mut Bencher) {
     b.iter(|| {
         // run multiple times per iteration so cache improvements will show
 
-        let _ = layer.backward(&error);
+        let _ = layer.backward(&error, 0.75, 0.25);
     });
 }
 
@@ -90,7 +90,7 @@ fn bench_update(b: &mut Bencher) {
     let error = vec![(0..OUTPUT_DIMENSION_BIG)
         .map(|_| thread_rng().gen())
         .collect()];
-    let _ = layer.backward(&error);
+    let _ = layer.backward(&error, 0.75, 0.25);
     b.iter(|| layer.update(0.1));
 }
 
