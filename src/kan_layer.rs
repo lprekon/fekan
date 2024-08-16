@@ -756,7 +756,7 @@ impl KanLayer {
     /// test each spline in the layer for similarity to a symbolic function (e.g x^2, sin(x), etc.). If the R^2 value of the best fit is greater than `r2_threshold`, replace the spline with the symbolic function
     ///
     /// Useful at the end of training to enhance interpretability of the model
-    pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) {
+    pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) -> Vec<usize> {
         debug!(
             "Testing and setting symbolic functions with R2 >= {}",
             r2_threshold
@@ -768,10 +768,11 @@ impl KanLayer {
             let (possible_symbol, r2) = suggestions.remove(0);
             if r2 >= r2_threshold {
                 self.splines[i] = possible_symbol;
-                clamped_edges.push((i, format!("R2({}) {}", r2, self.splines[i]).to_string()));
+                clamped_edges.push(i);
             }
         }
         debug!("Symbolified layer:\n{}", self);
+        clamped_edges
     }
 
     /// Any edges in this layer with an average absolute output value less than `threshold` will be 'pruned' - that is, they will be replaced with a constant edge that outputs 0.0

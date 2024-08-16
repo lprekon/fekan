@@ -572,12 +572,15 @@ impl Kan {
     }
 
     /// Test and set the symbolic status of the model, using the given R^2 threshold. See [`KanLayer::test_and_set_symbolic`] for more information
-    pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) {
+    pub fn test_and_set_symbolic(&mut self, r2_threshold: f64) -> Vec<(usize, usize)> {
         debug!("Testing and setting symbolic for the model");
+        let mut symbolified_edges = Vec::new();
         for i in 0..self.layers.len() {
             debug!("Symbolifying layer {}", i);
-            self.layers[i].test_and_set_symbolic(r2_threshold)
+            let clamped_edges = self.layers[i].test_and_set_symbolic(r2_threshold);
+            symbolified_edges.extend(clamped_edges.into_iter().map(|j| (i, j)));
         }
+        symbolified_edges
     }
 
     /// Prune the model, removing any edges that have low average output. See [`KanLayer::prune`] for more information

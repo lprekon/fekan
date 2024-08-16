@@ -295,14 +295,16 @@ pub fn train_model(
 
         // prune the model if necessary
         if pruning_times.contains(&epoch) {
-            info!("Pruning model");
-            model.prune(options.pruning_threshold);
+            info!("Pruning model...");
+            let pruning_results = model.prune(options.pruning_threshold);
+            info!("Pruned {} edges", pruning_results.len());
         }
 
         // symbolify the model if necessary
         if symbolification_times.contains(&epoch) {
-            info!("Symbolifying model");
-            model.test_and_set_symbolic(options.symbolification_threshold);
+            info!("Symbolifying model...");
+            let symbol_results = model.test_and_set_symbolic(options.symbolification_threshold);
+            info!("Symbolified {} edges", symbol_results.len());
         }
 
         // update the knots if necessary
