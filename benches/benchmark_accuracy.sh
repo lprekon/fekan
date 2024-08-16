@@ -36,8 +36,8 @@ fi
 if [ -n "$COEFS" ]; then
     COEFS_FLAG="--coefs $COEFS"
 fi
-if [ -n "$KNOT_UPDATE_INTERVAL" ]; then
-    KNOT_UPDATE_INTERVAL_FLAG="--knot-update-interval $KNOT_UPDATE_INTERVAL"
+if [ -n "$BATCH_SIZE" ]; then
+    BATCH_SIZE_FLAG="--batch-size $BATCH_SIZE"
 fi
 if [ -n "$VERBOSITY" ]; then
     VERBOSITY_FLAG="-$VERBOSITY"

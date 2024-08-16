@@ -79,7 +79,7 @@ struct RegressorArgs {
     // num_output_nodes: usize, not currently implemented
 
     /// a comma-separated list of human-readable labels for the output nodes of the model.
-    /// the model will have ||labels|| output nodes, or 1 output node if no labels are provided
+    /// the model will have ||labels|| output nodes, or 1 output node if no labels are provided (not well implemented yet. Recommend you not use this flag for now)
     #[arg(long, value_delimiter = ',')]
     labels: Option<Vec<String>>,
 
@@ -125,8 +125,8 @@ struct TrainArgs {
     num_epochs: usize,
 
     #[arg(long, default_value = "100", global = true)]
-    /// the interval - measured in forward passes - at which to update the spline knot vectors, based on the inputs seen since the last update
-    knot_update_interval: usize,
+    /// The number of samples to pass per batch. Weight updates and knot updates are performed after each batch
+    batch_size: usize,
 
     #[arg(long, default_value = "0.1", global = true)]
     /// A hyperparameter used when updating knots from recent samples.
@@ -264,7 +264,7 @@ impl TrainArgs {
     ) -> Result<TrainingOptions<'a>, TrainingOptionsError> {
         TrainingOptions::new(
             self.num_epochs,
-            self.knot_update_interval,
+            self.batch_size,
             self.knot_adaptivity,
             self.learning_rate,
             self.l1_penalty,
