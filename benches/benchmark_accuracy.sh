@@ -24,6 +24,18 @@ fi
 if [ -n "$SYMBOLIFICATION_TIMES" ]; then
     SYMBOLIFICATION_FLAG="--sym-times $SYMBOLIFICATION_TIMES --sym-threshold $SYMBOLIFICATION_THRESHOLD"
 fi
+if [ -n "$PRUNING_TIMES" ]; then
+    PRUNING_FLAG="--prune-times $PRUNING_TIMES --prune-threshold $PRUNING_THRESHOLD"
+fi
+if [ -n "$L1_LAMBDA" ] then
+    L1_LAMBDA_FLAG="--l1 $L1_LAMBDA"
+fi
+if [ -n "$ENTROPY_LAMBDA" ] then
+    ENTROPY_FLAG="--entropy $ENTROPY_LAMBDA"
+fi
+if [ -n "$LEARNING_RATE" ]; then
+    LEARNING_RATE_FLAG="--learning-rate $LEARNING_RATE"
+fi
 if [ -n "$HIDDEN_LAYER_SIZES" ]; then
     HIDDEN_LAYER_SIZES_FLAG="--hidden-layer-sizes $HIDDEN_LAYER_SIZES"
 fi
@@ -73,7 +85,6 @@ pip3 install -r requirements.txt
 python3 generate_${BENCHMARK}_data.py 100000 > $DATA_FILE
 
 fekan build regressor \
-    -v \
     --data $DATA_FILE \
     $HIDDEN_LAYER_SIZES_FLAG \
     $NUM_EPOCHS_FLAG \
@@ -82,7 +93,10 @@ fekan build regressor \
     $KNOT_EXTENSION_FLAG \
     $KNOT_UPDATE_INTERVAL_FLAG \
     $SYMBOLIFICATION_FLAG \
-    --learning-rate 0.001 \
+    $PRUNING_FLAG \
+    $L1_LAMBDA_FLAG \
+    $ENTROPY_FLAG \
+    $LEARNING_RATE_FLAG \
     --validate-each-epoch \
     --log-output \
     --no-save \
