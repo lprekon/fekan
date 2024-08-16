@@ -27,10 +27,10 @@ fi
 if [ -n "$PRUNING_TIMES" ]; then
     PRUNING_FLAG="--prune-times $PRUNING_TIMES --prune-threshold $PRUNING_THRESHOLD"
 fi
-if [ -n "$L1_LAMBDA" ] then
+if [ -n "$L1_LAMBDA" ]; then
     L1_LAMBDA_FLAG="--l1 $L1_LAMBDA"
 fi
-if [ -n "$ENTROPY_LAMBDA" ] then
+if [ -n "$ENTROPY_LAMBDA" ]; then
     ENTROPY_FLAG="--entropy $ENTROPY_LAMBDA"
 fi
 if [ -n "$LEARNING_RATE" ]; then
@@ -74,7 +74,7 @@ else
     fi
 fi
 
-LOG_FILE="${BENCHMARK}_accuracy_$BRANCH_$NAMETAG.log"
+LOG_FILE="${BENCHMARK}_accuracy_{$BRANCH}_$NAMETAG.log"
 touch $LOG_FILE
 # tag the log file with the git hash
 git rev-parse HEAD > $LOG_FILE
