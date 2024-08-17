@@ -754,6 +754,10 @@ impl KanLayer {
         for i in 0..self.splines.len() {
             trace!("Testing edge {}", i);
             let mut suggestions = self.splines[i].suggest_symbolic(1);
+            if suggestions.is_empty() {
+                // pruned or already-symbolified edges will return an empty vector
+                continue;
+            }
             let (possible_symbol, r2) = suggestions.remove(0);
             if r2 >= r2_threshold {
                 self.splines[i] = possible_symbol;
