@@ -306,7 +306,7 @@ impl KanLayer {
     /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f64) -> Result<(), KanLayerError> {
-        debug!("Updating knots from {} samples", self.samples.len());
+        trace!("Updating knots from {} samples", self.samples.len()); // trace since this happens every batch
         if self.samples.is_empty() {
             return Err(KanLayerError::no_samples());
         }
@@ -332,12 +332,12 @@ impl KanLayer {
             trace!("Updating knots for edge {} from samples", idx);
             spline.update_knots_from_samples(sample, knot_adaptivity);
         }
-        if log::log_enabled!(log::Level::Debug) {
+        if log::log_enabled!(log::Level::Trace) {
             let mut ranges = vec![(0.0, 0.0); self.splines.len()];
             for (idx, spline) in self.splines.iter().enumerate() {
                 ranges[idx] = spline.get_full_input_range();
             }
-            debug!("Supported input ranges after knot update: {:#?}", ranges);
+            trace!("Supported input ranges after knot update: {:#?}", ranges);
         }
 
         Ok(())

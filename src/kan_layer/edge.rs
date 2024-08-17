@@ -12,7 +12,7 @@
 //! "brute force" it with a single massive Edge type that matches on a mode flag every method. At least this way, I get serialization and thread safety for free, and all the case-consciouness is in one place
 //! (besides maybe the aforementioned code that suggests and clamps-to symbolic edges, but that's rather unavoidable, as I said)
 
-use log::trace;
+use log::{debug, trace};
 use nalgebra::{DMatrix, DVector, SVD};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -818,7 +818,7 @@ impl Edge {
     /// # Returns
     /// * `true` if the edge was pruned, `false` otherwise
     pub(super) fn prune(&mut self, threshold: f64) -> bool {
-        trace!("pruning edge {}", self);
+        debug!("pruning edge {}", self);
         match &mut self.kind {
             EdgeType::Spline { degree, knots, .. } => {
                 let inputs = linspace(
@@ -829,11 +829,9 @@ impl Edge {
                 let outputs: Vec<f64> = self.infer(&inputs);
                 let mean_displacement =
                     outputs.iter().map(|v| v.abs()).sum::<f64>() / outputs.len() as f64;
-                trace!(
+                debug!(
                     "inputs = {:?}\noutputs = {:?}\nmean_displacement: {}",
-                    inputs,
-                    outputs,
-                    mean_displacement
+                    inputs, outputs, mean_displacement
                 );
                 if mean_displacement < threshold {
                     self.kind = EdgeType::Pruned;
