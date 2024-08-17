@@ -225,14 +225,15 @@ mod regression {
         });
 
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
-        preset_knot_ranges(&mut untrained_model, &training_data).unwrap();
         let mut trained_model = train_model(
             untrained_model,
             &training_data,
             TrainingOptions {
-                num_epochs: 500,
+                num_epochs: 100,
                 num_threads: 8,
-                learning_rate: 0.001,
+                learning_rate: 0.01,
+                l1_penalty: 0.1,
+                entropy_penalty: 0.1,
                 each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,
                 ..TrainingOptions::default()
             },
