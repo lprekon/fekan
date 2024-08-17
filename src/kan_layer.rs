@@ -116,10 +116,10 @@ impl KanLayer {
     /// calculate the activations of the nodes in this layer given the preactivations.
     /// This operation mutates internal state, which will be read in [`KanLayer::backward()`] and [`KanLayer::update_knots_from_samples()`]
     ///
-    /// `preactivation.len()` must be equal to the layer's `input_dimension`
+    /// each vector in `preactivations` should be of length `input_dimension`, and each vector in the output will have length `output_dimension`
     /// # Errors
     /// Returns an [`KanLayerError`] if
-    /// * the length of `preactivation` is not equal to the input_dimension this layer
+    /// * the length of any `preactivation` in `preactivations` is not equal to the input_dimension this layer
     /// * the output would contain NaNs.
     ///
     /// See [`KanLayerError`] for more information
@@ -136,9 +136,10 @@ impl KanLayer {
     ///     coef_size: 6,
     /// };
     /// let mut my_layer = KanLayer::new(&layer_options);
-    /// let preacts = vec![0.0, 0.5, 0.5];
-    /// let acts = my_layer.forward(&preacts)?;
-    /// assert_eq!(acts.len(), output_dimension);
+    /// let preacts = vec![vec![0.0; input_dimension], vec![0.5; input_dimension]];
+    /// let acts = my_layer.forward(preacts)?;
+    /// assert_eq!(acts.len(), 2);
+    /// assert_eq!(acts[0].len(), output_dimension);
     /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
     pub fn forward(
@@ -269,18 +270,18 @@ impl KanLayer {
     /// # let input_size = 5;
     /// # let output_size = 3;
     /// # let layer_options = KanLayerOptions {input_dimension: 5,output_dimension: 4,degree: 3, coef_size: 6};
-    /// # fn calculate_gradient(output: Vec<f64>, label: f64) -> Vec<f64> {vec![0.0; output.len()]}
+    /// # fn calculate_gradient(output: Vec<Vec<f64>>, label: Vec<f64>) -> Vec<Vec<f64>> {vec![vec![0.0; output[0].len()]; output.len()]}
     /// # let training_data = vec![(vec![0.1, 0.2, 0.3, 0.4, 0.5], 1.0f64), (vec![0.2, 0.3, 0.4, 0.5, 0.6], 0.0f64), (vec![0.3, 0.4, 0.5, 0.6, 0.7], 1.0f64)];
     /// let mut my_layer = KanLayer::new(&layer_options);
-    /// # let knot_update_interval = 2;
-    /// for (idx, (feature_vec, label)) in training_data.iter().enumerate() {
-    ///     let output = my_layer.forward(feature_vec)?;
-    ///     let gradient = calculate_gradient(output, *label);
-    ///     let _ = my_layer.backward(&gradient)?;
-    ///     my_layer.update(0.1); // updating the model's parameters changes the output range of the b-splines that make up the model
-    ///     if idx % knot_update_interval == 0 {
-    ///         my_layer.update_knots_from_samples(0.1)?; // updating the knots adjusts the input range of the b-splines to match the output range of the previous layer
-    ///     }
+    /// # let batch_size = 1;
+    /// for batch_data in training_data.chunks(batch_size) {
+    ///     let batch_features = batch_data.iter().map(|(f, _)| f.clone()).collect::<Vec<Vec<f64>>>();
+    ///     let batch_output: Vec<Vec<f64>> = my_layer.forward(batch_features)?;
+    ///     let batch_labels: Vec<f64> = batch_data.iter().map(|(_, l)| *l).collect();
+    ///     let batch_gradients: Vec<Vec<f64>> = calculate_gradient(batch_output, batch_labels);
+    ///     let _ = my_layer.backward(&batch_gradients)?;
+    ///     my_layer.update(0.1, 1.0, 1.0); // updating the model's parameters changes the output range of the b-splines that make up the model
+    ///     my_layer.update_knots_from_samples(0.1)?; // updating the knots adjusts the input range of the b-splines to match the output range of the previous layer
     /// }
     /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     ///```
@@ -293,16 +294,16 @@ impl KanLayer {
     /// use fekan::kan_layer::{KanLayer, KanLayerOptions};
     /// # let some_layer_options = KanLayerOptions {input_dimension: 2,output_dimension: 4,degree: 5, coef_size: 6};
     /// let mut my_layer = KanLayer::new(&some_layer_options);
-    /// let sample1 = vec![100f64, -100f64];
-    /// let sample2 = vec![-100f64, 100f64];
+    /// let sample1 = vec![vec![100f64, -100f64]];
+    /// let sample2 = vec![vec![-100f64, 100f64]];
     ///
-    /// let acts = my_layer.forward(&sample1).unwrap();
-    /// assert!(acts.iter().all(|x| *x == 0.0)); // the preacts were all outside the initial knot range, so the activations should all be 0
-    /// let acts = my_layer.forward(&sample2).unwrap();
-    /// assert!(acts.iter().all(|x| *x == 0.0)); // the preacts were all outside the initial knot range, so the activations should all be 0
+    /// let acts = my_layer.forward(sample1.clone()).unwrap();
+    /// assert!(acts[0].iter().all(|x| *x == 0.0)); // the preacts were all outside the initial knot range, so the activations should all be 0
+    /// let acts = my_layer.forward(sample2).unwrap();
+    /// assert!(acts[0].iter().all(|x| *x == 0.0)); // the preacts were all outside the initial knot range, so the activations should all be 0
     /// my_layer.update_knots_from_samples(0.0).unwrap(); // we don't have enough samples to calculate quantiles, so we have to keep the knots uniformly distributed. In practice, this function should be called every few hundred forward passes or so
-    /// let new_acts = my_layer.forward(&sample1).unwrap();
-    /// assert!(new_acts.iter().all(|x| *x != 0.0)); // the knot range now covers the samples, so the activations should be non-zero
+    /// let new_acts = my_layer.forward(sample1).unwrap();
+    /// assert!(new_acts[0].iter().all(|x| *x != 0.0)); // the knot range now covers the samples, so the activations should be non-zero
     /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f64) -> Result<(), KanLayerError> {
@@ -352,10 +353,8 @@ impl KanLayer {
     /// # let some_layer_options = KanLayerOptions {input_dimension: 2,output_dimension: 4,degree: 5, coef_size: 6};
     /// let mut my_layer = KanLayer::new(&some_layer_options);
     /// /* After several forward passes... */
-    /// # let sample1 = vec![100f64, -100f64];
-    /// # let sample2 = vec![-100f64, 100f64];
-    /// # let _acts = my_layer.forward(&sample1)?;
-    /// # let _acts = my_layer.forward(&sample2)?;
+    /// # let samples = vec![vec![100f64, -100f64],vec![-100f64, 100f64]];
+    /// # let _acts = my_layer.forward(samples)?;
     /// let update_result = my_layer.update_knots_from_samples(0.0);
     /// assert!(update_result.is_ok());
     /// my_layer.clear_samples();
@@ -387,21 +386,21 @@ impl KanLayer {
     /// let mut first_layer = KanLayer::new(&first_layer_options);
     /// let mut second_layer = KanLayer::new(&second_layer_options);
     /// /* forward pass */
-    /// let preacts = vec![0.0, 0.5];
-    /// let acts = first_layer.forward(&preacts).unwrap();
-    /// let output = second_layer.forward(&acts).unwrap();
+    /// let preacts = vec![vec![0.0, 0.5]];
+    /// let acts = first_layer.forward(preacts).unwrap();
+    /// let output = second_layer.forward(acts).unwrap();
     /// /* calculate error */
-    /// # let error = vec![1.0, 0.5, 0.5];
-    /// assert_eq!(error.len(), second_layer_options.output_dimension);
+    /// # let error = vec![vec![1.0, 0.5, 0.5]];
+    /// assert_eq!(error[0].len(), second_layer_options.output_dimension);
     /// let first_layer_error = second_layer.backward(&error).unwrap();
-    /// assert_eq!(first_layer_error.len(), first_layer_options.output_dimension);
+    /// assert_eq!(first_layer_error[0].len(), first_layer_options.output_dimension);
     /// let input_error = first_layer.backward(&first_layer_error).unwrap();
-    /// assert_eq!(input_error.len(), first_layer_options.input_dimension);
+    /// assert_eq!(input_error[0].len(), first_layer_options.input_dimension);
     ///
     /// // apply the gradients
     /// let learning_rate = 0.1;
-    /// first_layer.update(learning_rate);
-    /// second_layer.update(learning_rate);
+    /// first_layer.update(learning_rate, 1.0, 1.0);
+    /// second_layer.update(learning_rate, 1.0, 1.0);
     /// // reset the gradients
     /// first_layer.zero_gradients();
     /// second_layer.zero_gradients();

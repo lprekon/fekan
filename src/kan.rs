@@ -321,12 +321,14 @@ impl Kan {
     /// # };
     /// let mut model = Kan::new(&options);
     ///
-    /// # fn calculate_gradient(output: Vec<Vec<f64>>, label: f64) -> Vec<Vec<f64>> {vec![vec![1.0; output[0].len()]; output.len()]}
+    /// # fn calculate_gradient(output: &[Vec<f64>], label: f64) -> Vec<Vec<f64>> {vec![vec![1.0; output[0].len()]; output.len()]}
     /// # let learning_rate = 0.1;
+    /// # let l1_penalty = 0.0;
+    /// # let entropy_penalty = 0.0;
     /// # let features = vec![vec![0.5, 0.4, 0.5, 0.5, 0.4]];
     /// # let label = 0;
     /// let output = model.forward(features)?;
-    /// let gradient = calculate_gradient(output, label as f64);
+    /// let gradient = calculate_gradient(&output, label as f64);
     /// assert_eq!(gradient.len(), output.len());
     /// let _ = model.backward(gradient)?; // the input gradient can be disregarded here.
     ///
@@ -336,7 +338,7 @@ impl Kan {
     /// * until we're ready to update the paramaters.
     /// */
     ///
-    /// model.update(learning_rate); // update the parameters of the model based on the accumulated gradients here
+    /// model.update(learning_rate, l1_penalty, entropy_penalty); // update the parameters of the model based on the accumulated gradients here
     /// model.zero_gradients(); // zero the gradients for the next batch of training data
     /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
