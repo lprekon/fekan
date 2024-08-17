@@ -237,14 +237,14 @@ pub fn train_model(
                             debug!("Batch loss: {}", batch_loss.iter().sum::<f64>() / batch_loss.len() as f64);
                             chunk_loss += batch_loss.iter().sum::<f64>();
                             debug!("Backwarding batch");
-                            model.backward(batch_gradients, options.l1_penalty, options.entropy_penalty).map_err(|e| TrainingError {
+                            model.backward(batch_gradients).map_err(|e| TrainingError {
                                 source: e,
                                 epoch,
                                 sample: chunk_samples_seen,
                             })?;
                             // update weights
                             debug!("Updating model");
-                            model.update(options.learning_rate);
+                            model.update(options.learning_rate, options.l1_penalty, options.entropy_penalty);
                             debug!("zeroing gradients");
                             model.zero_gradients();
                             // update knots

@@ -51,7 +51,7 @@ enum EdgeType {
         activations: Vec<Vec<FxHashMap<u64, f64>>>,
         /// accumulated gradients for each control point
         #[serde(skip)] // only used during training
-        gradients: Vec<f64>,
+        gradients: Vec<Gradient>,
     },
     Symbolic {
         a: f64,
@@ -61,6 +61,23 @@ enum EdgeType {
         function: SymbolicFunction,
     },
     Pruned,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Gradient {
+    prediction_gradient: f64,
+    l1_gradient: f64,
+    entropy_gradient: f64,
+}
+
+impl Default for Gradient {
+    fn default() -> Self {
+        Gradient {
+            prediction_gradient: 0.0,
+            l1_gradient: 0.0,
+            entropy_gradient: 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, EnumIter)]
@@ -122,7 +139,7 @@ impl Edge {
                 control_points,
                 knots,
                 activations: activations_cache,
-                gradients: vec![0.0; size],
+                gradients: vec![Gradient::default(); size],
             },
             last_t: vec![],
             l1_norm: None,
@@ -226,8 +243,6 @@ impl Edge {
         &mut self,
         edge_gradients: &[f64],
         layer_l1: f64,
-        l1_lambda: f64,
-        entropy_lambda: f64,
     ) -> Result<Vec<f64>, EdgeError> {
         if self.last_t.is_empty() {
             return Err(EdgeError::BackwardBeforeForward);
@@ -240,7 +255,7 @@ impl Edge {
                 control_points,
                 knots,
                 activations,
-                gradients: control_point_gradients,
+                gradients: accumulated_gradients,
             } => {
                 // assert_eq!(activations[0][0].len(), edge_gradients.len());
                 let adjusted_error: Vec<f64> = edge_gradients
@@ -285,8 +300,8 @@ impl Edge {
                         "d_entropy_d_edge_l1 is not finite"
                     );
 
-                    let l1_gradient = l1_lambda * d_edge_l1_d_ci;
-                    let entrop_gradient = d_entropy_d_edge_l1 * d_edge_l1_d_ci * entropy_lambda;
+                    let l1_gradient = d_edge_l1_d_ci;
+                    let entrop_gradient = d_entropy_d_edge_l1 * d_edge_l1_d_ci;
                     // d_pred_loss/d_C_i = d_pred_loss/d_edge_output * d_edge_output/d_C_i
                     // d_pred_loss/d_edge_output = 1
                     // d_edge_output/d_C_i = B_i(t)
@@ -298,8 +313,10 @@ impl Edge {
                         .iter()
                         .zip(basis_activations)
                         .map(|(e, a)| e * a);
-                    control_point_gradients[i] +=
-                        prediction_gradients.sum::<f64>() + l1_gradient + entrop_gradient;
+                    accumulated_gradients[i].prediction_gradient +=
+                        prediction_gradients.sum::<f64>();
+                    accumulated_gradients[i].l1_gradient += l1_gradient;
+                    accumulated_gradients[i].entropy_gradient += entrop_gradient;
 
                     // calculate the derivative of the spline output with respect to the input (as opposed to wrt the control points)
                     // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
@@ -364,7 +381,7 @@ impl Edge {
         }
     }
 
-    pub(super) fn update(&mut self, learning_rate: f64) {
+    pub(super) fn update(&mut self, learning_rate: f64, l1_lambda: f64, entropy_lambda: f64) {
         match &mut self.kind {
             EdgeType::Spline {
                 degree: _,
@@ -374,7 +391,10 @@ impl Edge {
                 gradients,
             } => {
                 for i in 0..control_points.len() {
-                    control_points[i] -= learning_rate * gradients[i];
+                    control_points[i] -= learning_rate
+                        * (gradients[i].prediction_gradient
+                            + l1_lambda * gradients[i].l1_gradient
+                            + entropy_lambda * gradients[i].entropy_gradient);
                 }
             }
             _ => (), // update on a non-spline edge is a no-op
@@ -391,7 +411,7 @@ impl Edge {
                 gradients,
             } => {
                 for i in 0..gradients.len() {
-                    gradients[i] = 0.0;
+                    gradients[i] = Gradient::default();
                 }
             }
             _ => (), // zeroing gradients on a non-spline edge is a no-op
@@ -548,7 +568,7 @@ impl Edge {
                 // reset state
                 *activations =
                     vec![vec![FxHashMap::default(); new_control_point_len + degree]; degree];
-                *gradients = vec![0.0; control_points.len()];
+                *gradients = vec![Gradient::default(); control_points.len()];
                 Ok(())
             }
             _ => Ok(()), // setting the knot length on a non-spline edge is a no-op
@@ -1357,14 +1377,14 @@ mod tests {
         let _result = spline.forward(&t);
         trace!("post forward {:#?}", spline);
         let error = vec![-0.6];
-        let input_gradient = spline.backward(&error, 1.0, 0.0, 0.0).unwrap();
+        let input_gradient = spline.backward(&error, 1.0).unwrap();
         trace!("post backward {:#?}", spline);
         let expected_spline_drt_wrt_input = 1.2290;
         let expedted_control_point_gradients = vec![-0.0077, -0.0867, -0.0547, -0.0009];
         let rounded_control_point_gradients: Vec<f64> = match spline.kind {
             EdgeType::Spline { gradients, .. } => gradients
                 .iter()
-                .map(|g| (g * 10000.0).round() / 10000.0)
+                .map(|g| (g.prediction_gradient * 10000.0).round() / 10000.0)
                 .collect(),
             _ => unreachable!(),
         };
@@ -1397,7 +1417,7 @@ mod tests {
         let rounded_activation = (activation[0] * 10000.0).round() / 10000.0;
         assert_eq!(rounded_activation, 1.0);
 
-        let input_gradient = spline1.backward(&vec![0.5], 1.0, 0.0, 0.0).unwrap();
+        let input_gradient = spline1.backward(&vec![0.5], 1.0).unwrap();
         println!("backward: {:#?}", spline1);
         let expected_input_gradient = 0.0;
         let rounded_input_gradient = (input_gradient[0] * 10000.0).round() / 10000.0;
@@ -1410,7 +1430,7 @@ mod tests {
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
         let mut spline = Edge::new(3, control_points, knots).unwrap();
         let error = vec![-0.6];
-        let result = spline.backward(&error, 1.0, 0.0, 0.0);
+        let result = spline.backward(&error, 1.0);
         assert!(result.is_err());
     }
 
@@ -1421,7 +1441,7 @@ mod tests {
         let mut spline = Edge::new(3, control_points, knots).unwrap();
         let _ = spline.infer(&vec![0.95]);
         let error = vec![-0.6];
-        let result = spline.backward(&error, 1.0, 0.0, 0.0);
+        let result = spline.backward(&error, 1.0);
         assert!(result.is_err());
     }
 
@@ -1796,7 +1816,7 @@ mod tests {
                 last_t: vec![],
                 l1_norm: None,
             };
-            let result = edge.backward(&vec![0.5], 1.0, 0.0, 0.0);
+            let result = edge.backward(&vec![0.5], 1.0);
             assert!(result.is_err());
         }
 
@@ -1815,7 +1835,7 @@ mod tests {
             };
             let result = edge.forward(&vec![0.5]);
             assert_eq!(result[0], 21.0, "forward");
-            let backward = edge.backward(&vec![-0.5], 1.0, 0.0, 0.0).unwrap();
+            let backward = edge.backward(&vec![-0.5], 1.0).unwrap();
             assert_eq!(backward[0], -4.0, "backward");
         }
 
@@ -1834,7 +1854,7 @@ mod tests {
             };
             let result = edge.forward(&vec![2.0]);
             assert_eq!(82.0, result[0], "forward");
-            let gradient = edge.backward(&vec![0.7], 1.0, 0.0, 0.0).unwrap();
+            let gradient = edge.backward(&vec![0.7], 1.0).unwrap();
             let expected_gradient = 31.5; // (d/dx c(ax + b)^2 + d) * gradient
             assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
         }
@@ -1855,7 +1875,7 @@ mod tests {
             let result = edge.forward(&vec![2.0]);
             let expected_result = 3.0 * ((1.5 * 2.0 + 2.0) as f64).powf(3.0) + 7.0;
             assert_almost_eq!(result[0], expected_result, 1e-6);
-            let gradient = edge.backward(&vec![0.7], 1.0, 0.0, 0.0).unwrap();
+            let gradient = edge.backward(&vec![0.7], 1.0).unwrap();
             let expected_gradient = 236.25; // (d/dx c(ax + b)^3 + d) * gradient
             assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
         }
@@ -1876,7 +1896,7 @@ mod tests {
             let result = edge.forward(&vec![2.0]);
             let expected_result = 1882.0; // 3.0 * ((1.5 * 2.0 + 2.0) as f64).powf(4.0) + 7.0;
             assert_almost_eq!(result[0], expected_result, 1e-6);
-            let gradient = edge.backward(&vec![0.7], 1.0, 0.0, 0.0).unwrap();
+            let gradient = edge.backward(&vec![0.7], 1.0).unwrap();
             let expected_gradient = 1575.0; // (d/dx c(ax + b)^3 + d) * gradient
             assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
         }
@@ -1897,7 +1917,7 @@ mod tests {
             let result = edge.forward(&vec![0.5]);
             let expected_result = 478.8291015625; //3.0 * ((1.5 * 0.5 + 2.0) as f64).powf(5.0) + 7.0;
             assert_almost_eq!(result[0], expected_result, 1e-6);
-            let gradient = edge.backward(&vec![0.7], 1.0, 0.0, 0.0).unwrap();
+            let gradient = edge.backward(&vec![0.7], 1.0).unwrap();
             let expected_gradient = 900.7646484375; // (d/dx c(ax + b)^3 + d) * gradient
             assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
         }

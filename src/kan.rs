@@ -144,13 +144,15 @@ impl Kan {
     /// #    class_map: Some(my_class_map),
     /// # };
     /// # let mut model = Kan::new(&options);
-    /// # let feature_data = vec![0.5, 0.4, 0.5, 0.5, 0.4];
+    /// # let feature_data = vec![vec![0.5, 0.4, 0.5, 0.5, 0.4]];
     /// # let label = "cat";
     /// # fn cross_entropy_loss(output: Vec<f64>, expected_highest_node: usize) -> f64 {0.0}
     /// /* within your custom training function */
-    /// let logits: Vec<f64> = model.forward(feature_data)?;
-    /// let expected_highest_node: usize = model.label_to_node(label).unwrap();
-    /// let loss: f64 = cross_entropy_loss(logits, expected_highest_node);
+    /// let batch_logits: Vec<Vec<f64>> = model.forward(feature_data)?;
+    /// for logits in batch_logits {
+    ///     let expected_highest_node: usize = model.label_to_node(label).unwrap();
+    ///     let loss: f64 = cross_entropy_loss(logits, expected_highest_node);
+    /// }
     /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     pub fn label_to_node(&self, label: &str) -> Option<usize> {
@@ -195,12 +197,14 @@ impl Kan {
     /// #    class_map: Some(my_class_map),
     /// # };
     /// # let model = Kan::new(&options);
-    /// # let feature_data = vec![0.5, 0.4, 0.5, 0.5, 0.4];
+    /// # let feature_data = vec![vec![0.5, 0.4, 0.5, 0.5, 0.4]];
     /// /* using an already trained model... */
-    /// let logits: Vec<f64> = model.infer(feature_data)?;
-    /// let highest_node: usize = logits.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap().0;
-    /// let label: &str = model.node_to_label(highest_node).unwrap();
-    /// println!("The model predicts the input is a {}", label);
+    /// let batch_logits: Vec<Vec<f64>> = model.infer(feature_data)?;
+    /// for logits in batch_logits {
+    ///     let highest_node: usize = logits.iter().enumerate().max_by(|(a_idx, a_val), (b_idx, b_val)| a_val.partial_cmp(b_val).unwrap()).unwrap().0;
+    ///     let label: &str = model.node_to_label(highest_node).unwrap();
+    ///     println!("The model predicts the input is a {}", label);
+    /// }
     /// Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
     pub fn node_to_label(&self, node: usize) -> Option<&str> {
@@ -235,10 +239,13 @@ impl Kan {
     ///     class_map: None,
     /// };
     /// let mut model = Kan::new(&options);
-    /// let input = vec![0.5, 0.4, 0.5, 0.5, 0.4];
-    /// assert_eq!(input.len(), input_size);
+    /// let batch_size = 2;
+    /// let input = vec![vec![1.0; input_size]; batch_size];
+    /// assert_eq!(input.len(), batch_size);
+    /// assert_eq!(input[0].len(), input_size);
     /// let output = model.forward(input)?;
-    /// assert_eq!(output.len(), output_size);
+    /// assert_eq!(output.len(), batch_size);
+    /// assert_eq!(output[0].len(), output_size);
     /// /* interpret the output as you like, for example as logits in a classifier, or as predicted value in a regressor */
     /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
@@ -314,12 +321,13 @@ impl Kan {
     /// # };
     /// let mut model = Kan::new(&options);
     ///
-    /// # fn calculate_gradient(output: Vec<f64>, label: f64) -> Vec<f64> {vec![1.0; output.len()]}
+    /// # fn calculate_gradient(output: Vec<Vec<f64>>, label: f64) -> Vec<Vec<f64>> {vec![vec![1.0; output[0].len()]; output.len()]}
     /// # let learning_rate = 0.1;
-    /// # let features = vec![0.5, 0.4, 0.5, 0.5, 0.4];
+    /// # let features = vec![vec![0.5, 0.4, 0.5, 0.5, 0.4]];
     /// # let label = 0;
     /// let output = model.forward(features)?;
     /// let gradient = calculate_gradient(output, label as f64);
+    /// assert_eq!(gradient.len(), output.len());
     /// let _ = model.backward(gradient)?; // the input gradient can be disregarded here.
     ///
     /// /*
@@ -332,17 +340,12 @@ impl Kan {
     /// model.zero_gradients(); // zero the gradients for the next batch of training data
     /// # Ok::<(), fekan::kan::kan_error::KanError>(())
     /// ```
-    pub fn backward(
-        &mut self,
-        gradients: Vec<Vec<f64>>,
-        l1_penalty: f64,
-        entropy_penalty: f64,
-    ) -> Result<Vec<Vec<f64>>, KanError> {
+    pub fn backward(&mut self, gradients: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, KanError> {
         debug!("Backwarding {} gradients through model", gradients.len());
         let mut gradients = gradients;
         for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
             gradients = layer
-                .backward(&gradients, l1_penalty, entropy_penalty)
+                .backward(&gradients)
                 .map_err(|e| KanError::backward(e, idx))?;
         }
         Ok(gradients)
@@ -375,9 +378,9 @@ impl Kan {
     /// Update the model's parameters based on the gradients that have been accumulated with [`Kan::backward`].
     /// # Example
     /// see [`Kan::backward`]
-    pub fn update(&mut self, learning_rate: f64) {
+    pub fn update(&mut self, learning_rate: f64, l1_penalty: f64, entropy_penalty: f64) {
         for layer in self.layers.iter_mut() {
-            layer.update(learning_rate);
+            layer.update(learning_rate, l1_penalty, entropy_penalty);
         }
     }
 
@@ -647,7 +650,7 @@ mod test {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].len(), options.layer_sizes.last().unwrap().clone());
         let error = vec![vec![0.5, 0.4, 0.5]];
-        let result = first_kan.backward(error, 1.0, 1.0).unwrap();
+        let result: Vec<Vec<f64>> = first_kan.backward(error).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].len(), options.input_size);
     }
