@@ -351,6 +351,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     model_type: ModelType::Classification,
                     class_map: Some(classifier_args.classes),
                 });
+                let starting_training_loss = validate_model(&training_data, &untrained_model);
+                info!("Model loss at initialization: {}", starting_training_loss);
 
                 let training_options =
                     train_args.build_training_options(num_threads, &validation_data)?;

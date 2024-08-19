@@ -386,7 +386,7 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
 /// Calculates the loss of the model on the provided validation data. If the model is a classification model, the cross entropy loss is calculated.
 /// If the model is a regression model, the mean squared error is calculated.
 ///
-pub fn validate_model(validation_data: &[Sample], model: &mut Kan) -> f64 {
+pub fn validate_model(validation_data: &[Sample], model: &Kan) -> f64 {
 
     let (batch_features, batch_labels): (Vec<Vec<f64>>, Vec<f64>) = validation_data.iter().map(|s| (s.features.clone(), s.label)).unzip();
     let batch_logits = model.infer(batch_features).unwrap();
