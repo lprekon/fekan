@@ -381,7 +381,12 @@ impl Edge {
         }
     }
 
-    pub(super) fn update(&mut self, learning_rate: f64, l1_lambda: f64, entropy_lambda: f64) {
+    pub(super) fn update_control_points(
+        &mut self,
+        learning_rate: f64,
+        l1_lambda: f64,
+        entropy_lambda: f64,
+    ) {
         match &mut self.kind {
             EdgeType::Spline {
                 degree: _,

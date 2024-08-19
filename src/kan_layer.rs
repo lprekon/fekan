@@ -568,7 +568,7 @@ impl KanLayer {
     /// see [`KanLayer::backward`]
     pub fn update(&mut self, learning_rate: f64, l1_penalty: f64, entropy_penalty: f64) {
         for spline in self.splines.iter_mut() {
-            spline.update(learning_rate, l1_penalty, entropy_penalty);
+            spline.update_control_points(learning_rate, l1_penalty, entropy_penalty);
         }
     }
 
