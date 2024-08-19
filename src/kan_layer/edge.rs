@@ -60,6 +60,12 @@ enum EdgeType {
         d: f64,
         function: SymbolicFunction,
     },
+    Bias {
+        // separate from symbolic, because we iterate over symbolic functions when symbolifying, and we don't want to include constant functions in that process (because calculating R2 breaks)
+        value: f64,
+        #[serde(skip)] // only used during training
+        gradient: Gradient,
+    },
     Pruned,
 }
 
@@ -146,6 +152,17 @@ impl Edge {
         })
     }
 
+    pub(super) fn bias(bias_value: f64) -> Edge {
+        Edge {
+            kind: EdgeType::Bias {
+                value: bias_value,
+                gradient: Gradient::default(),
+            },
+            last_t: vec![],
+            l1_norm: None,
+        }
+    }
+
     /// compute the point on the spline at the given parameter `t`
     ///
     /// accumulate the activations of the spline at each interval in the internal `activations` field
@@ -171,7 +188,7 @@ impl Edge {
                 }
                 // trace!("edge activations: {:?}", outputs);
             }
-            _ => outputs = self.infer(inputs), // symbolic edges don't cache activations, so they have the same forward and infer implementations
+            _ => outputs = self.infer(inputs), // symbolic edges and bias edges don't cache activations, so they have the same forward and infer implementations
         }
         self.l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
         outputs
@@ -226,6 +243,7 @@ impl Edge {
                     outputs.push(value);
                 }
             }
+            EdgeType::Bias { value, .. } => outputs = vec![*value; inputs.len()], // bias edges always return the same value
             EdgeType::Pruned => outputs = vec![0.0; inputs.len()], // pruned edges always return 0
         }
         outputs
@@ -376,6 +394,19 @@ impl Edge {
                     .zip(edge_gradients.iter())
                     .map(|(ig, g)| ig * g)
                     .collect())
+            }
+            EdgeType::Bias { gradient, .. } => {
+                // bias edges won't backpropogate a gradient, but they will accumulate it to update the bias value
+
+                // Bias edges will be excluded from sparsity training. We'll apply the prediction gradient to the bias value, but that's it
+
+                for prediction_gradient in edge_gradients {
+                    // output = bias_value
+                    // d_output/d_bias = 1
+                    // d_loss/d_bias = d_loss/d_output * d_output/d_bias = prediction_gradient * 1 = prediction_gradient
+                    gradient.prediction_gradient += prediction_gradient;
+                }
+                Ok(vec![0.0; edge_gradients.len()])
             }
             EdgeType::Pruned => Ok(vec![0.0; edge_gradients.len()]), // pruned edges always return 0
         }
@@ -870,6 +901,7 @@ impl Edge {
 
     /// return the number of control points and knots in the spline
     pub(super) fn parameter_count(&self) -> usize {
+        // We're not using any default cases to make sure we keep this up to date with any new edge types
         match &self.kind {
             EdgeType::Spline {
                 degree: _,
@@ -879,12 +911,14 @@ impl Edge {
                 gradients: _,
             } => control_points.len() + knots.len(),
             EdgeType::Symbolic { .. } => 4, // every symbolic edge has 4 parameters - a, b, c, and d
+            EdgeType::Bias { .. } => 1,     // bias edges have 1 parameter
             EdgeType::Pruned => 0,          // pruned edges have no parameters
         }
     }
 
     /// return the number of control points in the spline
     pub(super) fn trainable_parameter_count(&self) -> usize {
+        // We're not using any default cases to make sure we keep this up to date with any new edge types
         match &self.kind {
             EdgeType::Spline {
                 degree: _,
@@ -893,6 +927,7 @@ impl Edge {
                 activations: _,
                 gradients: _,
             } => control_points.len(),
+            EdgeType::Bias { .. } => 1,     // bias edges have 1 parameter
             EdgeType::Symbolic { .. } => 0, // symbolic edges have no trainable parameters
             EdgeType::Pruned => 0,          // pruned edges have no parameters
         }
@@ -1047,6 +1082,22 @@ impl Edge {
                     last_t: vec![],
                     l1_norm: None,
                 })
+            }
+            EdgeType::Bias { value, .. } => {
+                // bias edges are trained, so they need to be averaged
+                let mut new_value = value;
+                while let Some(edge) = edge_queue.pop_front() {
+                    match edge.kind {
+                        EdgeType::Bias { value, .. } => {
+                            // merge in the value
+                            new_value += value;
+                        }
+                        _ => unreachable!("all edges should be biases"),
+                    }
+                }
+                // divide by the number of edges to get the average
+                new_value /= total_edges as f64;
+                Ok(Edge::bias(new_value))
             }
             EdgeType::Pruned => Ok(Edge {
                 kind: EdgeType::Pruned,
@@ -1258,6 +1309,7 @@ impl std::fmt::Display for Edge {
                     }
                 }
             }
+            EdgeType::Bias { value, .. } => write!(f, "Bias({})", value),
             EdgeType::Pruned => write!(f, "Pruned"),
         }
     }
@@ -1802,6 +1854,36 @@ mod tests {
         .unwrap();
         spline.prune(1e-6);
         assert!(matches!(spline.kind, EdgeType::Spline { .. }));
+    }
+
+    #[test]
+    fn bias_forward() {
+        let mut bias = Edge::bias(1.0);
+        let results = bias.forward(&vec![0.0, 1.0, 2.0, -0.5]);
+        assert!(results.iter().all(|&x| x == 1.0));
+    }
+
+    #[test]
+    fn bias_backward() {
+        let mut bias = Edge::bias(1.0);
+        let gradients = vec![0.0, 1.0, 2.0, -0.5];
+        bias.forward(&gradients); // bias edges don't actually need a forward pass before a backward one, but that's a fine requirement to leave in place, so we'll do this dummy forward to make Edge happy
+        let results = bias.backward(&gradients, 1.0);
+        if let Err(e) = results {
+            panic!("{}", e);
+        }
+        let results = results.unwrap();
+        assert!(results.iter().all(|&x| x == 0.0));
+        let final_gradient = match bias.kind {
+            EdgeType::Bias { gradient, .. } => gradient,
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            final_gradient.prediction_gradient,
+            gradients.iter().sum::<f64>()
+        );
+        assert_eq!(final_gradient.l1_gradient, 0.0);
+        assert_eq!(final_gradient.entropy_gradient, 0.0);
     }
 
     mod symbolic_tests {
