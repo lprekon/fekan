@@ -167,6 +167,8 @@ mod regression {
                 num_epochs: 200,
                 num_threads: 8,
                 learning_rate: 0.01,
+                l1_penalty: 0.5,
+                entropy_penalty: 0.5,
                 batch_size: 400,
                 each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,
                 ..TrainingOptions::default()
