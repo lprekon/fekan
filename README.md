@@ -44,7 +44,7 @@ fekan load [model_file] infer ...
 
 Example full command to build a classification model to determine whether a set of features maps to a dog or a cat
 ```sh
-fekan build classifier --data dog_or_cat_data.json --classes "cat,dog" --degree 3 --coefs 4 --hidden-layer-sizes "5,3" --num-epochs 250 --knot-update-interval 100 --knot-adaptivity 0.1 --learning-rate 0.05, --validation-split 0.2 --validate-each-epoch --model-out my_new_model.cbor
+fekan build classifier --data dog_or_cat_data.json --classes "cat,dog" --degree 3 --coefs 4 --hidden-layer-sizes "5,3" --num-epochs 250 --batch-size 100 --knot-adaptivity 0.1 --learning-rate 0.05 --validation-split 0.2 --validate-each-epoch --model-out my_new_model.cbor
 ```
 
 <details>
@@ -67,22 +67,27 @@ fekan build classifier --data dog_or_cat_data.json --classes "cat,dog" --degree 
 
 For complete usage details use the help command like `fekan help [COMMAND]`
 
-The CLI supports reading data from `.pkl`, `.json`, and `.avro` files. Features must be in a single 'list'-type column/field named "features", and labels (for training) must be in a single column named "labels"; Labels should be strings for classification models and floats for regression models. Models can be saved to as pickle, json, or cbor files, and the format is inferred from the provided file extension.
+The CLI supports reading data from `.pkl`, `.json`, and ~`.avro`~ files (avro currently bugged). Features must be in a single 'list'-type column/field named "features", and labels (for training) must be in a single column named "labels"; Labels should be strings for classification models and floats for regression models. Models can be saved as pickle, json, or cbor files, and the format is inferred from the provided file extension.
 
  # Code Example
  Build, train and save a full KAN regression model with a 2-dimensional input, 1 hidden layer with 3 nodes, and 1 output node,
- where each layer uses degree-4 [B-splines](https://en.wikipedia.org/wiki/B-spline) with 5 coefficients (AKA control points):
+ where each layer uses degree-3 [B-splines](https://en.wikipedia.org/wiki/B-spline) with 10 coefficients (AKA control points):
  ```rust
+Build, train and save a full KAN regression model with a 2-dimensional input, 1 hidden layer with 3 nodes, and 1 output node,
+where each layer uses degree-4 [B-splines](https://en.wikipedia.org/wiki/B-spline) with 5 coefficients (AKA control points):
+```rust
 use fekan::kan::{Kan, KanOptions, ModelType};
 use fekan::{Sample, training_options::{TrainingOptions, EachEpoch}};
 use tempfile::tempfile;
+
+
 
 // initialize the model
 let model_options = KanOptions{
     input_size: 2,
     layer_sizes: vec![3, 1],
-    degree: 4,
-    coef_size: 5,
+    degree: 3,
+    coef_size: 7,
     model_type: ModelType::Regression,
     class_map: None};
 let mut untrained_model = Kan::new(&model_options);
@@ -94,14 +99,14 @@ let training_data: Vec<Sample> = Vec::new();
 # let sample_2 = Sample::new(vec![-1.0, 1.0], 0.0);
 # let training_data = vec![sample_1, sample_2];
 
-let trained_model = fekan::train_model(untrained_model, &training_data, &fekan::EmptyObserver::new(), TrainingOptions::default())?;
+let trained_model = fekan::train_model(untrained_model, &training_data, TrainingOptions::default())?;
 
 // save the model
 // both Kan and KanLayer implement the serde Serialize trait, so they can be saved to a file using any serde-compatible format
 // here we use the ciborium crate to save the model in the CBOR format
 let mut file = tempfile().unwrap();
 ciborium::into_writer(&trained_model, &mut file)?;
-Ok::<(), Box<dyn std::error::Error>>(())
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 Load and use a trained classification model
@@ -123,8 +128,8 @@ Load and use a trained classification model
 - Parity with [Liu et. al](https://arxiv.org/abs/2404.19756)
     - [x] grid extension
     - [x] Adjust coefficients on grid update to match previous function
-    - [ ] pruning un-needed nodes
-    - [ ] smybolification
+    - [X] pruning un-needed nodes
+    - [X] smybolification
     - [ ] visualization
     - [ ] train via methods other than SGD (Adam, LBFGS)
 - Speed
