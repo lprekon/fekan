@@ -557,7 +557,12 @@ impl KanLayer {
     /// let mut my_layer = KanLayer::new(&layer_options);
     /// assert_eq!(my_layer.knot_length(), 6 + 5 + 1);
     pub fn knot_length(&self) -> usize {
-        self.splines[0].knots().len()
+        for spline in self.splines.iter() {
+            if spline.knots().len() > 0 {
+                return spline.knots().len();
+            }
+        }
+        0
     }
 
     /// update the control points for each incoming edge in this layer given the learning rate
