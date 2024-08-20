@@ -1226,7 +1226,9 @@ fn basis_no_cache(i: usize, k: usize, t: f64, knots: &[f64]) -> f64 {
 }
 
 fn residual_function(t: f64) -> f64 {
-    t / (1.0 + (-t).exp())
+    let numerator = t;
+    let denominator = (-1.0 * t).exp() + 1.0;
+    numerator / denominator
 }
 
 fn drt_residual_wrt_t(t: f64) -> f64 {
@@ -1348,6 +1350,11 @@ mod tests {
 
     use super::*;
 
+    /// build a test edge with the following parameters:
+    /// * `degree`: `3`
+    /// * `control_points`: `[0.75, 1.0, 1.6, -1.0]`
+    /// * `knots`: `[0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0]`
+    /// * `residual_weight`: `1.2`
     fn build_test_edge() -> Edge {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
@@ -1416,18 +1423,60 @@ mod tests {
     }
 
     #[test]
-    fn test_forward_and_infer() {
+    fn test_residual_function() {
+        let t = 0.95;
+        let residual_activation = residual_function(t);
+        let expected_residual_activation = 0.685059;
+        assert_almost_eq!(residual_activation, expected_residual_activation, 1e-5);
+    }
+
+    #[test]
+    fn test_residual_drt() {
+        let t = 0.95;
+        let drt_residual = drt_residual_wrt_t(t);
+        let expected_drt_residual = 0.912168;
+        assert_almost_eq!(drt_residual, expected_drt_residual, 1e-5);
+    }
+
+    #[test]
+    fn test_forward_and_infer_wo_residual() {
+        let mut spline = build_test_edge();
+        // wipe the residual weight so we can test without it
+        match &mut spline.kind {
+            EdgeType::Spline {
+                residual_weight, ..
+            } => {
+                *residual_weight = 0.0;
+            }
+            _ => unreachable!(),
+        }
+        let t = vec![0.95];
+        let forward_result = spline.forward(&t)[0];
+        let infer_result = spline.infer(&t)[0];
+        assert_eq!(
+            forward_result, infer_result,
+            "forward and infer should return the same result"
+        );
+        let expected_spline_result =
+            (0.05127 * 0.75) + (0.57818 * 1.0) + (0.36483 * 1.6) + (0.00573 * -1.0);
+        assert_almost_eq!(forward_result, expected_spline_result, 1e-4);
+    }
+
+    #[test]
+    fn test_forward_and_infer_w_residual() {
         let mut spline = build_test_edge();
         let t = 0.95;
-        //0.02535 + 0.5316 + 0.67664 - 0.0117 = 1.22189
         let result = spline.forward(&vec![t]);
         let infer_result = spline.infer(&vec![t]);
         assert_eq!(
             result, infer_result,
             "forward and infer should return the same result"
         );
-        let rounded_result = (result[0] * 10000.0).round() / 10000.0;
-        assert_eq!(rounded_result, 1.1946);
+        let expected_spline_result =
+            (0.05127 * 0.75) + (0.57818 * 1.0) + (0.36483 * 1.6) + (0.00573 * -1.0);
+        let expected_residual_result = 0.685059 * 1.2;
+        let expected_result = expected_residual_result + expected_spline_result;
+        assert_almost_eq!(result[0], expected_result, 1e-4);
     }
 
     #[test]
@@ -1466,6 +1515,7 @@ mod tests {
         let input_gradient = spline.backward(&error, 1.0).unwrap();
         trace!("post backward {:#?}", spline);
         let expected_spline_drt_wrt_input = 1.2290;
+        let expected_residual_drt_wrt_input = 0.912168 * 1.2;
         let expedted_control_point_gradients = vec![-0.0077, -0.0867, -0.0547, -0.0009];
         let rounded_control_point_gradients: Vec<f64> = match spline.kind {
             EdgeType::Spline { gradients, .. } => gradients
@@ -1478,10 +1528,10 @@ mod tests {
             rounded_control_point_gradients, expedted_control_point_gradients,
             "control point gradients"
         );
-        let rounded_input_gradient = (input_gradient[0] * 10000.0).round() / 10000.0;
-        assert_eq!(
-            rounded_input_gradient,
-            expected_spline_drt_wrt_input * error[0]
+        assert_almost_eq!(
+            input_gradient[0],
+            (expected_spline_drt_wrt_input + expected_residual_drt_wrt_input) * error[0],
+            1e-4
         );
     }
 
@@ -1498,18 +1548,17 @@ mod tests {
         let residual_weight = 1.2;
         let mut spline1 =
             Edge::new(k, vec![1.0; coef_size], knots.clone(), residual_weight).unwrap();
-        println!("setup: {:#?}", spline1);
 
-        let activation = spline1.forward(&vec![0.0]);
-        println!("forward: {:#?}", spline1);
-        let rounded_activation = (activation[0] * 10000.0).round() / 10000.0;
-        assert_eq!(rounded_activation, 1.0);
+        let t = vec![0.0];
+        let activation = spline1.forward(&t);
+        assert_almost_eq!(activation[0], 1.0, 1e-4);
 
-        let input_gradient = spline1.backward(&vec![0.5], 1.0).unwrap();
-        println!("backward: {:#?}", spline1);
-        let expected_input_gradient = 0.0;
-        let rounded_input_gradient = (input_gradient[0] * 10000.0).round() / 10000.0;
-        assert_eq!(rounded_input_gradient, expected_input_gradient);
+        let output_gradient = vec![0.5];
+        let input_gradient = spline1.backward(&output_gradient, 1.0).unwrap();
+        let expected_residual_drt_wrt_input = 0.5;
+        let expected_input_gradient =
+            (0.0 + residual_weight * expected_residual_drt_wrt_input) * output_gradient[0];
+        assert_almost_eq!(input_gradient[0], expected_input_gradient, 1e-4);
     }
 
     #[test]
