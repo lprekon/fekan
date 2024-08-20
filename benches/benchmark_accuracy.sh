@@ -77,7 +77,7 @@ else
     fi
 fi
 
-LOG_FILE="${BENCHMARK}_accuracy_{$BRANCH}_$NAMETAG.log"
+LOG_FILE="${BENCHMARK}_accuracy_${$BRANCH}_${NAMETAG}.log"
 touch $LOG_FILE
 # tag the log file with the git hash
 git rev-parse HEAD > $LOG_FILE
