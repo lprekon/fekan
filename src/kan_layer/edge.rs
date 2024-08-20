@@ -36,10 +36,11 @@ pub(crate) struct Edge {
 enum EdgeType {
     Spline {
         // degree, control points, and knots are the parameters of the spline
-        // these three fields constitute the "identity" of the spline, so they're the only ones that get serialized, considered for equality, etc.
+        // these four fields constitute the "identity" of the spline, so they're the only ones that get serialized, considered for equality, etc.
         degree: usize,
         control_points: Vec<f64>,
         knots: Vec<f64>,
+        residual_weight: f64,
 
         // the remaining fields represent the "state" of the spline.
         // They're in flux during operation, and so are ignored for any sort of persistence or comparison.
@@ -52,6 +53,8 @@ enum EdgeType {
         /// accumulated gradients for each control point
         #[serde(skip)] // only used during training
         gradients: Vec<Gradient>,
+        #[serde(skip)] // only used during training
+        residual_gradient: Gradient,
     },
     Symbolic {
         a: f64,
@@ -115,6 +118,7 @@ impl Edge {
         degree: usize,
         control_points: Vec<f64>,
         knots: Vec<f64>,
+        residual_weight: f64,
     ) -> Result<Self, EdgeError> {
         let size = control_points.len();
         let min_required_knots = size + degree + 1;
@@ -138,8 +142,10 @@ impl Edge {
                 degree,
                 control_points,
                 knots,
+                residual_weight,
                 activations: activations_cache,
                 gradients: vec![Gradient::default(); size],
+                residual_gradient: Gradient::default(),
             },
             last_t: vec![],
             l1_norm: None,
@@ -158,6 +164,7 @@ impl Edge {
                 control_points,
                 knots,
                 activations,
+                residual_weight,
                 ..
             } => {
                 for t in inputs.iter() {
@@ -167,6 +174,8 @@ impl Edge {
                             basis_cached(idx, *degree, *t, &knots, activations, *degree);
                         sum += *coef * basis_activation;
                     }
+                    let residual_activation = residual_function(*t) * *residual_weight;
+                    sum += residual_activation;
                     outputs.push(sum);
                 }
                 // trace!("edge activations: {:?}", outputs);
@@ -187,6 +196,7 @@ impl Edge {
                 degree,
                 control_points,
                 knots,
+                residual_weight,
                 ..
             } => {
                 for t in inputs.iter() {
@@ -195,6 +205,8 @@ impl Edge {
                         let basis_activation = basis_no_cache(idx, *degree, *t, &knots);
                         sum += *coef * basis_activation;
                     }
+                    let residual_activation = residual_function(*t) * *residual_weight;
+                    sum += residual_activation;
                     outputs.push(sum);
                 }
             }
@@ -247,6 +259,13 @@ impl Edge {
         if self.last_t.is_empty() {
             return Err(EdgeError::BackwardBeforeForward);
         }
+        // on the one hand, this assert technically shouldn't be here, since one ought to be able to do multiple forward/backward pass-pairs in a row without issue
+        // on the other, it's a little annoying to deal with such a case, and the reasons for doing so are quite niche, since we now support batch passes.
+        // so I'm just going to include the assert fow now - better than letting the model just be wrong.
+        assert!(
+            self.last_t.len() == edge_gradients.len(),
+            "sorry - for now, please clear state between forward/backward pass-pairs"
+        );
         let edge_l1 = self.l1_norm.expect("edge_l1 is None");
         assert_eq!(layer_l1.signum(), 1.0);
         match &mut self.kind {
@@ -254,18 +273,22 @@ impl Edge {
                 degree,
                 control_points,
                 knots,
+                residual_weight,
                 activations,
                 gradients: accumulated_gradients,
+                residual_gradient: residual_weight_gradient,
             } => {
                 // assert_eq!(activations[0][0].len(), edge_gradients.len());
+                // prettu sure this is wrong, but I want to change it when I'm not changing anything else so I can test it in isolation
                 let adjusted_error: Vec<f64> = edge_gradients
                     .iter()
                     .map(|e| e / control_points.len() as f64)
                     .collect(); // distribute the error evenly across all control points
 
-                // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
+                // drt_output_wrt_input = sum_i(dB_ik(t) * C_i) + residual_weight * drt_residual_wrt_input
                 let mut drts_output_wrt_input = vec![0.0; edge_gradients.len()];
                 let k = *degree;
+                // backward pass for the control points
                 for i in 0..control_points.len() {
                     // L1 norm of edge = 1/N * Σself.infer(t).abs())
                     // L1 loss of model = ΣL1 norm of edge ( * L1_LAMBDA)
@@ -341,6 +364,36 @@ impl Edge {
                         .map(|(drt, bd)| drt + bd * control_points[i])
                         .collect();
                 }
+                // backward pass for the residual
+                for i in 0..adjusted_error.len() {
+                    residual_weight_gradient.prediction_gradient +=
+                        adjusted_error[i] * residual_function(self.last_t[i]);
+
+                    let d_edge_l1_d_rw =
+                        residual_function(self.last_t[i]) * residual_weight.signum();
+
+                    let c = layer_l1 - edge_l1;
+                    assert!(c.is_finite(), "c is not finite");
+                    let d =
+                        (edge_l1 / (layer_l1 + f64::MIN_POSITIVE) + f64::MIN_POSITIVE).ln() + 1.0;
+                    assert!(d.is_finite(), "d is not finite");
+                    let e = layer_l1.powi(2) + f64::MIN_POSITIVE;
+                    assert!(e.is_finite(), "e is not finite");
+                    let d_entropy_d_edge_l1 = -1.0 * c * d / e;
+                    assert!(
+                        d_entropy_d_edge_l1.is_finite(),
+                        "d_entropy_d_edge_l1 is not finite"
+                    );
+
+                    let l1_gradient = d_edge_l1_d_rw;
+                    let entrop_gradient = d_entropy_d_edge_l1 * d_edge_l1_d_rw;
+
+                    residual_weight_gradient.l1_gradient += l1_gradient;
+                    residual_weight_gradient.entropy_gradient += entrop_gradient;
+
+                    drts_output_wrt_input[i] +=
+                        *residual_weight * drt_residual_wrt_t(self.last_t[i]);
+                }
                 // input_gradient = drt_output_wrt_input * error
                 return Ok(drts_output_wrt_input
                     .iter()
@@ -389,11 +442,11 @@ impl Edge {
     ) {
         match &mut self.kind {
             EdgeType::Spline {
-                degree: _,
                 control_points,
-                knots: _,
-                activations: _,
+                residual_weight,
                 gradients,
+                residual_gradient,
+                ..
             } => {
                 for i in 0..control_points.len() {
                     control_points[i] -= learning_rate
@@ -401,6 +454,10 @@ impl Edge {
                             + l1_lambda * gradients[i].l1_gradient
                             + entropy_lambda * gradients[i].entropy_gradient);
                 }
+                *residual_weight -= learning_rate
+                    * (residual_gradient.prediction_gradient
+                        + l1_lambda * residual_gradient.l1_gradient
+                        + entropy_lambda * residual_gradient.entropy_gradient);
             }
             _ => (), // update on a non-spline edge is a no-op
         }
@@ -409,15 +466,14 @@ impl Edge {
     pub(super) fn zero_gradients(&mut self) {
         match &mut self.kind {
             EdgeType::Spline {
-                degree: _,
-                control_points: _,
-                knots: _,
-                activations: _,
                 gradients,
+                residual_gradient,
+                ..
             } => {
                 for i in 0..gradients.len() {
                     gradients[i] = Gradient::default();
                 }
+                *residual_gradient = Gradient::default();
             }
             _ => (), // zeroing gradients on a non-spline edge is a no-op
         }
@@ -427,13 +483,7 @@ impl Edge {
     // used in tests for parent module
     pub(super) fn knots<'a>(&'a self) -> Iter<'a, f64> {
         match &self.kind {
-            EdgeType::Spline {
-                degree: _,
-                control_points: _,
-                knots,
-                activations: _,
-                gradients: _,
-            } => knots.iter(),
+            EdgeType::Spline { knots, .. } => knots.iter(),
             _ => Iter::default(),
         }
     }
@@ -456,10 +506,9 @@ impl Edge {
         match &mut self.kind {
             EdgeType::Spline {
                 degree,
-                control_points: _,
                 knots,
                 activations,
-                gradients: _,
+                ..
             } => {
                 activations
                     .iter_mut()
@@ -524,6 +573,8 @@ impl Edge {
                 knots,
                 activations,
                 gradients,
+                residual_weight,
+                residual_gradient,
             } => {
                 let degree = *degree;
                 let new_knots = linspace(knots[0], knots[knots.len() - 1], new_knot_length);
@@ -539,8 +590,10 @@ impl Edge {
                         degree,
                         control_points: control_points.clone(),
                         knots: knots.clone(),
-                        activations: activations.clone(),
-                        gradients: gradients.clone(),
+                        residual_weight: *residual_weight,
+                        activations: vec![], // never gets used
+                        gradients: vec![],   // never gets used
+                        residual_gradient: Gradient::default(),
                     },
                     last_t: vec![],
                     l1_norm: None,
@@ -574,6 +627,7 @@ impl Edge {
                 *activations =
                     vec![vec![FxHashMap::default(); new_control_point_len + degree]; degree];
                 *gradients = vec![Gradient::default(); control_points.len()];
+                *residual_gradient = Gradient::default();
                 Ok(())
             }
             _ => Ok(()), // setting the knot length on a non-spline edge is a no-op
@@ -875,9 +929,11 @@ impl Edge {
                 degree: _,
                 control_points,
                 knots,
+                residual_weight: _,
                 activations: _,
                 gradients: _,
-            } => control_points.len() + knots.len(),
+                residual_gradient: _,
+            } => control_points.len() + knots.len() + 1, // plus 1 for residual weight
             EdgeType::Symbolic { .. } => 4, // every symbolic edge has 4 parameters - a, b, c, and d
             EdgeType::Pruned => 0,          // pruned edges have no parameters
         }
@@ -890,9 +946,11 @@ impl Edge {
                 degree: _,
                 control_points,
                 knots: _,
+                residual_weight: _,
                 activations: _,
                 gradients: _,
-            } => control_points.len(),
+                residual_gradient: _,
+            } => control_points.len() + 1, // plus 1 for residual weight
             EdgeType::Symbolic { .. } => 0, // symbolic edges have no trainable parameters
             EdgeType::Pruned => 0,          // pruned edges have no parameters
         }
@@ -934,6 +992,7 @@ impl Edge {
                 let expected_degree = degree;
                 let mut new_control_points = control_points;
                 let mut new_knots = knots;
+                let mut new_residual_weight = 0.0;
                 let expected_control_point_count = new_control_points.len();
                 let expected_knot_count = new_knots.len();
                 let mut i = 0;
@@ -944,8 +1003,10 @@ impl Edge {
                             degree,
                             control_points,
                             knots,
+                            residual_weight,
                             activations: _,
                             gradients: _,
+                            residual_gradient: _,
                         } => {
                             // check for mismatched degrees, control points, and knots
                             if degree != expected_degree {
@@ -976,6 +1037,7 @@ impl Edge {
                             for j in 0..expected_knot_count {
                                 new_knots[j] += knots[j];
                             }
+                            new_residual_weight += residual_weight;
                         }
                         _ => unreachable!("all edges should be splines"),
                     }
@@ -988,7 +1050,14 @@ impl Edge {
                 for j in 0..expected_knot_count {
                     new_knots[j] /= total_edges as f64;
                 }
-                Ok(Edge::new(expected_degree, new_control_points, new_knots).unwrap())
+                new_residual_weight /= total_edges as f64;
+                Ok(Edge::new(
+                    expected_degree,
+                    new_control_points,
+                    new_knots,
+                    new_residual_weight,
+                )
+                .unwrap())
             }
             EdgeType::Symbolic {
                 a,
@@ -1156,6 +1225,14 @@ fn basis_no_cache(i: usize, k: usize, t: f64, knots: &[f64]) -> f64 {
     return result;
 }
 
+fn residual_function(t: f64) -> f64 {
+    t / (1.0 + (-t).exp())
+}
+
+fn drt_residual_wrt_t(t: f64) -> f64 {
+    t.exp() * (t + t.exp() + 1.0) / (t.exp() + 1.0).powi(2)
+}
+
 /// generate `num` values evenly spaced between `min` and `max` inclusive
 pub(crate) fn linspace(min: f64, max: f64, num: usize) -> Vec<f64> {
     let mut knots = Vec::with_capacity(num);
@@ -1271,11 +1348,18 @@ mod tests {
 
     use super::*;
 
+    fn build_test_edge() -> Edge {
+        let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+        let control_points = vec![0.75, 1.0, 1.6, -1.0];
+        let residual_weight = 1.2;
+        Edge::new(3, control_points, knots, residual_weight).unwrap()
+    }
+
     #[test]
     fn test_new_spline_with_too_few_knots() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
-        let result = Edge::new(3, control_points, knots);
+        let result = Edge::new(3, control_points, knots, 0.0);
         assert!(result.is_err());
     }
 
@@ -1333,9 +1417,7 @@ mod tests {
 
     #[test]
     fn test_forward_and_infer() {
-        let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-        let control_points = vec![0.75, 1.0, 1.6, -1.0];
-        let mut spline = Edge::new(3, control_points, knots).unwrap();
+        let mut spline = build_test_edge();
         let t = 0.95;
         //0.02535 + 0.5316 + 0.67664 - 0.0117 = 1.22189
         let result = spline.forward(&vec![t]);
@@ -1358,7 +1440,8 @@ mod tests {
         for i in 1..knots.len() {
             knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
         }
-        let mut spline1 = Edge::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
+        let residual_weight = 1.2;
+        let mut spline1 = Edge::new(k, vec![1.0; coef_size], knots, residual_weight).unwrap();
         println!("{:#?}", spline1);
         let t = vec![0.0];
         let result = spline1.forward(&t);
@@ -1375,9 +1458,7 @@ mod tests {
     #[test]
     // backward can't be run without forward, so we include forward in the name to make it obvious that if forward fails, backward will also fail
     fn test_forward_then_backward() {
-        let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-        let control_points = vec![0.75, 1.0, 1.6, -1.0];
-        let mut spline = Edge::new(3, control_points, knots).unwrap();
+        let mut spline = build_test_edge();
         let t = vec![0.95];
         let _result = spline.forward(&t);
         trace!("post forward {:#?}", spline);
@@ -1414,7 +1495,9 @@ mod tests {
         for i in 1..knots.len() {
             knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
         }
-        let mut spline1 = Edge::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
+        let residual_weight = 1.2;
+        let mut spline1 =
+            Edge::new(k, vec![1.0; coef_size], knots.clone(), residual_weight).unwrap();
         println!("setup: {:#?}", spline1);
 
         let activation = spline1.forward(&vec![0.0]);
@@ -1431,9 +1514,7 @@ mod tests {
 
     #[test]
     fn test_backward_before_forward() {
-        let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-        let control_points = vec![0.75, 1.0, 1.6, -1.0];
-        let mut spline = Edge::new(3, control_points, knots).unwrap();
+        let mut spline = build_test_edge();
         let error = vec![-0.6];
         let result = spline.backward(&error, 1.0);
         assert!(result.is_err());
@@ -1441,9 +1522,7 @@ mod tests {
 
     #[test]
     fn backward_after_infer() {
-        let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-        let control_points = vec![0.75, 1.0, 1.6, -1.0];
-        let mut spline = Edge::new(3, control_points, knots).unwrap();
+        let mut spline = build_test_edge();
         let _ = spline.infer(&vec![0.95]);
         let error = vec![-0.6];
         let result = spline.backward(&error, 1.0);
@@ -1452,9 +1531,7 @@ mod tests {
 
     #[test]
     fn test_update_knots() {
-        let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-        let control_points = vec![0.75, 1.0, 1.6, -1.0];
-        let mut spline = Edge::new(3, control_points, knots).unwrap();
+        let mut spline = build_test_edge();
         let mut samples = Vec::with_capacity(150);
         // assuming unordered samples for now
         for _ in 0..50 {
@@ -1481,7 +1558,7 @@ mod tests {
     fn test_update_knots_from_bad_samples() {
         let knots = linspace(-1.0, 1.0, 10);
         let control_points = vec![1.0; 6];
-        let mut spline = Edge::new(3, control_points, knots.clone()).unwrap();
+        let mut spline = Edge::new(3, control_points, knots.clone(), 0.0).unwrap();
         let samples = vec![0.0; 20];
         spline.update_knots_from_samples(&samples, 0.0);
         let current_knots = match spline.kind {
@@ -1500,7 +1577,7 @@ mod tests {
         let coef_size = 5;
         let knot_length = coef_size + k + 1;
         let knots = linspace(-1., 1., knot_length);
-        let mut spline = Edge::new(k, vec![1.0; coef_size], knots).unwrap();
+        let mut spline = Edge::new(k, vec![1.0; coef_size], knots, 0.0).unwrap();
 
         let sample_size = 100;
         let inputs = linspace(-1., 1.0, sample_size);
@@ -1533,7 +1610,7 @@ mod tests {
         let coef_size = 10;
         let knot_length = coef_size + k + 1;
         let knots = linspace(-1., 1., knot_length);
-        let mut spline = Edge::new(k, vec![1.0; coef_size], knots).unwrap();
+        let mut spline = Edge::new(k, vec![1.0; coef_size], knots, 0.0).unwrap();
 
         let sample_size = 100;
         let inputs = linspace(-1., 1.0, sample_size);
@@ -1560,12 +1637,14 @@ mod tests {
             3,
             vec![1.0, 2.0, 3.0],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            1.0,
         )
         .unwrap();
         let spline2 = Edge::new(
             3,
             vec![2.0, 3.0, -4.0],
             vec![-1.0, 1.0, 2.0, 5.0, 6.0, 7.0, 8.0],
+            2.0,
         )
         .unwrap();
         let splines = vec![spline1, spline2];
@@ -1574,6 +1653,7 @@ mod tests {
             3,
             vec![1.5, 2.5, -0.5],
             vec![-0.5, 1.0, 2.0, 4.0, 5.0, 6.0, 7.0],
+            1.5,
         )
         .unwrap();
         assert_eq!(new_spline, expected_spline);
@@ -1581,10 +1661,20 @@ mod tests {
 
     #[test]
     fn test_merge_splines_mismatched_degree() {
-        let spline1 =
-            Edge::new(2, vec![1.0, 2.0, 3.0], vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
-        let spline2 =
-            Edge::new(1, vec![2.0, 3.0, -4.0], vec![-1.0, 1.0, 2.0, 5.0, 6.0, 7.0]).unwrap();
+        let spline1 = Edge::new(
+            2,
+            vec![1.0, 2.0, 3.0],
+            vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+            0.0,
+        )
+        .unwrap();
+        let spline2 = Edge::new(
+            1,
+            vec![2.0, 3.0, -4.0],
+            vec![-1.0, 1.0, 2.0, 5.0, 6.0, 7.0],
+            0.0,
+        )
+        .unwrap();
         let splines = vec![spline1, spline2];
         let result = Edge::merge_edges(splines);
         assert!(matches!(
@@ -1599,12 +1689,14 @@ mod tests {
             3,
             vec![1.0, 2.0, 3.0],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            0.0,
         )
         .unwrap();
         let spline2 = Edge::new(
             3,
             vec![2.0, 3.0, -4.0, 0.0],
             vec![-1.0, 1.0, 2.0, 5.0, 5.5, 6.0, 6.5, 7.0],
+            0.0,
         )
         .unwrap();
         let splines = vec![spline1, spline2];
@@ -1621,12 +1713,14 @@ mod tests {
             3,
             vec![1.0, 2.0, 3.0],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            0.0,
         )
         .unwrap();
         let spline2 = Edge::new(
             3,
             vec![2.0, 3.0, -4.0],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 6.5],
+            0.0,
         )
         .unwrap();
         let splines = vec![spline1, spline2];
@@ -1650,6 +1744,7 @@ mod tests {
             3,
             vec![1.0, 2.0, 3.0],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            1.2,
         )
         .unwrap();
         let mut spline2 = spline1.clone();
@@ -1662,31 +1757,9 @@ mod tests {
         assert_eq!(output1, output3);
     }
 
-    // removing this test because we shouldn't count on suggest_symbolic to properly match constant functions
-    // #[test]
-    // fn test_suggest_symbolic_constant_zero() {
-    //     let spline = Edge::new(3, vec![0.; 3], vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
-    //     let inputs = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
-    //     let suggest_symbolic = spline.suggest_symbolic(inputs.as_slice(), 1);
-    //     let (edge, r2) = &suggest_symbolic[0];
-    //     assert_almost_eq!(*r2, 1.0, 1e-2);
-    //     assert!(matches!(edge.kind, EdgeType::Symbolic { .. }));
-    //     let symbolic_function = match &edge.kind {
-    //         EdgeType::Symbolic { function, .. } => function,
-    //         _ => unreachable!(),
-    //     };
-    //     assert_eq!(*symbolic_function, SymbolicFunction::Linear);
-    //     let params = match &edge.kind {
-    //         EdgeType::Symbolic { a, b, c, d, .. } => (*a, *b, *c, *d),
-    //         _ => unreachable!(),
-    //     };
-    //     // assert_eq!(*a, 0.0, "a");
-    //     assert_eq!(params, (0.0, 0.0, 0.0, 0.0));
-    // }
-
     #[test]
     fn test_suggest_symbolic_y_equals_x() {
-        let spline = Edge::new(3, linspace(1.0, 5.0, 5), linspace(-0.9, 6.3, 9)).unwrap();
+        let spline = Edge::new(3, linspace(1.0, 5.0, 5), linspace(-0.9, 6.3, 9), 0.0).unwrap();
         let suggest_symbolic = spline.suggest_symbolic(1);
         let (edge, r2) = &suggest_symbolic[0];
         assert_almost_eq!(*r2, 1.0, 1e-1);
@@ -1757,6 +1830,7 @@ mod tests {
                 3.241680704074589,
                 3.3658004046546517,
             ],
+            0.0,
         )
         .unwrap();
         let inputs = linspace(0., 2., 30);
@@ -1786,6 +1860,7 @@ mod tests {
             3,
             vec![1e-7, 2e-7, 3e-7],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            0.0,
         )
         .unwrap();
         spline.prune(1e-6);
@@ -1798,6 +1873,7 @@ mod tests {
             3,
             vec![1.0, 2.0, 3.0],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            1.2,
         )
         .unwrap();
         spline.prune(1e-6);

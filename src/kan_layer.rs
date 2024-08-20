@@ -84,15 +84,26 @@ impl KanLayer {
     pub fn new(options: &KanLayerOptions) -> Self {
         let num_edges = options.input_dimension * options.output_dimension;
         let num_knots = options.coef_size + options.degree + 1;
-        let normal_dist = Normal::new(0.0, 0.1).expect("unable to create normal distribution");
+        let control_point_distribution =
+            Normal::new(0.0, 0.1).expect("unable to create normal distribution");
+        let xavier_std_dev =
+            (2.0 / (options.input_dimension + options.output_dimension) as f64).sqrt();
+        let residual_weight_distribution =
+            Normal::new(0.0, xavier_std_dev).expect("unable to create normal distribution");
         let mut randomness = thread_rng();
         let splines = (0..num_edges)
             .map(|_| {
                 let coefficients: Vec<f64> = (0..options.coef_size)
-                    .map(|_| normal_dist.sample(&mut randomness) as f64)
+                    .map(|_| control_point_distribution.sample(&mut randomness) as f64)
                     .collect();
-                Edge::new(options.degree, coefficients, linspace(-1.0, 1.0, num_knots))
-                    .expect("spline creation error")
+                let residual_weight = residual_weight_distribution.sample(&mut randomness) as f64;
+                Edge::new(
+                    options.degree,
+                    coefficients,
+                    linspace(-1.0, 1.0, num_knots),
+                    residual_weight,
+                )
+                .expect("spline creation error")
             })
             .collect();
 
@@ -839,8 +850,8 @@ mod test {
         let coef_size = 4;
         let knot_size = coef_size + k + 1;
         let knots = linspace(-1.0, 1.0, knot_size);
-        let spline1 = Edge::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
-        let spline2 = Edge::new(k, vec![-1.0; coef_size], knots.clone()).unwrap();
+        let spline1 = Edge::new(k, vec![1.0; coef_size], knots.clone(), 0.0).unwrap();
+        let spline2 = Edge::new(k, vec![-1.0; coef_size], knots.clone(), 0.0).unwrap();
         KanLayer {
             splines: vec![spline1.clone(), spline2.clone(), spline2, spline1],
             samples: vec![],
