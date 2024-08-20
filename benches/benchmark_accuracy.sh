@@ -51,6 +51,9 @@ fi
 if [ -n "$BATCH_SIZE" ]; then
     BATCH_SIZE_FLAG="--batch-size $BATCH_SIZE"
 fi
+if [ -n "$KNOT_ADAPTIVITY" ]; then
+    KNOT_ADAPTIVITY_FLAG="--knot-adaptivity $KNOT_ADAPTIVITY"
+fi
 if [ -n "$VERBOSITY" ]; then
     VERBOSITY_FLAG="-$VERBOSITY"
 fi
@@ -97,6 +100,8 @@ fekan build regressor \
     $L1_LAMBDA_FLAG \
     $ENTROPY_FLAG \
     $LEARNING_RATE_FLAG \
+    $BATCH_SIZE_FLAG \
+    $KNOT_ADAPTIVITY_FLAG \
     --validate-each-epoch \
     --log-output \
     --no-save \
