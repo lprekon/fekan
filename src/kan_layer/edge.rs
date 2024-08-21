@@ -264,7 +264,7 @@ impl Edge {
         // so I'm just going to include the assert fow now - better than letting the model just be wrong.
         assert!(
             self.last_t.len() == edge_gradients.len(),
-            "sorry - for now, please clear state between forward/backward pass-pairs"
+            "sorry - for now, please clear state between forward/backward pass-pairs. We have {} t values and {} edge gradients", self.last_t.len(), edge_gradients.len()
         );
         let edge_l1 = self.l1_norm.expect("edge_l1 is None");
         assert_eq!(layer_l1.signum(), 1.0);
@@ -366,19 +366,25 @@ impl Edge {
                 }
                 // backward pass for the residual
                 for i in 0..adjusted_error.len() {
-                    residual_weight_gradient.prediction_gradient +=
+                    let drt_residual_wrt_weight =
                         adjusted_error[i] * residual_function(self.last_t[i]);
+                    residual_weight_gradient.prediction_gradient += drt_residual_wrt_weight;
+                    assert!(
+                        drt_residual_wrt_weight.is_finite(),
+                        "drt_residual_wrt_weight is not finite"
+                    );
 
                     let d_edge_l1_d_rw =
                         residual_function(self.last_t[i]) * residual_weight.signum();
+                    assert!(d_edge_l1_d_rw.is_finite(), "d_edge_l1_d_rw is not finite");
 
                     let c = layer_l1 - edge_l1;
-                    assert!(c.is_finite(), "c is not finite");
+                    assert!(c.is_finite(), "c2 is not finite");
                     let d =
                         (edge_l1 / (layer_l1 + f64::MIN_POSITIVE) + f64::MIN_POSITIVE).ln() + 1.0;
-                    assert!(d.is_finite(), "d is not finite");
+                    assert!(d.is_finite(), "d2 is not finite");
                     let e = layer_l1.powi(2) + f64::MIN_POSITIVE;
-                    assert!(e.is_finite(), "e is not finite");
+                    assert!(e.is_finite(), "e2 is not finite");
                     let d_entropy_d_edge_l1 = -1.0 * c * d / e;
                     assert!(
                         d_entropy_d_edge_l1.is_finite(),
@@ -391,8 +397,13 @@ impl Edge {
                     residual_weight_gradient.l1_gradient += l1_gradient;
                     residual_weight_gradient.entropy_gradient += entrop_gradient;
 
-                    drts_output_wrt_input[i] +=
+                    let residual_input_gradient =
                         *residual_weight * drt_residual_wrt_t(self.last_t[i]);
+                    assert!(
+                        residual_input_gradient.is_finite(),
+                        "residual_input_gradient is not finite - weight: {}, drt_residual_wrt_t: {}, t: {}", residual_weight, drt_residual_wrt_t(self.last_t[i]), self.last_t[i]
+                    );
+                    drts_output_wrt_input[i] += residual_input_gradient;
                 }
                 // input_gradient = drt_output_wrt_input * error
                 return Ok(drts_output_wrt_input
@@ -1248,7 +1259,11 @@ fn residual_function(t: f64) -> f64 {
 }
 
 fn drt_residual_wrt_t(t: f64) -> f64 {
-    t.exp() * (t + t.exp() + 1.0) / (t.exp() + 1.0).powi(2)
+    if t >= 20.0 {
+        1.0 // for t >= 20, the true value is incredibly close to 1, and attempting to calculate the true value results in overflow
+    } else {
+        t.exp() * (t + t.exp() + 1.0) / (t.exp() + 1.0).powi(2)
+    }
 }
 
 /// generate `num` values evenly spaced between `min` and `max` inclusive
