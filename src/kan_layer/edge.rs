@@ -987,12 +987,13 @@ impl Edge {
                 degree,
                 control_points,
                 knots,
+                residual_weight,
                 ..
             } => {
                 let expected_degree = degree;
                 let mut new_control_points = control_points;
                 let mut new_knots = knots;
-                let mut new_residual_weight = 0.0;
+                let mut new_residual_weight = residual_weight;
                 let expected_control_point_count = new_control_points.len();
                 let expected_knot_count = new_knots.len();
                 let mut i = 0;
