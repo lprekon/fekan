@@ -374,6 +374,9 @@ impl KanLayer {
     /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     pub fn clear_samples(&mut self) {
         self.samples.clear();
+        for edge in self.splines.iter_mut() {
+            edge.clear_state();
+        }
     }
 
     /// Given a vector of gradient values for the nodes in this layer, backpropogate the error through the layer, updating the internal gradients for the incoming edges

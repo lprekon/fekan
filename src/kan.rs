@@ -346,6 +346,8 @@ impl Kan {
         debug!("Backwarding {} gradients through model", gradients.len());
         let mut gradients = gradients;
         for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
+            debug!("Backwarding through layer {}", idx);
+            trace!("Gradients: {:?}", gradients);
             gradients = layer
                 .backward(&gradients)
                 .map_err(|e| KanError::backward(e, idx))?;

@@ -503,17 +503,9 @@ impl Edge {
     /// If `samples` is not sorted, the results of the update and future spline operation are undefined.
     pub(super) fn update_knots_from_samples(&mut self, samples: &[f64], knot_adaptivity: f64) {
         trace!("updating knots from samples: {:?}", samples);
+        self.clear_state();
         match &mut self.kind {
-            EdgeType::Spline {
-                degree,
-                knots,
-                activations,
-                ..
-            } => {
-                activations
-                    .iter_mut()
-                    .for_each(|v| v.iter_mut().for_each(|h| h.clear())); // clear the memoized activations. They're no longer valid, now that the knots are changing
-                self.last_t.clear(); // clear the last_t cache, since the activations cache is clear
+            EdgeType::Spline { degree, knots, .. } => {
                 let knot_count = knots.len();
                 let base_knot_count = knot_count - 2 * (*degree);
                 let mut adaptive_knots: Vec<f64> = Vec::with_capacity(base_knot_count);
@@ -558,6 +550,29 @@ impl Edge {
                 *knots = new_knots;
             }
             _ => trace!("We don't update knots for non-spline edges"), // non-spline edges don't have knots, so this is a no-op
+        }
+    }
+
+    pub(super) fn clear_state(&mut self) {
+        self.last_t.clear();
+        match self.kind {
+            EdgeType::Spline {
+                ref mut activations,
+                ref mut gradients,
+                ref mut residual_gradient,
+                ..
+            } => {
+                for cache_line in activations.iter_mut() {
+                    for cache in cache_line.iter_mut() {
+                        cache.clear();
+                    }
+                }
+                for gradient in gradients.iter_mut() {
+                    *gradient = Gradient::default();
+                }
+                *residual_gradient = Gradient::default();
+            }
+            _ => (),
         }
     }
 
