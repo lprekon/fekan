@@ -86,14 +86,15 @@ mod regression {
         let mut rand = rand::thread_rng();
         let mut training_data = Vec::with_capacity(1000);
         let mut validation_data = Vec::with_capacity(100);
+        let input_range = -10.0..10.0;
         for _ in 0..1000 {
-            let x = rand.gen_range(-1000.0..1000.0);
-            let y = rand.gen_range(-1000.0..1000.0);
+            let x = rand.gen_range(input_range.clone());
+            let y = rand.gen_range(input_range.clone());
             training_data.push(Sample::new(vec![x, y], x * y));
         }
         for _ in 0..100 {
-            let x = rand.gen_range(-1000.0..1000.0);
-            let y = rand.gen_range(-1000.0..1000.0);
+            let x = rand.gen_range(input_range.clone());
+            let y = rand.gen_range(input_range.clone());
             validation_data.push(Sample::new(vec![x, y], x * y));
         }
         let mut untrained_model = Kan::new(&KanOptions {
