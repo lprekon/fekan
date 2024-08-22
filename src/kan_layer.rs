@@ -179,8 +179,8 @@ impl KanLayer {
             let out_node_idx = edge_index % self.output_dimension;
             let sample_wise_outputs =
                 self.splines[edge_index].forward(&transposed_preacts[in_node_idx]);
-            if sample_wise_outputs.iter().any(|v| v.is_nan()) {
-                return Err(KanLayerError::nans_in_activations(
+            if sample_wise_outputs.iter().any(|v| v.is_normal()) {
+                return Err(KanLayerError::abnormal_activations(
                     edge_index,
                     sample_wise_outputs,
                     self.splines[edge_index].clone(),

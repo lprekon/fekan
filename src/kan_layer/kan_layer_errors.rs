@@ -17,8 +17,8 @@ enum KanLayerErrorType {
         actual: usize,
         expected: usize,
     },
-    NaNsInActivations {
-        preacts: Vec<f64>,
+    AbnormalActivations {
+        activations: Vec<f64>,
         offending_spline: Edge,
     },
     MissizedGradient {
@@ -54,14 +54,14 @@ impl KanLayerError {
     }
 
     // Initialization function for NaNsInActivations
-    pub(super) fn nans_in_activations(
+    pub(super) fn abnormal_activations(
         spline_idx: usize,
-        preacts: Vec<f64>,
+        activations: Vec<f64>,
         offending_spline: Edge,
     ) -> Self {
         Self {
-            error_kind: KanLayerErrorType::NaNsInActivations {
-                preacts,
+            error_kind: KanLayerErrorType::AbnormalActivations {
+                activations,
                 offending_spline,
             },
             source: None,
@@ -180,8 +180,8 @@ impl fmt::Display for KanLayerError {
                     expected, actual
                 )
             }
-            KanLayerErrorType::NaNsInActivations {
-                preacts,
+            KanLayerErrorType::AbnormalActivations {
+                activations: preacts,
                 offending_spline,
             } => {
                 write!(
