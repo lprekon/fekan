@@ -175,6 +175,12 @@ impl Edge {
                         sum += *coef * basis_activation;
                     }
                     let residual_activation = residual_function(*t) * *residual_weight;
+                    assert!(
+                        !residual_activation.is_nan(),
+                        "residual_activation is NaN - t: {}, residual_weight: {}",
+                        t,
+                        residual_weight
+                    );
                     sum += residual_activation;
                     outputs.push(sum);
                 }
@@ -445,7 +451,7 @@ impl Edge {
         }
     }
 
-    pub(super) fn update_control_points(
+    pub(super) fn update_weights(
         &mut self,
         learning_rate: f64,
         l1_lambda: f64,

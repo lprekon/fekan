@@ -609,6 +609,18 @@ impl PartialEq for Kan {
     }
 }
 
+impl std::fmt::Display for Kan {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let layer_string = self
+            .layers
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<String>>()
+            .join("\n");
+        write!(f, "KAN: \n{}", layer_string)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

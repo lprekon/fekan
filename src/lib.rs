@@ -69,7 +69,7 @@ pub mod training_options;
 use std::thread;
 
 use kan::{kan_error::KanError, Kan, ModelType};
-use log::{debug, info};
+use log::{debug, info, trace};
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use shuffle::{fy, shuffler::Shuffler};
@@ -170,7 +170,7 @@ pub fn train_model(
     options: TrainingOptions,
 ) -> Result<Kan, TrainingError> {
     // TRAINING
-
+    trace!("Pre-training model: {}", model);
     let mut randomness = thread_rng();
     let mut fys = fy::FisherYates::default();
     let mut knot_extensions_completed = 0;
@@ -322,6 +322,7 @@ pub fn train_model(
                 })?;
             knot_extensions_completed += 1;
         }
+        trace!("Model: {}", model);
     }
 
     Ok(model)

@@ -186,11 +186,11 @@ impl fmt::Display for KanLayerError {
             } => {
                 write!(
                     f,
-                    "NaNs in activations for spline {} - preacts: {:?} - bad knots: {:?}",
+                    "NaNs in activations for spline {} - actications: {:?} - bad knots: {:?} - bad control points: {:?}",
                     self.spline_idx
                         .expect("NaNsInActivations error must have a spline index"),
                     preacts,
-                    offending_spline.knots().collect::<Vec<&f64>>()
+                    offending_spline.knots().collect::<Vec<&f64>>(), offending_spline.control_points().collect::<Vec<&f64>>()
                 )
             }
             KanLayerErrorType::MissizedGradient { actual, expected } => {
