@@ -18,15 +18,15 @@ python3 generate_feynman_I-9-18_data.py 6000 > "$DATA_FILE"
 
 
 cargo run --features serialization --profile release -- build regressor --data "$DATA_FILE" \
-   --learning-rate 0.001 \
+   --learning-rate 0.0001 \
    --no-save \
    --coefs 25 \
    --l1-penalty 0.1 \
    --entropy-penalty 0.1 \
-   --batch-size 50 \
+   --batch-size 500 \
    --hidden-layer-sizes "6,4,1" \
    --num-threads 8 \
-   -e 300 \
+   --knot-adaptivity 0.001
 
 
 
