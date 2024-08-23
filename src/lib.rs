@@ -344,15 +344,15 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
     }
     
     for set_layer in 0..model.layers.len() {
-        let all_features = preset_data.iter().map(|s| s.features.clone()).collect::<Vec<Vec<f64>>>();
+        let mut data = preset_data.iter().map(|s| s.features.clone()).collect::<Vec<Vec<f64>>>();
             for forward_layer in 0..=set_layer {
                 debug!("forwarding through layer {}", forward_layer);
-                for chunk in all_features.chunks(100) { // chunk it so if there's an error, it's easier to find
-                    let _ = model.layers[forward_layer].forward(chunk.to_vec()).map_err(|e| TrainingError {
+                    // assert!(chunk[0].len() == model.layers[forward_layer].input_dimension(), "Sample features must have the same length as the input dimension of the model");
+                    data = model.layers[forward_layer].forward(data).map_err(|e| TrainingError {
                     source: KanError::forward(e, forward_layer),
                     epoch: 0,
                     sample: set_layer * preset_data.len(),
-                })?;}
+                })?;
             }
         debug!("Setting knots for layer {}", set_layer);
         model.layers[set_layer].update_knots_from_samples(0.0).map_err(|e| TrainingError {
