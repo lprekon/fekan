@@ -94,9 +94,12 @@ fn bench_update(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
     let batch_inputs = generate_batch_inputs();
     let _ = layer.forward(batch_inputs);
-    let error = vec![(0..OUTPUT_DIMENSION_BIG)
-        .map(|_| thread_rng().gen())
-        .collect()];
+    let error = vec![
+        (0..OUTPUT_DIMENSION_BIG)
+            .map(|_| thread_rng().gen())
+            .collect();
+        BATCH_SIZE
+    ];
     let _ = layer.backward(&error);
     b.iter(|| layer.update(0.1, 0.75, 0.25));
 }
