@@ -258,10 +258,6 @@ impl Edge {
                 gradients: accumulated_gradients,
             } => {
                 // assert_eq!(activations[0][0].len(), edge_gradients.len());
-                let adjusted_error: Vec<f64> = edge_gradients
-                    .iter()
-                    .map(|e| e / control_points.len() as f64)
-                    .collect(); // distribute the error evenly across all control points
 
                 // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
                 let mut drts_output_wrt_input = vec![0.0; edge_gradients.len()];
@@ -309,7 +305,7 @@ impl Edge {
                         .last_t
                         .iter()
                         .map(|t| activations[0][i].get(&t.to_bits()).unwrap());
-                    let prediction_gradients = adjusted_error
+                    let prediction_gradients = edge_gradients
                         .iter()
                         .zip(basis_activations)
                         .map(|(e, a)| e * a);
