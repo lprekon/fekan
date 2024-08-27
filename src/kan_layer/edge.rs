@@ -12,6 +12,7 @@
 //! "brute force" it with a single massive Edge type that matches on a mode flag every method. At least this way, I get serialization and thread safety for free, and all the case-consciouness is in one place
 //! (besides maybe the aforementioned code that suggests and clamps-to symbolic edges, but that's rather unavoidable, as I said)
 
+use core::f64;
 use log::{debug, trace};
 use nalgebra::{DMatrix, DVector, SVD};
 use rustc_hash::FxHashMap;
@@ -274,9 +275,9 @@ impl Edge {
                         SymbolicFunction::FifthRoot => c * (a * t + b).powf(0.2) + d,
                         SymbolicFunction::Sin => c * (a * t + b).sin() + d,
                         SymbolicFunction::Tan => c * (a * t + b).tan() + d,
-                        SymbolicFunction::Log => c * (a * t + b).ln() + d,
+                        SymbolicFunction::Log => c * (a * t + b).max(f64::MIN_POSITIVE).ln() + d,
                         SymbolicFunction::Exp => c * (a * t + b).exp() + d,
-                        SymbolicFunction::Inverse => c / (a * t.max(f64::EPSILON) + b) + d,
+                        SymbolicFunction::Inverse => c / (a * t + b + f64::MIN_POSITIVE) + d,
                     };
                     outputs.push(value);
                 }
