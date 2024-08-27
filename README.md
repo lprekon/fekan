@@ -1,3 +1,6 @@
+# Branch note
+This branch was created to add residual functions to edge output, as described in Liu et. al. However, my implementation is leading to more frequent numerical instability, degrading performance instead of improving it even when the models do converge, and I was able to break through a performance barrier I had hoped this branch would solve simply by choosing better hyperparameters. For all those reasons, I'm not merging this branch in to main. But, I'm going to leave it here in case I want to come back and work on it more later.
+
 # fekan
 A library to build and train Kolmogorov-Arnold neural networks.
 
