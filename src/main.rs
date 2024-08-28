@@ -344,12 +344,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                 // build the model
                 let untrained_model = Kan::new(&KanOptions {
-                    input_size: training_data[0].features().len() as usize,
+                    num_features: training_data[0].features().len() as usize,
                     layer_sizes: layers,
                     degree: classifier_args.params.degree,
                     coef_size: classifier_args.params.num_coefficients,
                     model_type: ModelType::Classification,
                     class_map: Some(classifier_args.classes),
+                    embedded_features: vec![],
+                    embedding_vocab_size: 0,
+                    embedding_dimension: 0,
                 });
                 let starting_training_loss = validate_model(&training_data, &untrained_model);
                 info!("Model loss at initialization: {}", starting_training_loss);
@@ -411,12 +414,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
                 // build the model
                 let untrained_model = Kan::new(&KanOptions {
-                    input_size: training_data[0].features().len() as usize,
+                    num_features: training_data[0].features().len() as usize,
                     layer_sizes: layers,
                     degree: regressor_args.params.degree,
                     coef_size: regressor_args.params.num_coefficients,
                     model_type: ModelType::Regression,
                     class_map: regressor_args.labels,
+                    embedded_features: vec![],
+                    embedding_vocab_size: 0,
+                    embedding_dimension: 0,
                 });
 
                 let training_options =

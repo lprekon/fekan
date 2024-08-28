@@ -5,6 +5,9 @@ use std::collections::VecDeque;
 use bitvec::vec::BitVec;
 use kan_error::KanError;
 use log::{debug, trace};
+use rand::distributions::Distribution;
+use rand::thread_rng;
+use statrs::distribution::Normal;
 
 use crate::kan_layer::{KanLayer, KanLayerOptions};
 
@@ -20,7 +23,7 @@ pub struct Kan {
     /// A list of trainable vectors that will substituted for class-valued inputs (as opposed to real-valued inputs)
     embedding_table: Vec<Vec<f64>>,
     /// Feature index that should be mapped with the embedding table have their bit set to one
-    feature_indexes_to_embed: BitVec,
+    embedded_features: BitVec,
     /// A map of class names to node indices. Only used if the model is a classification model or multi-output regression model.
     class_map: Option<Vec<String>>,
 }
@@ -33,7 +36,13 @@ pub struct Kan {
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct KanOptions {
     /// the number of input features the model should accept
-    pub input_size: usize,
+    pub num_features: usize,
+    /// the indexes of the features that should be embedded. These features will be replaced with a vector from the embedding table
+    pub embedded_features: Vec<usize>,
+    /// the size of the embedding table.
+    pub embedding_vocab_size: usize,
+    /// the width of the embedding vectors
+    pub embedding_dimension: usize,
     /// the sizes of the layers to use in the model, including the output layer
     pub layer_sizes: Vec<usize>,
     /// the degree of the b-splines to use in each layer
@@ -86,10 +95,26 @@ impl Kan {
     /// let mut model = Kan::new(&options);
     ///```
     pub fn new(options: &KanOptions) -> Self {
+        // build the embedding table
+        let mut embedded_features = BitVec::repeat(false, options.num_features);
+        for embedded_feature_idx in options.embedded_features.iter() {
+            embedded_features.set(*embedded_feature_idx, true);
+        }
+
+        let normal_distribution =
+            Normal::new(0.0, 0.001).expect("Unable to create normal distribution"); // Empirically best way to initialize the embedding table, per arXiv:1711.09160
+        let mut randomness = thread_rng();
+        let mut embedding_table = Vec::with_capacity(options.embedding_vocab_size);
+        for _ in 0..options.embedding_vocab_size {
+            let mut embedding_vector = Vec::with_capacity(options.embedding_dimension);
+            for _ in 0..options.embedding_dimension {
+                embedding_vector.push(normal_distribution.sample(&mut randomness));
+            }
+            embedding_table.push(embedding_vector);
+        }
+
         let mut layers = Vec::with_capacity(options.layer_sizes.len());
-        let mut feature_indexes_to_embed = BitVec::with_capacity(options.input_size);
-        feature_indexes_to_embed.set_uninitialized(false);
-        let mut prev_size = options.input_size;
+        let mut prev_size = options.num_features;
         for &size in options.layer_sizes.iter() {
             layers.push(KanLayer::new(&KanLayerOptions {
                 input_dimension: prev_size,
@@ -103,8 +128,8 @@ impl Kan {
             layers,
             model_type: options.model_type,
             class_map: options.class_map.clone(),
-            embedding_table: vec![vec![]],
-            feature_indexes_to_embed,
+            embedding_table,
+            embedded_features,
         }
     }
 
@@ -509,22 +534,29 @@ impl Kan {
         let layer_count = models[0].layers.len();
         let model_type = models[0].model_type;
         let class_map = models[0].class_map.clone();
-        let embedded_features = models[0].feature_indexes_to_embed.clone();
+        let embedded_features = models[0].embedded_features.clone();
         // average the embedding tables
-        let mut merged_embedding_table =
-            vec![vec![0.0; models[0].embedding_table[0].len()]; models[0].embedding_table.len()];
-        for model in models.iter() {
-            for (i, row) in model.embedding_table.iter().enumerate() {
-                for (j, val) in row.iter().enumerate() {
-                    merged_embedding_table[i][j] += val;
+        let merged_embedding_table = if models[0].embedding_table.is_empty() {
+            vec![]
+        } else {
+            let mut merged_table = vec![
+                vec![0.0; models[0].embedding_table[0].len()];
+                models[0].embedding_table.len()
+            ];
+            for model in models.iter() {
+                for (i, row) in model.embedding_table.iter().enumerate() {
+                    for (j, val) in row.iter().enumerate() {
+                        merged_table[i][j] += val;
+                    }
                 }
             }
-        }
-        for row in merged_embedding_table.iter_mut() {
-            for val in row.iter_mut() {
-                *val /= models.len() as f64;
+            for row in merged_table.iter_mut() {
+                for val in row.iter_mut() {
+                    *val /= models.len() as f64;
+                }
             }
-        }
+            merged_table
+        };
         // merge the layers
         let mut all_layers: Vec<VecDeque<KanLayer>> = models
             .into_iter()
@@ -551,7 +583,7 @@ impl Kan {
             model_type,
             class_map,
             embedding_table: merged_embedding_table,
-            feature_indexes_to_embed: embedded_features,
+            embedded_features,
         };
         Ok(merged_model)
     }
@@ -578,9 +610,13 @@ impl Kan {
         let expected_model_type = models[0].model_type;
         let expected_class_map = models[0].class_map.clone();
         let expected_layer_count = models[0].layers.len();
-        let expecteed_embedding_table_width = models[0].embedding_table.len();
-        let expected_embedding_table_depth = models[0].embedding_table[0].len();
-        let expected_feature_indexes_to_embed = models[0].feature_indexes_to_embed.clone();
+        let expecteed_vocab_size = models[0].embedding_table.len();
+        let expected_embedding_table_dim = if expecteed_vocab_size > 0 {
+            models[0].embedding_table[0].len()
+        } else {
+            0
+        };
+        let expected_feature_indexes_to_embed = models[0].embedded_features.clone();
         for idx in 1..models.len() {
             if models[idx].model_type != expected_model_type {
                 return Err(KanError::merge_mismatched_model_type(
@@ -603,25 +639,27 @@ impl Kan {
                     models[idx].layers.len(),
                 ));
             }
-            if models[idx].embedding_table.len() != expecteed_embedding_table_width {
+            if models[idx].embedding_table.len() != expecteed_vocab_size {
                 return Err(KanError::merge_mismatched_embedding_table_width(
                     idx,
-                    expecteed_embedding_table_width,
+                    expecteed_vocab_size,
                     models[idx].embedding_table.len(),
                 ));
             }
-            if models[idx].embedding_table[0].len() != expected_embedding_table_depth {
+            if expecteed_vocab_size > 0
+                && models[idx].embedding_table[0].len() != expected_embedding_table_dim
+            {
                 return Err(KanError::merge_mismatched_embedding_table_depth(
                     idx,
-                    expected_embedding_table_depth,
+                    expected_embedding_table_dim,
                     models[idx].embedding_table[0].len(),
                 ));
             }
-            if models[idx].feature_indexes_to_embed != expected_feature_indexes_to_embed {
+            if models[idx].embedded_features != expected_feature_indexes_to_embed {
                 return Err(KanError::merge_mismatched_embedded_features(
                     idx,
                     expected_feature_indexes_to_embed.clone(),
-                    models[idx].feature_indexes_to_embed.clone(),
+                    models[idx].embedded_features.clone(),
                 ));
             }
         }
@@ -666,12 +704,15 @@ mod test {
     #[test]
     fn test_forward() {
         let kan_config = KanOptions {
-            input_size: 3,
+            num_features: 3,
             layer_sizes: vec![4, 2, 3],
             degree: 3,
             coef_size: 4,
             model_type: ModelType::Classification,
             class_map: None,
+            embedded_features: vec![],
+            embedding_vocab_size: 0,
+            embedding_dimension: 0,
         };
         let mut first_kan = Kan::new(&kan_config);
         let second_kan_config = KanOptions {
@@ -691,12 +732,15 @@ mod test {
     #[test]
     fn test_forward_then_backward() {
         let options = &KanOptions {
-            input_size: 5,
+            num_features: 5,
             layer_sizes: vec![4, 2, 3],
             degree: 3,
             coef_size: 4,
             model_type: ModelType::Classification,
             class_map: None,
+            embedded_features: vec![],
+            embedding_vocab_size: 0,
+            embedding_dimension: 0,
         };
         let mut first_kan = Kan::new(options);
         let input = vec![vec![0.5, 0.4, 0.5, 0.5, 0.4]];
@@ -706,18 +750,21 @@ mod test {
         let error = vec![vec![0.5, 0.4, 0.5]];
         let result: Vec<Vec<f64>> = first_kan.backward(error).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].len(), options.input_size);
+        assert_eq!(result[0].len(), options.num_features);
     }
 
     #[test]
     fn test_merge_identical_models_yields_identical_output() {
         let kan_config = KanOptions {
-            input_size: 3,
+            num_features: 3,
             layer_sizes: vec![4, 2, 3],
             degree: 3,
             coef_size: 4,
             model_type: ModelType::Classification,
             class_map: None,
+            embedded_features: vec![],
+            embedding_vocab_size: 0,
+            embedding_dimension: 0,
         };
         let first_kan = Kan::new(&kan_config);
         let second_kan = first_kan.clone();
@@ -728,6 +775,25 @@ mod test {
         let merged_kan = Kan::merge_models(vec![first_kan, second_kan]).unwrap();
         let merged_result = merged_kan.infer(input).unwrap();
         assert_eq!(first_result, merged_result);
+    }
+
+    #[test]
+    fn test_build_embedding_table() {
+        let kan_config = KanOptions {
+            num_features: 3,
+            layer_sizes: vec![4, 2, 3],
+            degree: 3,
+            coef_size: 4,
+            model_type: ModelType::Classification,
+            class_map: None,
+            embedded_features: vec![],
+            embedding_vocab_size: 2,
+            embedding_dimension: 3,
+        };
+        let kan = Kan::new(&kan_config);
+        assert_eq!(kan.embedding_table.len(), 2);
+        assert_eq!(kan.embedding_table[0].len(), 3);
+        assert!(kan.embedded_features.not_any());
     }
 
     #[test]

@@ -35,12 +35,15 @@ mod classification {
             .collect::<Vec<Sample>>();
 
         let mut untrained_model = Kan::new(&KanOptions {
-            input_size: 3,
+            num_features: 3,
             layer_sizes: vec![3, 2],
             degree: 3,
             coef_size: 4,
             model_type: ModelType::Classification,
             class_map: None,
+            embedded_features: vec![],
+            embedding_vocab_size: 0,
+            embedding_dimension: 0,
         });
 
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
@@ -97,12 +100,15 @@ mod regression {
             validation_data.push(Sample::new(vec![x, y], x * y));
         }
         let mut untrained_model = Kan::new(&KanOptions {
-            input_size: 2,
+            num_features: 2,
             layer_sizes: vec![3, 2, 1],
             degree: 3,
             coef_size: 4,
             model_type: ModelType::Regression,
             class_map: None,
+            embedded_features: vec![],
+            embedding_vocab_size: 0,
+            embedding_dimension: 0,
         });
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
         let training_result = train_model(
@@ -151,12 +157,15 @@ mod regression {
             })
             .collect::<Vec<Sample>>();
         let mut untrained_model = Kan::new(&KanOptions {
-            input_size: 2,
+            num_features: 2,
             layer_sizes: vec![5, 1],
             degree: 3,
             coef_size: 10,
             model_type: ModelType::Regression,
             class_map: None,
+            embedded_features: vec![],
+            embedding_vocab_size: 0,
+            embedding_dimension: 0,
         });
 
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
@@ -218,12 +227,15 @@ mod regression {
             })
             .collect::<Vec<Sample>>();
         let mut untrained_model = Kan::new(&KanOptions {
-            input_size: 2,
+            num_features: 2,
             layer_sizes: vec![1],
             degree: 3,
             coef_size: 10,
             model_type: ModelType::Regression,
             class_map: None,
+            embedded_features: vec![],
+            embedding_vocab_size: 0,
+            embedding_dimension: 0,
         });
 
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
@@ -279,12 +291,15 @@ mod regression {
                 })
                 .collect::<Vec<Sample>>();
             let mut untrained_model = Kan::new(&KanOptions {
-                input_size: 1,
+                num_features: 1,
                 layer_sizes: vec![1],
                 degree: 3,
                 coef_size: 10,
                 model_type: ModelType::Regression,
                 class_map: None,
+                embedded_features: vec![],
+                embedding_vocab_size: 0,
+                embedding_dimension: 0,
             });
             // if log::log_enabled!(log::Level::Trace) {
             //     let mut training_samples = training_data.clone();
@@ -365,12 +380,15 @@ mod regression {
                 })
                 .collect::<Vec<Sample>>();
             let mut untrained_model = Kan::new(&KanOptions {
-                input_size: 1,
+                num_features: 1,
                 layer_sizes: vec![1],
                 degree: 3,
                 coef_size: 10,
                 model_type: ModelType::Regression,
                 class_map: None,
+                embedded_features: vec![],
+                embedding_vocab_size: 0,
+                embedding_dimension: 0,
             });
             // if log::log_enabled!(log::Level::Trace) {
             //     let mut training_samples = training_data.clone();
@@ -451,12 +469,15 @@ mod regression {
                 })
                 .collect::<Vec<Sample>>();
             let mut untrained_model = Kan::new(&KanOptions {
-                input_size: 1,
+                num_features: 1,
                 layer_sizes: vec![1],
                 degree: 3,
                 coef_size: 10,
                 model_type: ModelType::Regression,
                 class_map: None,
+                embedded_features: vec![],
+                embedding_vocab_size: 0,
+                embedding_dimension: 0,
             });
             // if log::log_enabled!(log::Level::Trace) {
             //     let mut training_samples = training_data.clone();
