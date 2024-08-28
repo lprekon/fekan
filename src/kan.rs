@@ -26,6 +26,14 @@ pub struct Kan {
     embedded_features: BitVec,
     /// A map of class names to node indices. Only used if the model is a classification model or multi-output regression model.
     class_map: Option<Vec<String>>,
+    /// The gradients of the embedding table
+    #[serde(skip)]
+    // part of the operating state of the model, but not part of the model's metadata
+    pub(crate) embedding_gradient: Vec<Vec<f64>>,
+    /// the input values from the most recent forward pass. Used to update the embedding gradients during the backward pass
+    #[serde(skip)]
+    // part of the operating state of the model, but not part of the model's metadata
+    last_input: Vec<Vec<f64>>,
 }
 
 /// Hyperparameters for a Kan model
@@ -105,16 +113,28 @@ impl Kan {
             Normal::new(0.0, 0.001).expect("Unable to create normal distribution"); // Empirically best way to initialize the embedding table, per arXiv:1711.09160
         let mut randomness = thread_rng();
         let mut embedding_table = Vec::with_capacity(options.embedding_vocab_size);
-        for _ in 0..options.embedding_vocab_size {
-            let mut embedding_vector = Vec::with_capacity(options.embedding_dimension);
-            for _ in 0..options.embedding_dimension {
-                embedding_vector.push(normal_distribution.sample(&mut randomness));
+        if options.embedding_vocab_size == 0 {
+            embedding_table.push(vec![]); // having an empty but fully initialized embedding table avoids a bunch of out of bound accesses while still being logically correct
+        } else {
+            for _ in 0..options.embedding_vocab_size {
+                let mut embedding_vector = Vec::with_capacity(options.embedding_dimension);
+                for _ in 0..options.embedding_dimension {
+                    embedding_vector.push(normal_distribution.sample(&mut randomness));
+                }
+                embedding_table.push(embedding_vector);
             }
-            embedding_table.push(embedding_vector);
         }
+        let embedding_gradient =
+            vec![vec![0.0; options.embedding_dimension]; options.embedding_vocab_size];
 
         let mut layers = Vec::with_capacity(options.layer_sizes.len());
-        let mut prev_size = options.num_features;
+        let true_input_size = options.num_features
+            + if options.embedding_dimension > 0 {
+                (options.embedding_dimension - 1) * embedded_features.count_ones() as usize
+            } else {
+                0
+            };
+        let mut prev_size = true_input_size;
         for &size in options.layer_sizes.iter() {
             layers.push(KanLayer::new(&KanLayerOptions {
                 input_dimension: prev_size,
@@ -129,7 +149,9 @@ impl Kan {
             model_type: options.model_type,
             class_map: options.class_map.clone(),
             embedding_table,
+            embedding_gradient,
             embedded_features,
+            last_input: vec![],
         }
     }
 
@@ -285,6 +307,7 @@ impl Kan {
     /// ```
     pub fn forward(&mut self, input: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, KanError> {
         debug!("Forwarding {} samples through model", input.len());
+        self.last_input.extend(input.iter().cloned()); // store the input for the backward pass
         let mut preacts = self.expand_input_with_embeddings(input);
         trace!("Preactivations: {:?}", preacts);
         for (idx, layer) in self.layers.iter_mut().enumerate() {
@@ -338,7 +361,10 @@ impl Kan {
     pub fn expand_input_with_embeddings(&self, input: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
         let mut expanded_input = Vec::with_capacity(input.len());
         for sample in input.iter() {
-            let mut expanded_sample = Vec::with_capacity(sample.len());
+            let mut expanded_sample = Vec::with_capacity(
+                sample.len()
+                    + self.embedded_features.count_ones() as usize * self.embedding_table[0].len(),
+            );
             for (i, val) in sample.iter().enumerate() {
                 if self.embedded_features[i] {
                     assert_eq!(
@@ -405,6 +431,28 @@ impl Kan {
                 .backward(&gradients)
                 .map_err(|e| KanError::backward(e, idx))?;
         }
+        //figure out which gradient values correspond to embedded inputs, and accumulate them in the embedding gradient
+        assert_eq!(gradients.len(), self.last_input.len(), "Sorry - for now, please don't call Kan::forward() more than once before clearing state. We have {} input samples and {} gradients", self.last_input.len(), gradients.len());
+        for (input_vector, gradient_vector) in self.last_input.iter().zip(gradients.iter()) {
+            assert!(gradient_vector.len() >= input_vector.len(), "Gradient vector is too short for input vector. Input vector: {:?}, Gradient vector: {:?}", input_vector, gradient_vector);
+            let mut gradient_idx = 0;
+            for input_idx in 0..input_vector.len() {
+                if self.embedded_features[input_idx] {
+                    // this is an embedded feature
+                    let vocab_idx = input_vector[input_idx] as usize;
+                    // add the next `embedding_dimension` values from the gradient vector to the embedding gradient for the embedding vector at `vocab_idx`
+                    for dim_idx in 0..self.embedding_table[0].len() {
+                        self.embedding_gradient[vocab_idx][dim_idx] +=
+                            gradient_vector[gradient_idx];
+                        gradient_idx += 1;
+                    }
+                } else {
+                    // not an embedded feature. Advance the gradient index to keep up with the input index and carry on
+                    gradient_idx += 1;
+                }
+            }
+        }
+
         Ok(gradients)
     }
 
@@ -439,6 +487,15 @@ impl Kan {
         for layer in self.layers.iter_mut() {
             layer.update(learning_rate, l1_penalty, entropy_penalty);
         }
+        for (vocab_row, gradient_row) in self
+            .embedding_table
+            .iter_mut()
+            .zip(self.embedding_gradient.iter())
+        {
+            for (vocab_val, gradient_val) in vocab_row.iter_mut().zip(gradient_row.iter()) {
+                *vocab_val -= learning_rate * gradient_val;
+            }
+        }
     }
 
     /// Zero the internal gradients of the model's parameters
@@ -447,6 +504,11 @@ impl Kan {
     pub fn zero_gradients(&mut self) {
         for layer in self.layers.iter_mut() {
             layer.zero_gradients();
+        }
+        for row in self.embedding_gradient.iter_mut() {
+            for val in row.iter_mut() {
+                *val = 0.0;
+            }
         }
     }
 
@@ -489,6 +551,7 @@ impl Kan {
     /// see [`KanLayer::clear_samples`] for more information
     pub fn clear_samples(&mut self) {
         debug!("Clearing samples from model");
+        self.last_input.clear();
         for layer_idx in 0..self.layers.len() {
             debug!("Clearing samples from layer {}", layer_idx);
             self.layers[layer_idx].clear_samples();
@@ -556,6 +619,11 @@ impl Kan {
         let model_type = models[0].model_type;
         let class_map = models[0].class_map.clone();
         let embedded_features = models[0].embedded_features.clone();
+        let embedding_gradient = if models[0].embedding_table.is_empty() {
+            vec![]
+        } else {
+            vec![vec![0.0; models[0].embedding_table[0].len()]; models[0].embedding_table.len()]
+        };
         // average the embedding tables
         let merged_embedding_table = if models[0].embedding_table.is_empty() {
             vec![]
@@ -604,7 +672,9 @@ impl Kan {
             model_type,
             class_map,
             embedding_table: merged_embedding_table,
+            embedding_gradient,
             embedded_features,
+            last_input: vec![],
         };
         Ok(merged_model)
     }
