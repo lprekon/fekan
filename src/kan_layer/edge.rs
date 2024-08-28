@@ -16,7 +16,7 @@ use log::{debug, trace};
 use nalgebra::{DMatrix, DVector, SVD};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, slice::Iter, thread, vec};
+use std::{collections::VecDeque, fmt, slice::Iter, thread, vec};
 use strum::{EnumIter, IntoEnumIterator};
 
 pub(crate) mod edge_errors;
@@ -32,7 +32,7 @@ pub(crate) struct Edge {
     l1_norm: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 enum EdgeType {
     Spline {
         // degree, control points, and knots are the parameters of the spline
@@ -61,6 +61,41 @@ enum EdgeType {
         function: SymbolicFunction,
     },
     Pruned,
+}
+
+impl fmt::Debug for EdgeType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EdgeType::Spline {
+                degree,
+                control_points,
+                knots,
+                ..
+            } => f
+                .debug_struct("Spline")
+                .field("degree", degree)
+                .field("control_points", control_points)
+                .field("knots", knots)
+                .finish(),
+            EdgeType::Symbolic {
+                a,
+                b,
+                c,
+                d,
+                function,
+            } => f
+                .debug_struct("Symbolic Function")
+                .field("function", function)
+                .field("a", a)
+                .field("b", b)
+                .field("c", c)
+                .field("d", d)
+                .finish(),
+            EdgeType::Pruned => {
+                write!(f, "Pruned")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
