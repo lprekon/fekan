@@ -2,6 +2,7 @@ pub mod kan_error;
 
 use std::collections::VecDeque;
 
+use bitvec::vec::BitVec;
 use kan_error::KanError;
 use log::{debug, trace};
 
@@ -16,6 +17,10 @@ pub struct Kan {
     pub layers: Vec<KanLayer>,
     /// the type of model. This field is metadata and does not affect the operation of the model, though it is used elsewhere in the crate. See [`fekan::train_model()`](crate::train_model) for an example
     model_type: ModelType, // determined how the output is interpreted, and what the loss function ought to be
+    /// A list of trainable vectors that will substituted for class-valued inputs (as opposed to real-valued inputs)
+    embedding_table: Vec<Vec<f64>>,
+    /// Feature index that should be mapped with the embedding table have their bit set to one
+    feature_indexes_to_embed: BitVec,
     /// A map of class names to node indices. Only used if the model is a classification model or multi-output regression model.
     class_map: Option<Vec<String>>,
 }
@@ -82,6 +87,8 @@ impl Kan {
     ///```
     pub fn new(options: &KanOptions) -> Self {
         let mut layers = Vec::with_capacity(options.layer_sizes.len());
+        let mut feature_indexes_to_embed = BitVec::with_capacity(options.input_size);
+        feature_indexes_to_embed.set_uninitialized(false);
         let mut prev_size = options.input_size;
         for &size in options.layer_sizes.iter() {
             layers.push(KanLayer::new(&KanLayerOptions {
@@ -96,6 +103,8 @@ impl Kan {
             layers,
             model_type: options.model_type,
             class_map: options.class_map.clone(),
+            embedding_table: vec![vec![]],
+            feature_indexes_to_embed,
         }
     }
 
@@ -500,6 +509,23 @@ impl Kan {
         let layer_count = models[0].layers.len();
         let model_type = models[0].model_type;
         let class_map = models[0].class_map.clone();
+        let embedded_features = models[0].feature_indexes_to_embed.clone();
+        // average the embedding tables
+        let mut merged_embedding_table =
+            vec![vec![0.0; models[0].embedding_table[0].len()]; models[0].embedding_table.len()];
+        for model in models.iter() {
+            for (i, row) in model.embedding_table.iter().enumerate() {
+                for (j, val) in row.iter().enumerate() {
+                    merged_embedding_table[i][j] += val;
+                }
+            }
+        }
+        for row in merged_embedding_table.iter_mut() {
+            for val in row.iter_mut() {
+                *val /= models.len() as f64;
+            }
+        }
+        // merge the layers
         let mut all_layers: Vec<VecDeque<KanLayer>> = models
             .into_iter()
             .map(|model| model.layers.into())
@@ -524,6 +550,8 @@ impl Kan {
             layers: merged_layers,
             model_type,
             class_map,
+            embedding_table: merged_embedding_table,
+            feature_indexes_to_embed: embedded_features,
         };
         Ok(merged_model)
     }
@@ -550,6 +578,9 @@ impl Kan {
         let expected_model_type = models[0].model_type;
         let expected_class_map = models[0].class_map.clone();
         let expected_layer_count = models[0].layers.len();
+        let expecteed_embedding_table_width = models[0].embedding_table.len();
+        let expected_embedding_table_depth = models[0].embedding_table[0].len();
+        let expected_feature_indexes_to_embed = models[0].feature_indexes_to_embed.clone();
         for idx in 1..models.len() {
             if models[idx].model_type != expected_model_type {
                 return Err(KanError::merge_mismatched_model_type(
@@ -570,6 +601,27 @@ impl Kan {
                     idx,
                     expected_layer_count,
                     models[idx].layers.len(),
+                ));
+            }
+            if models[idx].embedding_table.len() != expecteed_embedding_table_width {
+                return Err(KanError::merge_mismatched_embedding_table_width(
+                    idx,
+                    expecteed_embedding_table_width,
+                    models[idx].embedding_table.len(),
+                ));
+            }
+            if models[idx].embedding_table[0].len() != expected_embedding_table_depth {
+                return Err(KanError::merge_mismatched_embedding_table_depth(
+                    idx,
+                    expected_embedding_table_depth,
+                    models[idx].embedding_table[0].len(),
+                ));
+            }
+            if models[idx].feature_indexes_to_embed != expected_feature_indexes_to_embed {
+                return Err(KanError::merge_mismatched_embedded_features(
+                    idx,
+                    expected_feature_indexes_to_embed.clone(),
+                    models[idx].feature_indexes_to_embed.clone(),
                 ));
             }
         }

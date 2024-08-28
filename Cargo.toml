@@ -11,6 +11,7 @@ categories = ["science", "mathematics"]
 
 [dependencies]
 apache-avro = { version = "0.16.0", optional = true }
+bitvec = { version = "1.0.1", features = ["serde"] }
 chrono = "0.4.38"
 ciborium = { version = "0.2.2", optional = true }
 clap = { version = "4.5.6", features = ["derive"] }

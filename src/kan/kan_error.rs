@@ -1,4 +1,6 @@
 //! Error types relating to the creation and manipulation of [`Kan`](crate::kan::Kan)s
+use bitvec::vec::BitVec;
+
 use crate::kan_layer::kan_layer_errors::KanLayerError;
 
 use super::ModelType;
@@ -37,6 +39,21 @@ enum KanErrorType {
         actual: usize,
     },
     MergeUnmergableLayers,
+    MergeMismatchedEmbeddingTableWidth {
+        pos: usize,
+        expected: usize,
+        actual: usize,
+    },
+    MergeMistmatchedEmbeddingTableDepth {
+        pos: usize,
+        expected: usize,
+        actual: usize,
+    },
+    MergeMismatchedEmbeddedFeatures {
+        pos: usize,
+        expected: BitVec,
+        actual: BitVec,
+    },
 }
 
 impl KanError {
@@ -131,6 +148,54 @@ impl KanError {
             layer_index: None,
         }
     }
+
+    pub(crate) fn merge_mismatched_embedding_table_width(
+        pos: usize,
+        expected: usize,
+        actual: usize,
+    ) -> Self {
+        Self {
+            error_kind: KanErrorType::MergeMismatchedEmbeddingTableWidth {
+                pos,
+                expected,
+                actual,
+            },
+            source: None,
+            layer_index: None,
+        }
+    }
+
+    pub(crate) fn merge_mismatched_embedding_table_depth(
+        pos: usize,
+        expected: usize,
+        actual: usize,
+    ) -> Self {
+        Self {
+            error_kind: KanErrorType::MergeMistmatchedEmbeddingTableDepth {
+                pos,
+                expected,
+                actual,
+            },
+            source: None,
+            layer_index: None,
+        }
+    }
+
+    pub(crate) fn merge_mismatched_embedded_features(
+        pos: usize,
+        expected: BitVec,
+        actual: BitVec,
+    ) -> Self {
+        Self {
+            error_kind: KanErrorType::MergeMismatchedEmbeddedFeatures {
+                pos,
+                expected,
+                actual,
+            },
+            source: None,
+            layer_index: None,
+        }
+    }
 }
 
 impl std::fmt::Display for KanError {
@@ -209,6 +274,39 @@ impl std::fmt::Display for KanError {
                     self.source
                         .as_ref()
                         .expect("MergeUnmergableLayers error must have a source layer error")
+                )
+            }
+            KanErrorType::MergeMismatchedEmbeddingTableWidth {
+                pos,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "while merging models, model {} had a different embedding table width than the first model. Expected {}, got {}",
+                    pos, expected, actual
+                )
+            }
+            KanErrorType::MergeMistmatchedEmbeddingTableDepth {
+                pos,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "while merging models, model {} had a different embedding table depth than the first model. Expected {}, got {}",
+                    pos, expected, actual
+                )
+            }
+            KanErrorType::MergeMismatchedEmbeddedFeatures {
+                pos,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "while merging models, model {} had different embedded features than the first model. Expected {:?}, got {:?}",
+                    pos, expected, actual
                 )
             }
         }
