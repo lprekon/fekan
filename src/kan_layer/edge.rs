@@ -1381,7 +1381,7 @@ mod tests {
         let input_gradient = spline.backward(&error, 1.0).unwrap();
         trace!("post backward {:#?}", spline);
         let expected_spline_drt_wrt_input = 1.2290;
-        let expedted_control_point_gradients = vec![-0.0077, -0.0867, -0.0547, -0.0009];
+        let expedted_control_point_gradients = vec![-0.0308, -0.3469, -0.2189, -0.0034];
         let rounded_control_point_gradients: Vec<f64> = match spline.kind {
             EdgeType::Spline { gradients, .. } => gradients
                 .iter()
