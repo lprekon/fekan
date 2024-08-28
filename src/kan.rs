@@ -285,7 +285,7 @@ impl Kan {
     /// ```
     pub fn forward(&mut self, input: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, KanError> {
         debug!("Forwarding {} samples through model", input.len());
-        let mut preacts = input;
+        let mut preacts = self.expand_input_with_embeddings(input);
         trace!("Preactivations: {:?}", preacts);
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             debug!("Forwarding through layer {}", idx);
@@ -326,13 +326,34 @@ impl Kan {
     /// # Example
     /// see [`Kan::forward`] for an example
     pub fn infer(&self, input: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, KanError> {
-        let mut preacts = input;
+        let mut preacts = self.expand_input_with_embeddings(input);
         for (idx, layer) in self.layers.iter().enumerate() {
             preacts = layer
                 .infer(&preacts)
                 .map_err(|e| KanError::forward(e, idx))?;
         }
         Ok(preacts)
+    }
+
+    pub fn expand_input_with_embeddings(&self, input: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
+        let mut expanded_input = Vec::with_capacity(input.len());
+        for sample in input.iter() {
+            let mut expanded_sample = Vec::with_capacity(sample.len());
+            for (i, val) in sample.iter().enumerate() {
+                if self.embedded_features[i] {
+                    assert_eq!(
+                        *val as usize as f64, *val,
+                        "Embedded feature must be an integer. Idx: {}, Val: {}",
+                        i, val
+                    );
+                    expanded_sample.extend(self.embedding_table[*val as usize].iter());
+                } else {
+                    expanded_sample.push(*val);
+                }
+            }
+            expanded_input.push(expanded_sample);
+        }
+        expanded_input
     }
 
     /// Back-propogate the gradient through the model, internally accumulating the gradients of the model's parameters, to be applied later with [`Kan::update`]
@@ -794,6 +815,33 @@ mod test {
         assert_eq!(kan.embedding_table.len(), 2);
         assert_eq!(kan.embedding_table[0].len(), 3);
         assert!(kan.embedded_features.not_any());
+    }
+
+    #[test]
+    fn test_embedding_forward_and_backward() {
+        let kan_config = KanOptions {
+            num_features: 3,
+            layer_sizes: vec![],
+            degree: 3,
+            coef_size: 4,
+            model_type: ModelType::Regression,
+            class_map: None,
+            embedded_features: vec![1],
+            embedding_vocab_size: 1,
+            embedding_dimension: 3,
+        };
+        let mut kan = Kan::new(&kan_config);
+        let input = vec![vec![0.5, 0.0, 0.5]];
+        let result = kan.forward(input).unwrap()[0].clone();
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0], 0.5);
+        assert_eq!(result[4], 0.5);
+        let embedding = kan.embedding_table[0].clone();
+        let error = vec![vec![0.0, 0.4, 0.5, 0.5, 0.0]];
+        let result = kan.backward(error).unwrap();
+        assert_eq!(result.len(), 1);
+        kan.update(0.1, 0.0, 0.0);
+        assert_ne!(kan.embedding_table[0], embedding);
     }
 
     #[test]
