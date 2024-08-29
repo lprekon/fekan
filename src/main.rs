@@ -105,12 +105,11 @@ struct GenericBuildParams {
         long,
         global = true,
         value_delimiter = ',',
-        default_value = "",
         requires = "embedding_vocab_size",
         requires = "embedding_dimension"
     )]
     /// a comma-separated list of feature indexes which should be treated as categorical features. The model will use these features to index into an embedding layer, rather than treating them as continuous values
-    embedded_features: Vec<usize>,
+    embedded_features: Option<Vec<usize>>,
 
     #[arg(
         long,
@@ -382,7 +381,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     coef_size: classifier_args.params.num_coefficients,
                     model_type: ModelType::Classification,
                     class_map: Some(classifier_args.classes),
-                    embedded_features: classifier_args.params.embedded_features,
+                    embedded_features: classifier_args.params.embedded_features.unwrap_or(vec![]),
                     embedding_vocab_size: classifier_args.params.embedding_vocab_size,
                     embedding_dimension: classifier_args.params.embedding_dimension,
                 });
@@ -452,7 +451,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     coef_size: regressor_args.params.num_coefficients,
                     model_type: ModelType::Regression,
                     class_map: regressor_args.labels,
-                    embedded_features: regressor_args.params.embedded_features,
+                    embedded_features: regressor_args.params.embedded_features.unwrap_or(vec![]),
                     embedding_vocab_size: regressor_args.params.embedding_vocab_size,
                     embedding_dimension: regressor_args.params.embedding_dimension,
                 });
