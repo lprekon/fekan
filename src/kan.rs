@@ -919,6 +919,25 @@ mod test {
     }
 
     #[test]
+    #[should_panic]
+    fn test_embed_float() {
+        let kan_config = KanOptions {
+            num_features: 3,
+            layer_sizes: vec![],
+            degree: 3,
+            coef_size: 4,
+            model_type: ModelType::Regression,
+            class_map: None,
+            embedded_features: vec![1],
+            embedding_vocab_size: 1,
+            embedding_dimension: 3,
+        };
+        let mut kan = Kan::new(&kan_config);
+        let input = vec![vec![0.5, 0.5, 0.5]];
+        let _ = kan.forward(input);
+    }
+
+    #[test]
     fn test_model_send() {
         fn assert_send<T: Send>() {}
         assert_send::<Kan>();
