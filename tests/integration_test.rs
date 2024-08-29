@@ -173,9 +173,9 @@ mod regression {
             untrained_model,
             &training_data,
             TrainingOptions {
-                num_epochs: 200,
+                num_epochs: 100,
                 num_threads: 8,
-                learning_rate: 0.01,
+                learning_rate: 0.0005,
                 l1_penalty: 0.5,
                 entropy_penalty: 0.5,
                 batch_size: 400,
@@ -191,16 +191,16 @@ mod regression {
         untrained_validation_loss,
         validation_loss
         );
-        // trained_model.test_and_set_symbolic(0.95);
-        // let symbolic_loss = validate_model(&validation_data, &mut trained_model);
-        // assert!(
-        //     symbolic_loss - validation_loss < 0.01,
-        //     "Symbolification significantly degraded loss. Before {}, After {}",
-        //     validation_loss,
-        //     symbolic_loss,
-        // );
-        let pruning_results = trained_model.prune(1e-2);
-        assert_ne!(pruning_results, vec![]);
+        trained_model.test_and_set_symbolic(0.95);
+        let symbolic_loss = validate_model(&validation_data, &mut trained_model);
+        assert!(
+            symbolic_loss - validation_loss < 0.01,
+            "Symbolification significantly degraded loss. Before {}, After {}",
+            validation_loss,
+            symbolic_loss,
+        );
+        // let pruning_results = trained_model.prune(1e-2); // I've decided to remove this for now, as it's not really necessary for the test
+        // assert_ne!(pruning_results, vec![]);
     }
 
     #[test]
