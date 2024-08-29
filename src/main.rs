@@ -100,6 +100,38 @@ struct GenericBuildParams {
     #[arg(long, alias = "hl", global = true, value_delimiter = ',')]
     /// a comma-separated list of hidden layer sizes. If empty, the model will only have the output layer
     hidden_layer_sizes: Option<Vec<usize>>,
+
+    #[arg(
+        long,
+        global = true,
+        value_delimiter = ',',
+        default_value = "",
+        requires = "embedding_vocab_size",
+        requires = "embedding_dimension"
+    )]
+    /// a comma-separated list of feature indexes which should be treated as categorical features. The model will use these features to index into an embedding layer, rather than treating them as continuous values
+    embedded_features: Vec<usize>,
+
+    #[arg(
+        long,
+        global = true,
+        default_value = "0",
+        requires = "embedded_features",
+        requires = "embedding_dimension"
+    )]
+    /// the size of the vocabulary for the embedding layer. If 0, the model will not use an embedding layer
+    embedding_vocab_size: usize,
+
+    #[arg(
+        long,
+        global = true,
+        default_value = "0",
+        requires = "embedded_features",
+        requires = "embedding_vocab_size"
+    )]
+    /// the dimension of the embedding layer. If 0, the model will not use an embedding layer
+    embedding_dimension: usize,
+
     // #[command(flatten)]
     #[command(flatten)]
     training_parameters: TrainArgs,
@@ -350,9 +382,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     coef_size: classifier_args.params.num_coefficients,
                     model_type: ModelType::Classification,
                     class_map: Some(classifier_args.classes),
-                    embedded_features: vec![],
-                    embedding_vocab_size: 0,
-                    embedding_dimension: 0,
+                    embedded_features: classifier_args.params.embedded_features,
+                    embedding_vocab_size: classifier_args.params.embedding_vocab_size,
+                    embedding_dimension: classifier_args.params.embedding_dimension,
                 });
                 let starting_training_loss = validate_model(&training_data, &untrained_model);
                 info!("Model loss at initialization: {}", starting_training_loss);
@@ -420,9 +452,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     coef_size: regressor_args.params.num_coefficients,
                     model_type: ModelType::Regression,
                     class_map: regressor_args.labels,
-                    embedded_features: vec![],
-                    embedding_vocab_size: 0,
-                    embedding_dimension: 0,
+                    embedded_features: regressor_args.params.embedded_features,
+                    embedding_vocab_size: regressor_args.params.embedding_vocab_size,
+                    embedding_dimension: regressor_args.params.embedding_dimension,
                 });
 
                 let training_options =
