@@ -9,6 +9,7 @@ use rand::{thread_rng, Rng};
 
 mod classification {
     use super::*;
+    use log::info;
     use test_log::test;
     /// Build a model and train it on the function f(x, y, z) = x + y + z > 0. Tests that the trained validation loss is less than the untrained validation loss
     #[test]
@@ -77,6 +78,59 @@ mod classification {
         //     validation_loss,
         //     symbolic_loss,
         // );
+    }
+
+    #[test]
+    fn even_or_odd() {
+        let function_domain = 0..10;
+        fn true_function(x: f64) -> f64 {
+            (x % 2.0).round()
+        }
+        let training_data: Vec<Sample> = function_domain
+            .clone()
+            .map(|x| Sample::new(vec![x as f64], true_function(x as f64)))
+            .collect();
+        let untrained_model = Kan::new(&KanOptions {
+            num_features: 1,
+            layer_sizes: vec![2],
+            degree: 3,
+            coef_size: 10,
+            model_type: ModelType::Classification,
+            class_map: None,
+            embedded_features: vec![0],
+            embedding_vocab_size: 10,
+            embedding_dimension: 2,
+        });
+        info!(
+            "Initial embedding table: {:#?}",
+            untrained_model.embedding_table()
+        );
+        let initialization_loss = validate_model(&training_data, &untrained_model);
+        let trained_model = train_model(
+            untrained_model,
+            &training_data,
+            TrainingOptions {
+                num_epochs: 1000,
+                num_threads: 8,
+                learning_rate: 0.1,
+                l1_penalty: 0.0,
+                entropy_penalty: 0.0,
+                each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,
+                ..TrainingOptions::default()
+            },
+        )
+        .unwrap();
+        info!(
+            "Trained embedding table: {:#?}",
+            trained_model.embedding_table()
+        );
+        let trained_loss = validate_model(&training_data, &trained_model);
+        assert!(
+            trained_loss < initialization_loss,
+            "Training did not improve loss. Before {}, After {}",
+            initialization_loss,
+            trained_loss
+        );
     }
 }
 mod regression {

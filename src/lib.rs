@@ -344,6 +344,7 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
     
     for set_layer in 0..model.layers.len() {
         let mut features = preset_data.iter().map(|s| s.features.clone()).collect::<Vec<Vec<f64>>>();
+        features = model.expand_input_with_embeddings(features);
             for forward_layer in 0..=set_layer {
                 debug!("forwarding through layer {}", forward_layer);
                 features = model.layers[forward_layer].forward(features).map_err(|e| TrainingError {

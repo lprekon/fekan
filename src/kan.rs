@@ -308,8 +308,8 @@ impl Kan {
     pub fn forward(&mut self, input: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, KanError> {
         debug!("Forwarding {} samples through model", input.len());
         self.last_input.extend(input.iter().cloned()); // store the input for the backward pass
+        trace!("Preactivations: {:?}", input);
         let mut preacts = self.expand_input_with_embeddings(input);
-        trace!("Preactivations: {:?}", preacts);
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             debug!("Forwarding through layer {}", idx);
             preacts = layer
@@ -779,6 +779,10 @@ impl Kan {
             pruned_edges.extend(layer_prunings.into_iter().map(|j| (i, j)));
         }
         pruned_edges
+    }
+
+    pub fn embedding_table(&self) -> &Vec<Vec<f64>> {
+        &self.embedding_table
     }
 }
 
