@@ -61,6 +61,10 @@
 pub mod kan;
 /// Contains the struct [`KanLayer`](crate::kan_layer::KanLayer), which represents a single layer of a Kolmogorov-Arnold Network.
 pub mod kan_layer;
+
+pub mod layer_errors;
+/// Contains an embedding layer for optional inclusion in a KAN model.
+pub mod embedding_layer;
 /// Contains the struct [`TrainingError`] representing an error encountered during training.
 pub mod training_error;
 /// Options for training a model with [`crate::train_model`].
@@ -344,7 +348,11 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
     
     for set_layer in 0..model.layers.len() {
         let mut features = preset_data.iter().map(|s| s.features.clone()).collect::<Vec<Vec<f64>>>();
-        features = model.expand_input_with_embeddings(features);
+        features = if let Some(embedding_layer) = model.embedding_layer.as_ref() {
+            embedding_layer.infer(&features).unwrap()
+        } else {
+            features
+        };
             for forward_layer in 0..=set_layer {
                 debug!("forwarding through layer {}", forward_layer);
                 features = model.layers[forward_layer].forward(features).map_err(|e| TrainingError {

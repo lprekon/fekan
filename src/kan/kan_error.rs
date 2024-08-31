@@ -1,7 +1,6 @@
 //! Error types relating to the creation and manipulation of [`Kan`](crate::kan::Kan)s
-use bitvec::vec::BitVec;
 
-use crate::kan_layer::kan_layer_errors::KanLayerError;
+use crate::layer_errors::LayerError;
 
 use super::ModelType;
 
@@ -12,7 +11,7 @@ use super::ModelType;
 pub struct KanError {
     error_kind: KanErrorType,
     /// the error that occurred
-    source: Option<KanLayerError>,
+    source: Option<LayerError>,
     /// the index of the layer that encountered the error
     layer_index: Option<usize>,
 }
@@ -39,26 +38,16 @@ enum KanErrorType {
         actual: usize,
     },
     MergeUnmergableLayers,
-    MergeMismatchedEmbeddingTableWidth {
+    MergeMismatchedEmbeddingTablePresence {
         pos: usize,
-        expected: usize,
-        actual: usize,
-    },
-    MergeMistmatchedEmbeddingTableDepth {
-        pos: usize,
-        expected: usize,
-        actual: usize,
-    },
-    MergeMismatchedEmbeddedFeatures {
-        pos: usize,
-        expected: BitVec,
-        actual: BitVec,
+        expected: bool,
+        actual: bool,
     },
 }
 
 impl KanError {
     /// Create a new `KanError` indicating that an error occurred while conducting a forward pass
-    pub(crate) fn forward(source: KanLayerError, layer_index: usize) -> Self {
+    pub(crate) fn forward(source: LayerError, layer_index: usize) -> Self {
         Self {
             error_kind: KanErrorType::Forward,
             source: Some(source),
@@ -67,7 +56,7 @@ impl KanError {
     }
 
     /// Create a new `KanError` indicating that an error occurred while conducting a backward pass
-    pub(crate) fn backward(source: KanLayerError, layer_index: usize) -> Self {
+    pub(crate) fn backward(source: LayerError, layer_index: usize) -> Self {
         Self {
             error_kind: KanErrorType::Backward,
             source: Some(source),
@@ -76,7 +65,7 @@ impl KanError {
     }
 
     /// Create a new `KanError` indicating that an error occurred while updating the model knots
-    pub(crate) fn update_knots(source: KanLayerError, layer_index: usize) -> Self {
+    pub(crate) fn update_knots(source: LayerError, layer_index: usize) -> Self {
         Self {
             error_kind: KanErrorType::UpdateKnots,
             source: Some(source),
@@ -85,7 +74,7 @@ impl KanError {
     }
 
     /// Create a new `KanError` indicating that an error occurred while setting the knot length
-    pub(crate) fn set_knot_length(source: KanLayerError, layer_index: usize) -> Self {
+    pub(crate) fn set_knot_length(source: LayerError, layer_index: usize) -> Self {
         Self {
             error_kind: KanErrorType::SetKnotLength,
             source: Some(source),
@@ -111,7 +100,7 @@ impl KanError {
     }
 
     /// Create a new `KanError` indicating that an error occurred while merging models due to unmergable layers
-    pub(crate) fn merge_unmergable_layers(source: KanLayerError, layer_index: usize) -> Self {
+    pub(crate) fn merge_unmergable_layers(source: LayerError, layer_index: usize) -> Self {
         Self {
             error_kind: KanErrorType::MergeUnmergableLayers,
             source: Some(source),
@@ -149,45 +138,14 @@ impl KanError {
         }
     }
 
-    pub(crate) fn merge_mismatched_embedding_table_width(
+    /// Create a new `KanError` indicating that an error occurred while merging models due to a mismatch in presence of an embedding table
+    pub(crate) fn merge_mismatched_embedding_table_presence(
         pos: usize,
-        expected: usize,
-        actual: usize,
+        expected: bool,
+        actual: bool,
     ) -> Self {
         Self {
-            error_kind: KanErrorType::MergeMismatchedEmbeddingTableWidth {
-                pos,
-                expected,
-                actual,
-            },
-            source: None,
-            layer_index: None,
-        }
-    }
-
-    pub(crate) fn merge_mismatched_embedding_table_depth(
-        pos: usize,
-        expected: usize,
-        actual: usize,
-    ) -> Self {
-        Self {
-            error_kind: KanErrorType::MergeMistmatchedEmbeddingTableDepth {
-                pos,
-                expected,
-                actual,
-            },
-            source: None,
-            layer_index: None,
-        }
-    }
-
-    pub(crate) fn merge_mismatched_embedded_features(
-        pos: usize,
-        expected: BitVec,
-        actual: BitVec,
-    ) -> Self {
-        Self {
-            error_kind: KanErrorType::MergeMismatchedEmbeddedFeatures {
+            error_kind: KanErrorType::MergeMismatchedEmbeddingTablePresence {
                 pos,
                 expected,
                 actual,
@@ -276,36 +234,14 @@ impl std::fmt::Display for KanError {
                         .expect("MergeUnmergableLayers error must have a source layer error")
                 )
             }
-            KanErrorType::MergeMismatchedEmbeddingTableWidth {
+            KanErrorType::MergeMismatchedEmbeddingTablePresence {
                 pos,
                 expected,
                 actual,
             } => {
                 write!(
                     f,
-                    "while merging models, model {} had a different embedding table width than the first model. Expected {}, got {}",
-                    pos, expected, actual
-                )
-            }
-            KanErrorType::MergeMistmatchedEmbeddingTableDepth {
-                pos,
-                expected,
-                actual,
-            } => {
-                write!(
-                    f,
-                    "while merging models, model {} had a different embedding table depth than the first model. Expected {}, got {}",
-                    pos, expected, actual
-                )
-            }
-            KanErrorType::MergeMismatchedEmbeddedFeatures {
-                pos,
-                expected,
-                actual,
-            } => {
-                write!(
-                    f,
-                    "while merging models, model {} had different embedded features than the first model. Expected {:?}, got {:?}",
+                    "while merging models, model {} had a different embedding table presence than the first model. Expected {}, got {}",
                     pos, expected, actual
                 )
             }

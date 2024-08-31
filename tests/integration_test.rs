@@ -9,7 +9,7 @@ use rand::{thread_rng, Rng};
 
 mod classification {
     use super::*;
-    use log::info;
+    use fekan::embedding_layer::EmbeddingOptions;
     use test_log::test;
     /// Build a model and train it on the function f(x, y, z) = x + y + z > 0. Tests that the trained validation loss is less than the untrained validation loss
     #[test]
@@ -42,9 +42,7 @@ mod classification {
             coef_size: 4,
             model_type: ModelType::Classification,
             class_map: None,
-            embedded_features: vec![],
-            embedding_vocab_size: 0,
-            embedding_dimension: 0,
+            embedding_options: None,
         });
 
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
@@ -97,14 +95,13 @@ mod classification {
             coef_size: 10,
             model_type: ModelType::Classification,
             class_map: None,
-            embedded_features: vec![0],
-            embedding_vocab_size: 10,
-            embedding_dimension: 2,
+            embedding_options: Some(EmbeddingOptions {
+                embedded_features: vec![0],
+                vocab_size: 10,
+                embedding_dimension: 2,
+                full_input_dimension: 1,
+            }),
         });
-        info!(
-            "Initial embedding table: {:#?}",
-            untrained_model.embedding_table()
-        );
         let initialization_loss = validate_model(&training_data, &untrained_model);
         let trained_model = train_model(
             untrained_model,
@@ -120,10 +117,6 @@ mod classification {
             },
         )
         .unwrap();
-        info!(
-            "Trained embedding table: {:#?}",
-            trained_model.embedding_table()
-        );
         let trained_loss = validate_model(&training_data, &trained_model);
         assert!(
             trained_loss < initialization_loss,
@@ -160,9 +153,7 @@ mod regression {
             coef_size: 4,
             model_type: ModelType::Regression,
             class_map: None,
-            embedded_features: vec![],
-            embedding_vocab_size: 0,
-            embedding_dimension: 0,
+            embedding_options: None,
         });
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
         let training_result = train_model(
@@ -217,9 +208,7 @@ mod regression {
             coef_size: 10,
             model_type: ModelType::Regression,
             class_map: None,
-            embedded_features: vec![],
-            embedding_vocab_size: 0,
-            embedding_dimension: 0,
+            embedding_options: None,
         });
 
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
@@ -287,9 +276,7 @@ mod regression {
             coef_size: 10,
             model_type: ModelType::Regression,
             class_map: None,
-            embedded_features: vec![],
-            embedding_vocab_size: 0,
-            embedding_dimension: 0,
+            embedding_options: None,
         });
 
         let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
@@ -351,9 +338,7 @@ mod regression {
                 coef_size: 10,
                 model_type: ModelType::Regression,
                 class_map: None,
-                embedded_features: vec![],
-                embedding_vocab_size: 0,
-                embedding_dimension: 0,
+                embedding_options: None,
             });
             // if log::log_enabled!(log::Level::Trace) {
             //     let mut training_samples = training_data.clone();
@@ -440,9 +425,7 @@ mod regression {
                 coef_size: 10,
                 model_type: ModelType::Regression,
                 class_map: None,
-                embedded_features: vec![],
-                embedding_vocab_size: 0,
-                embedding_dimension: 0,
+                embedding_options: None,
             });
             // if log::log_enabled!(log::Level::Trace) {
             //     let mut training_samples = training_data.clone();
@@ -529,9 +512,7 @@ mod regression {
                 coef_size: 10,
                 model_type: ModelType::Regression,
                 class_map: None,
-                embedded_features: vec![],
-                embedding_vocab_size: 0,
-                embedding_dimension: 0,
+                embedding_options: None,
             });
             // if log::log_enabled!(log::Level::Trace) {
             //     let mut training_samples = training_data.clone();

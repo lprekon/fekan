@@ -1,9 +1,8 @@
 // #![allow(dead_code)]
 pub(crate) mod edge;
-pub mod kan_layer_errors;
 
+use crate::layer_errors::LayerError;
 use edge::{linspace, Edge};
-use kan_layer_errors::KanLayerError;
 use log::{debug, trace};
 use rand::distributions::Distribution;
 use rand::thread_rng;
@@ -142,10 +141,7 @@ impl KanLayer {
     /// assert_eq!(acts[0].len(), output_dimension);
     /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
-    pub fn forward(
-        &mut self,
-        preactivations: Vec<Vec<f64>>,
-    ) -> Result<Vec<Vec<f64>>, KanLayerError> {
+    pub fn forward(&mut self, preactivations: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, LayerError> {
         let num_inputs = preactivations.len(); // grab this value, since we're about to move the preactivations into the internal cache
         self.forward_preamble(preactivations)?;
         // preactivations dim0 = number of samples, dim1 = input_dimension
@@ -169,7 +165,7 @@ impl KanLayer {
             let sample_wise_outputs =
                 self.splines[edge_index].forward(&transposed_preacts[in_node_idx]);
             if sample_wise_outputs.iter().any(|v| v.is_nan()) {
-                return Err(KanLayerError::nans_in_activations(
+                return Err(LayerError::nans_in_activations(
                     edge_index,
                     sample_wise_outputs,
                     self.splines[edge_index].clone(),
@@ -194,10 +190,10 @@ impl KanLayer {
     }
 
     /// check the length of the preactivation vector and save the inputs to the internal cache
-    fn forward_preamble(&mut self, preactivations: Vec<Vec<f64>>) -> Result<(), KanLayerError> {
+    fn forward_preamble(&mut self, preactivations: Vec<Vec<f64>>) -> Result<(), LayerError> {
         for preact in preactivations.iter() {
             if preact.len() != self.input_dimension {
-                return Err(KanLayerError::missized_preacts(
+                return Err(LayerError::missized_preacts(
                     preact.len(),
                     self.input_dimension,
                 ));
@@ -218,10 +214,10 @@ impl KanLayer {
     /// * the length of `preactivation` is not equal to the input_dimension this layer
     /// * the output would contain NaNs.
 
-    pub fn infer(&self, preactivations: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, KanLayerError> {
+    pub fn infer(&self, preactivations: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, LayerError> {
         for preactivation in preactivations.iter() {
             if preactivation.len() != self.input_dimension {
-                return Err(KanLayerError::missized_preacts(
+                return Err(LayerError::missized_preacts(
                     preactivation.len(),
                     self.input_dimension,
                 ));
@@ -306,10 +302,10 @@ impl KanLayer {
     /// assert!(new_acts[0].iter().all(|x| *x != 0.0)); // the knot range now covers the samples, so the activations should be non-zero
     /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
-    pub fn update_knots_from_samples(&mut self, knot_adaptivity: f64) -> Result<(), KanLayerError> {
+    pub fn update_knots_from_samples(&mut self, knot_adaptivity: f64) -> Result<(), LayerError> {
         trace!("Updating knots from {} samples", self.samples.len()); // trace since this happens every batch
         if self.samples.is_empty() {
-            return Err(KanLayerError::no_samples());
+            return Err(LayerError::no_samples());
         }
         // lets construct a sorted vector of the samples for each incoming value
         // first we transpose the samples, so that dim0 = input_dimension, dim1 = number of samples
@@ -406,21 +402,21 @@ impl KanLayer {
     /// second_layer.zero_gradients();
     /// /* continue training */
     /// ```
-    pub fn backward(&mut self, gradients: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, KanLayerError> {
+    pub fn backward(&mut self, gradients: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, LayerError> {
         for gradient in gradients.iter() {
             if gradient.len() != self.output_dimension {
-                return Err(KanLayerError::missized_gradient(
+                return Err(LayerError::missized_gradient(
                     gradient.len(),
                     self.output_dimension,
                 ));
             }
 
             if gradient.iter().any(|f| f.is_nan()) {
-                return Err(KanLayerError::nans_in_gradient());
+                return Err(LayerError::nans_in_gradient());
             }
         }
         if let None = self.layer_l1 {
-            return Err(KanLayerError::backward_before_forward(None, 0));
+            return Err(LayerError::backward_before_forward(None, 0));
         }
         let layer_l1 = self.layer_l1.unwrap();
 
@@ -439,7 +435,7 @@ impl KanLayer {
             let out_node_idx = edge_index % self.output_dimension;
             let sample_wise_outputs = self.splines[edge_index]
                 .backward(&transposed_gradients[out_node_idx], layer_l1)
-                .map_err(|e| KanLayerError::backward_before_forward(Some(e), edge_index))?; // TODO incorporate sparsity losses
+                .map_err(|e| LayerError::backward_before_forward(Some(e), edge_index))?; // TODO incorporate sparsity losses
             trace!(
                 "Backpropped gradients for edge {}: {:?}",
                 edge_index,
@@ -535,11 +531,11 @@ impl KanLayer {
     /// ```
     /// # Panics
     /// Panics if the Singular Value Decomposition (SVD) used to calculate the control points fails. This should never happen, but if it does, it's a bug
-    pub fn set_knot_length(&mut self, knot_length: usize) -> Result<(), KanLayerError> {
+    pub fn set_knot_length(&mut self, knot_length: usize) -> Result<(), LayerError> {
         for i in 0..self.splines.len() {
             self.splines[i]
                 .set_knot_length(knot_length)
-                .map_err(|e| KanLayerError::set_knot_length(i, e))?;
+                .map_err(|e| LayerError::set_knot_length(i, e))?;
         }
         Ok(())
     }
@@ -666,23 +662,23 @@ impl KanLayer {
     /// let fully_trained_layer = KanLayer::merge_layers(partially_trained_layers)?;
     /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
     /// ```
-    pub fn merge_layers(kan_layers: Vec<KanLayer>) -> Result<KanLayer, KanLayerError> {
+    pub fn merge_layers(kan_layers: Vec<KanLayer>) -> Result<KanLayer, LayerError> {
         if kan_layers.is_empty() {
-            return Err(KanLayerError::merge_no_layers());
+            return Err(LayerError::merge_no_layers());
         }
         let expected_input_dimension = kan_layers[0].input_dimension;
         let expected_output_dimension = kan_layers[0].output_dimension;
         // check that all layers have the same input and output dimensions
         for i in 1..kan_layers.len() {
             if kan_layers[i].input_dimension != expected_input_dimension {
-                return Err(KanLayerError::merge_mismatched_input_dimension(
+                return Err(LayerError::merge_mismatched_input_dimension(
                     i,
                     expected_input_dimension,
                     kan_layers[i].input_dimension,
                 ));
             }
             if kan_layers[i].output_dimension != expected_output_dimension {
-                return Err(KanLayerError::merge_mismatched_output_dimension(
+                return Err(LayerError::merge_mismatched_output_dimension(
                     i,
                     expected_output_dimension,
                     kan_layers[i].output_dimension,
@@ -727,7 +723,7 @@ impl KanLayer {
                 })
                 .collect();
             merged_edges.push(
-                Edge::merge_edges(edges_to_merge).map_err(|e| KanLayerError::spline_merge(i, e))?,
+                Edge::merge_edges(edges_to_merge).map_err(|e| LayerError::spline_merge(i, e))?,
             );
         }
 
@@ -888,7 +884,7 @@ mod test {
         let acts = layer.forward(preacts);
         assert!(acts.is_err());
         let error = acts.err().unwrap();
-        assert_eq!(error, KanLayerError::missized_preacts(3, 2));
+        assert_eq!(error, LayerError::missized_preacts(3, 2));
         println!("{:?}", error); // make sure we can build the error message
     }
 

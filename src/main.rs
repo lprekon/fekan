@@ -7,6 +7,7 @@ use std::{error::Error, fs::File, path::PathBuf, thread::available_parallelism, 
 use clap::{ArgGroup, Args, Parser, Subcommand};
 
 use fekan::{
+    embedding_layer::EmbeddingOptions,
     kan::{Kan, KanOptions, ModelType},
     train_model,
     training_options::{EachEpoch, TrainingOptions, TrainingOptionsError},
@@ -374,17 +375,26 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
 
                 // build the model
-                let untrained_model = Kan::new(&KanOptions {
-                    num_features: training_data[0].features().len() as usize,
+                let num_features = training_data[0].features().len() as usize;
+                let embedding_options = match classifier_args.params.embedded_features {
+                    None => None,
+                    Some(embedded_features) => Some(EmbeddingOptions {
+                        embedded_features: embedded_features,
+                        vocab_size: classifier_args.params.embedding_vocab_size,
+                        embedding_dimension: classifier_args.params.embedding_dimension,
+                        full_input_dimension: num_features,
+                    }),
+                };
+                let model_options = KanOptions {
+                    num_features,
                     layer_sizes: layers,
                     degree: classifier_args.params.degree,
                     coef_size: classifier_args.params.num_coefficients,
                     model_type: ModelType::Classification,
                     class_map: Some(classifier_args.classes),
-                    embedded_features: classifier_args.params.embedded_features.unwrap_or(vec![]),
-                    embedding_vocab_size: classifier_args.params.embedding_vocab_size,
-                    embedding_dimension: classifier_args.params.embedding_dimension,
-                });
+                    embedding_options,
+                };
+                let untrained_model = Kan::new(&model_options);
                 let starting_training_loss = validate_model(&training_data, &untrained_model);
                 info!("Model loss at initialization: {}", starting_training_loss);
 
@@ -443,18 +453,28 @@ fn main() -> Result<(), Box<dyn Error>> {
                     layers.push(output_size);
                     layers
                 };
-                // build the model
-                let untrained_model = Kan::new(&KanOptions {
-                    num_features: training_data[0].features().len() as usize,
+                let num_features = training_data[0].features().len() as usize;
+                let embedding_options = match regressor_args.params.embedded_features {
+                    None => None,
+                    Some(embedded_features) => Some(EmbeddingOptions {
+                        embedded_features: embedded_features,
+                        vocab_size: regressor_args.params.embedding_vocab_size,
+                        embedding_dimension: regressor_args.params.embedding_dimension,
+                        full_input_dimension: num_features,
+                    }),
+                };
+                let model_options = KanOptions {
+                    num_features,
                     layer_sizes: layers,
                     degree: regressor_args.params.degree,
                     coef_size: regressor_args.params.num_coefficients,
-                    model_type: ModelType::Regression,
-                    class_map: regressor_args.labels,
-                    embedded_features: regressor_args.params.embedded_features.unwrap_or(vec![]),
-                    embedding_vocab_size: regressor_args.params.embedding_vocab_size,
-                    embedding_dimension: regressor_args.params.embedding_dimension,
-                });
+                    model_type: ModelType::Classification,
+                    class_map: None,
+                    embedding_options,
+                };
+                let untrained_model = Kan::new(&model_options);
+                let starting_training_loss = validate_model(&training_data, &untrained_model);
+                info!("Model loss at initialization: {}", starting_training_loss);
 
                 let training_options =
                     train_args.build_training_options(num_threads, &validation_data)?;

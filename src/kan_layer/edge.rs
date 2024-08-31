@@ -456,7 +456,7 @@ impl Edge {
 
     #[allow(dead_code)]
     // used in tests for parent module
-    pub(super) fn knots<'a>(&'a self) -> Iter<'a, f64> {
+    pub(crate) fn knots<'a>(&'a self) -> Iter<'a, f64> {
         match &self.kind {
             EdgeType::Spline {
                 degree: _,
@@ -876,6 +876,7 @@ impl Edge {
     pub(super) fn prune(&mut self, threshold: f64) -> bool {
         debug!("pruning edge {}", self);
         match &mut self.kind {
+            // this is bad - coefficients that don't see much use don't get trained down.
             EdgeType::Spline { degree, knots, .. } => {
                 let inputs = linspace(
                     knots[*degree],
