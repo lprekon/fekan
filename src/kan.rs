@@ -75,12 +75,13 @@ impl Kan {
     /// use fekan::kan::{Kan, KanOptions, ModelType};
     ///
     /// let options = KanOptions {
-    ///     input_size: 5,
+    ///     num_features: 5,
     ///     layer_sizes: vec![4, 3, 1],
     ///     degree: 3,
     ///     coef_size: 6,
     ///     model_type: ModelType::Regression,
     ///     class_map: None,
+    ///     embedding_options: None,
     /// };
     /// let mut model = Kan::new(&options);
     ///```
@@ -133,12 +134,13 @@ impl Kan {
     /// use fekan::kan::{Kan, KanOptions, ModelType};
     /// let my_class_map = vec!["cat".to_string(), "dog".to_string()];
     /// let options = KanOptions {
-    ///     input_size: 5,
+    ///     num_features: 5,
     ///     layer_sizes: vec![4, 2],
     ///     degree: 3,
     ///     coef_size: 6,
     ///     model_type: ModelType::Regression,
     ///     class_map: Some(my_class_map),
+    ///     embedding_options: None,
     /// };
     /// let model = Kan::new(&options);
     /// assert_eq!(model.label_to_node("cat"), Some(0));
@@ -150,12 +152,13 @@ impl Kan {
     /// # use fekan::kan::{Kan, KanOptions, ModelType};
     /// # let my_class_map = vec!["cat".to_string(), "dog".to_string()];
     /// # let options = KanOptions {
-    /// #    input_size: 5,
+    /// #    num_features: 5,
     /// #    layer_sizes: vec![4, 2],
     /// #    degree: 3,
     /// #    coef_size: 6,
     /// #    model_type: ModelType::Regression,
     /// #    class_map: Some(my_class_map),
+    /// #    embedding_options: None,
     /// # };
     /// # let mut model = Kan::new(&options);
     /// # let feature_data = vec![vec![0.5, 0.4, 0.5, 0.5, 0.4]];
@@ -186,12 +189,13 @@ impl Kan {
     /// use fekan::kan::{Kan, KanOptions, ModelType};
     /// let class_map = vec!["cat".to_string(), "dog".to_string()];
     /// let options = KanOptions {
-    ///     input_size: 5,
+    ///     num_features: 5,
     ///     layer_sizes: vec![4, 2],
     ///     degree: 3,
     ///     coef_size: 6,
     ///     model_type: ModelType::Regression,
     ///     class_map: Some(class_map),
+    ///     embedding_options: None,
     /// };
     /// let model = Kan::new(&options);
     /// assert_eq!(model.node_to_label(0), Some("cat"));
@@ -203,12 +207,13 @@ impl Kan {
     /// # use fekan::kan::{Kan, KanOptions, ModelType};
     /// # let my_class_map = vec!["cat".to_string(), "dog".to_string()];
     /// # let options = KanOptions {
-    /// #    input_size: 5,
+    /// #    num_features: 5,
     /// #    layer_sizes: vec![4, 2],
     /// #    degree: 3,
     /// #    coef_size: 6,
     /// #    model_type: ModelType::Regression,
     /// #    class_map: Some(my_class_map),
+    ///     embedding_options: None,
     /// # };
     /// # let model = Kan::new(&options);
     /// # let feature_data = vec![vec![0.5, 0.4, 0.5, 0.5, 0.4]];
@@ -242,21 +247,20 @@ impl Kan {
     /// # Example
     /// ```
     /// use fekan::kan::{Kan, KanOptions, ModelType, kan_error::KanError};
-    /// let input_size = 5;
+    /// let num_features = 5;
     /// let output_size = 3;
     /// let options = KanOptions {
-    ///     input_size: input_size,
+    ///     num_features,
     ///     layer_sizes: vec![4, output_size],
     ///     degree: 3,
     ///     coef_size: 6,
     ///     model_type: ModelType::Classification,
     ///     class_map: None,
+    ///     embedding_options: None,
     /// };
     /// let mut model = Kan::new(&options);
     /// let batch_size = 2;
-    /// let input = vec![vec![1.0; input_size]; batch_size];
-    /// assert_eq!(input.len(), batch_size);
-    /// assert_eq!(input[0].len(), input_size);
+    /// let input = vec![vec![1.0; num_features]; batch_size];
     /// let output = model.forward(input)?;
     /// assert_eq!(output.len(), batch_size);
     /// assert_eq!(output[0].len(), output_size);
@@ -280,27 +284,6 @@ impl Kan {
         }
         Ok(preacts)
     }
-
-    // /// as [Kan::forward], but uses a thread pool to multi-thread the forward pass
-    // pub fn forward_concurrent(
-    //     &mut self,
-    //     input: Vec<f64>,
-    //     thread_pool: &ThreadPool,
-    // ) -> Result<Vec<f64>, KanError> {
-    //     let mut preacts = input;
-    //     for (idx, layer) in self.layers.iter_mut().enumerate() {
-    //         let result = layer.forward_concurrent(&preacts, thread_pool);
-    //         if let Err(e) = result {
-    //             return Err(KanError {
-    //                 source: ErrorOperation::Forward(e),
-    //                 index: idx,
-    //             });
-    //         }
-    //         let output = result.unwrap();
-    //         preacts = output;
-    //     }
-    //     Ok(preacts)
-    // }
 
     /// as [`Kan::forward`], but does not accumulate any internal state
     ///
@@ -336,12 +319,13 @@ impl Kan {
     /// use fekan::kan::{Kan, KanOptions, ModelType, kan_error::KanError};
     ///
     /// # let options = KanOptions {
-    /// #    input_size: 5,
+    /// #    num_features: 5,
     /// #    layer_sizes: vec![4, 1],
     /// #    degree: 3,
     /// #    coef_size: 6,
     /// #    model_type: ModelType::Regression,
     /// #    class_map: None,
+    /// #    embedding_options: None,
     /// # };
     /// let mut model = Kan::new(&options);
     ///
@@ -382,30 +366,6 @@ impl Kan {
 
         Ok(())
     }
-
-    // /// as [Kan::backward], but uses a thread pool to multi-thread the backward pass
-    // pub fn backward_concurrent(
-    //     &mut self,
-    //     error: Vec<f64>,
-    //     thread_pool: &ThreadPool,
-    // ) -> Result<Vec<f64>, KanError> {
-    //     let mut error = error;
-    //     for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
-    //         let backward_result = layer.backward_concurrent(&error, thread_pool);
-    //         match backward_result {
-    //             Ok(result) => {
-    //                 error = result;
-    //             }
-    //             Err(e) => {
-    //                 return Err(KanError {
-    //                     source: ErrorOperation::Backward(e),
-    //                     index: idx,
-    //                 });
-    //             }
-    //         }
-    //     }
-    //     Ok(error)
-    // }
 
     /// Update the model's parameters based on the gradients that have been accumulated with [`Kan::backward`].
     /// # Example
@@ -509,12 +469,13 @@ impl Kan {
     /// use fekan::{kan::{Kan, KanOptions, ModelType, kan_error::KanError}, Sample};
     /// use std::thread;
     /// # let model_options = KanOptions {
-    /// #    input_size: 5,
+    /// #    num_features: 5,
     /// #    layer_sizes: vec![4, 3],
     /// #    degree: 3,
     /// #    coef_size: 6,
     /// #    model_type: ModelType::Regression,
     /// #    class_map: None,
+    /// #    embedding_options: None,
     /// };
     /// # let num_training_threads = 1;
     /// # let training_data = vec![Sample::new(vec![], 0.0)];
@@ -588,17 +549,6 @@ impl Kan {
     /// * have different class maps (if the models are classification models)
     /// or if the input slice is empty
     pub fn models_mergable(models: &[Kan]) -> Result<(), KanError> {
-        // this will be handled by the merge_layers method as a NoLayers error
-        // if models.is_empty() {
-        //     return Err(KanError {
-        //         source: KanLayerError {
-        //             error_kind: KanLayerErrorType::MergeNoLayers,
-        //             source: None,
-        //             spline_idx: None,
-        //         },
-        //         index: 0,
-        //     });
-        // }
         let expected_model_type = models[0].model_type;
         let expected_class_map = &models[0].class_map;
         let expected_layer_count = models[0].layers.len();

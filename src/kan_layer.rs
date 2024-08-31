@@ -139,7 +139,7 @@ impl KanLayer {
     /// let acts = my_layer.forward(preacts)?;
     /// assert_eq!(acts.len(), 2);
     /// assert_eq!(acts[0].len(), output_dimension);
-    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
+    /// # Ok::<(), fekan::layer_errors::LayerError>(())
     /// ```
     pub fn forward(&mut self, preactivations: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, LayerError> {
         let num_inputs = preactivations.len(); // grab this value, since we're about to move the preactivations into the internal cache
@@ -279,7 +279,7 @@ impl KanLayer {
     ///     my_layer.update(0.1, 1.0, 1.0); // updating the model's parameters changes the output range of the b-splines that make up the model
     ///     my_layer.update_knots_from_samples(0.1)?; // updating the knots adjusts the input range of the b-splines to match the output range of the previous layer
     /// }
-    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
+    /// # Ok::<(), fekan::layer_errors::LayerError>(())
     ///```
     /// Note on the above example: even in this example, where range of input to the layer is the range of values in the training data and does not change during training, it's still important to update the knots at least once, after a good portion of the training data has been passed through, to ensure that the layer's supported input range covers the range spanned by the training data.
     /// KanLayer knots are initialized to span the range [-1, 1], so if the training data is outside that range, the activations will be 0.0 until the knots are updated.
@@ -300,7 +300,7 @@ impl KanLayer {
     /// my_layer.update_knots_from_samples(0.0).unwrap(); // we don't have enough samples to calculate quantiles, so we have to keep the knots uniformly distributed. In practice, this function should be called every few hundred forward passes or so
     /// let new_acts = my_layer.forward(sample1).unwrap();
     /// assert!(new_acts[0].iter().all(|x| *x != 0.0)); // the knot range now covers the samples, so the activations should be non-zero
-    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
+    /// # Ok::<(), fekan::layer_errors::LayerError>(())
     /// ```
     pub fn update_knots_from_samples(&mut self, knot_adaptivity: f64) -> Result<(), LayerError> {
         trace!("Updating knots from {} samples", self.samples.len()); // trace since this happens every batch
@@ -356,7 +356,7 @@ impl KanLayer {
     /// my_layer.clear_samples();
     /// let update_result = my_layer.update_knots_from_samples(0.0);
     /// assert!(update_result.is_err()); // we've cleared the samples, so we can't update the knot vectors
-    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
+    /// # Ok::<(), fekan::layer_errors::LayerError>(())
     pub fn clear_samples(&mut self) {
         self.samples.clear();
     }
@@ -660,7 +660,7 @@ impl KanLayer {
     ///     handles.into_iter().map(|handle| handle.join().unwrap()).collect()
     /// });
     /// let fully_trained_layer = KanLayer::merge_layers(partially_trained_layers)?;
-    /// # Ok::<(), fekan::kan_layer::kan_layer_errors::KanLayerError>(())
+    /// # Ok::<(), fekan::layer_errors::LayerError>(())
     /// ```
     pub fn merge_layers(kan_layers: Vec<KanLayer>) -> Result<KanLayer, LayerError> {
         if kan_layers.is_empty() {

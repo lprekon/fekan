@@ -32,12 +32,14 @@
 //!
 //! // initialize the model
 //! let model_options = KanOptions{
-//!     input_size: 2,
+//!     num_features: 2,
 //!     layer_sizes: vec![3, 1],
 //!     degree: 3,
 //!     coef_size: 7,
 //!     model_type: ModelType::Regression,
-//!     class_map: None};
+//!     class_map: None,
+//!     embedding_options: None,
+//! };
 //! let mut untrained_model = Kan::new(&model_options);
 //!
 //! // train the model
@@ -130,7 +132,7 @@ impl Sample {
 /// use fekan::kan::{Kan, KanOptions, ModelType};
 /// # use fekan::training_error::TrainingError;
 ///
-/// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 3, coef_size: 7, model_type: ModelType::Regression, class_map: None};
+/// # let some_model_options = KanOptions{ num_features: 2, layer_sizes: vec![3, 1], degree: 3, coef_size: 7, model_type: ModelType::Regression, class_map: None, embedding_options: None};
 /// let untrained_model = Kan::new(&some_model_options);
 /// let mut training_data: Vec<Sample> = Vec::new();
 /// /* Load training data */
@@ -148,7 +150,7 @@ impl Sample {
 /// use fekan::{train_model, Sample, training_options::{TrainingOptions, EachEpoch}};
 /// use fekan::kan::{Kan, KanOptions, ModelType};
 /// # use fekan::training_error::TrainingError;
-/// # let some_model_options = KanOptions{ input_size: 2, layer_sizes: vec![3, 1], degree: 3, coef_size: 7, model_type: ModelType::Regression, class_map: None};
+/// # let some_model_options = KanOptions{ num_features: 2, layer_sizes: vec![3, 1], degree: 3, coef_size: 7, model_type: ModelType::Regression, class_map: None, embedding_options: None};
 ///
 /// let untrained_model = Kan::new(&some_model_options);
 ///

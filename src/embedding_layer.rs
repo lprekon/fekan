@@ -5,6 +5,7 @@ use statrs::distribution::Normal;
 
 use crate::layer_errors::LayerError;
 
+/// A layer that embeds features into a higher-dimensional space. This is useful for categorical features that need to be represented as continuous values. All embedded features must be unsigned integer values (not necessarily unsigned integer type)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EmbeddingLayer {
     embedding_table: Vec<Vec<f64>>,
@@ -20,15 +21,52 @@ pub struct EmbeddingLayer {
     past_inputs: Vec<Vec<f64>>,
 }
 
+/// Hyperparameters for the embedding layer.
+///
+/// #Example
+/// see [`EmbeddingLayer::new`]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EmbeddingOptions {
+    /// The number of unique features that can be embedded
     pub vocab_size: usize,
+    /// The number of dimensions into which each feature will be embedded. In other words, the length of the embedding vector for each feature
     pub embedding_dimension: usize,
+    /// The indices of the features that should be embedded. All other features will be passed through unchanged
     pub embedded_features: Vec<usize>,
+    /// The total number of features in the input vector. This is used to determine the output dimension of the embedding layer and for error checking
     pub full_input_dimension: usize,
 }
 
 impl EmbeddingLayer {
+    /// Create a new embedding layer for use in a neural network
+    /// # Example
+    /// Create an embedding layer to handle categorical features.
+    /// ```
+    /// # fn get_person_age(person_id: usize) -> f64 { 0.0 }
+    /// # fn get_person_gender(person_id: usize) -> f64 { 0.0 }
+    /// # let person_id = 0;
+    /// use fekan::embedding_layer::{EmbeddingLayer, EmbeddingOptions};
+    /// # let vocab_size = 2;
+    /// # let embedding_dimension = 4;
+    /// # let embedded_features = vec![1];
+    /// # let full_input_dimension = 2;
+    /// let embedding_options = EmbeddingOptions {
+    ///    vocab_size,
+    ///    embedding_dimension,
+    ///    embedded_features: vec![1], // embed the second feature in the input vector (i.e index 1)
+    ///    full_input_dimension,
+    /// };
+    /// let mut embedding_layer = EmbeddingLayer::new(&embedding_options);
+    /// let mut features = vec![0.0; full_input_dimension];
+    /// features[0] = get_person_age(person_id); // age is a continuous feature, and can be passed directly to a neural network
+    /// features[1] = get_person_gender(person_id); // gender is a categorical feature, and should be embedded before being passed to a neural network
+    /// let expanded_features = embedding_layer.forward(vec![features])?;
+    /// assert_eq!(expanded_features.len(), 1); // like other layers in this crate, the embedding layer operates on a batch of samples. We only passed one sample, so we expect one sample back
+    /// assert_eq!(expanded_features[0].len(), full_input_dimension + (embedding_dimension - 1)); // the second element of the vector was replaced with `embedding_dimension` elements, so the output dimension should be `full_input_dimension - 1 + embedding_dimension`
+    ///
+    /// /* now pass expanded features to a network for training */
+    /// # Ok::<(), fekan::layer_errors::LayerError>(())
+    /// ```
     pub fn new(options: &EmbeddingOptions) -> Self {
         let highest_embedded_index = *options
             .embedded_features
@@ -64,10 +102,22 @@ impl EmbeddingLayer {
         }
     }
 
+    /// get the output dimension of the embedding layer
+    ///
+    /// `output_dimension = full_input_dimension + (embedding_dimension - 1) * number_of_embedded_features`
     pub fn output_dimension(&self) -> usize {
         self.output_dimension
     }
 
+    /// Create an expanded input vector by replacing values at the indices specified in `embedded_features` with the corresponding row in the embedding table
+    ///
+    /// # Example
+    /// see [`EmbeddingLayer::new`] for an example creating and forwarding through an embedding layer
+    ///
+    /// # Errors
+    /// Returns a `LayerError` if
+    /// * the input vector is not the correct size
+    /// * A feature value at a to-be-embedded index is not an integer (i.e has a fractional part)
     pub fn forward(&mut self, preacts: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, LayerError> {
         if preacts.iter().any(|x| x.len() != self.input_dimension) {
             return Err(LayerError::missized_preacts(
@@ -109,6 +159,7 @@ impl EmbeddingLayer {
         Ok(expanded_input)
     }
 
+    /// As [EmbeddingLayer::forward], but does not store the preacts for backpropagation.
     pub fn infer(&self, preacts: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, LayerError> {
         if preacts.iter().any(|x| x.len() != self.input_dimension) {
             return Err(LayerError::missized_preacts(
@@ -138,6 +189,39 @@ impl EmbeddingLayer {
         Ok(expanded_input)
     }
 
+    /// Backpropagate the error through the embedding layer, accumulating gradients for those embedding rows that were used in the corresponding forward pass.
+    ///
+    /// # Example
+    /// ```
+    /// use fekan::embedding_layer::{EmbeddingLayer, EmbeddingOptions};
+    /// let vocab_size = 3;
+    /// let embedding_dimension = 4;
+    /// let full_input_dimension = 2;
+    /// let embedding_options = EmbeddingOptions {
+    ///     vocab_size,
+    ///     embedding_dimension,
+    ///     embedded_features: vec![1],
+    ///     full_input_dimension,
+    /// };
+    /// let mut embedding = EmbeddingLayer::new(&embedding_options);
+    /// let input = vec![vec![0.0, 1.0]];
+    /// let _ = embedding.forward(input)?;
+    /// let error = vec![vec![1.0; embedding.output_dimension()]];
+    /// let _ = embedding.backward(error)?; // only row 1 of the embedding table will have a nonzero gradient, because that's the only row that was used in the forward pass
+    ///  
+    ///
+    /// /* now update the embedding table with the accumulated gradients */
+    /// let learning_rate = 0.01;
+    /// embedding.update(learning_rate);
+    /// embedding.zero_gradients(); // clear the gradients for the next batch
+    ///
+    /// /* now continue training */
+    /// # Ok::<(), fekan::layer_errors::LayerError>(())
+    /// ```
+    /// # Errors
+    /// Returns a [`LayerError`] if
+    /// * The error vector is not the correct size
+    /// * The number of samples passed to [`EmbeddingLayer::forward`] is not the same as the number of gradients passed to `backward`
     pub fn backward(&mut self, error: Vec<Vec<f64>>) -> Result<(), LayerError> {
         // return an empty Ok because there's no need for gradients earlier than this
         if error.iter().any(|x| x.len() != self.output_dimension) {
@@ -178,6 +262,11 @@ impl EmbeddingLayer {
         Ok(())
     }
 
+    /// Update the embeddings using the accumulated gradients
+    ///
+    /// This function relies on the gradients accumulated during [EmbeddingLayer::backward]
+    /// # Example
+    /// see [`EmbeddingLayer::backward`]
     pub fn update(&mut self, learning_rate: f64) {
         for (embedding_row, gradient_row) in self
             .embedding_table
@@ -190,6 +279,10 @@ impl EmbeddingLayer {
         }
     }
 
+    /// Zero out the gradients for the embedding table
+    ///
+    /// # Example
+    /// see [`EmbeddingLayer::backward`]
     pub fn zero_gradients(&mut self) {
         for embedding_row in self.embedding_gradients.iter_mut() {
             for gradient_val in embedding_row.iter_mut() {
@@ -198,10 +291,25 @@ impl EmbeddingLayer {
         }
     }
 
+    /// Clear the samples stored during the forward pass.
     pub fn clear_samples(&mut self) {
         self.past_inputs.clear();
     }
 
+    /// Merge multiple embedding layers into a single layer. All layers to be merged must be identical in terms of input dimension, output dimension, embedding dimension, vocab size, and embedded features. The only difference should be the values of the embeddings themselves
+    ///
+    /// Usage is identical to [`KanLayer::forward`](crate::kan_layer::KanLayer::merge_layers)
+    ///
+    /// # Example
+    /// see [`KanLayer::merge_layers`](crate::kan_layer::KanLayer::merge_layers)
+    ///
+    /// # Errors
+    /// Returns a [`LayerError`] if
+    /// * The input dimensions of the layers to be merged are not the same
+    /// * The output dimensions of the layers to be merged are not the same
+    /// * The embedding dimensions of the layers to be merged are not the same
+    /// * The vocab sizes of the layers to be merged are not the same
+    /// * The embedded features of the layers to be merged are not the same
     pub fn merge_layers(layers_to_merge: &[&EmbeddingLayer]) -> Result<EmbeddingLayer, LayerError> {
         let expected_true_input_size = layers_to_merge[0].input_dimension;
         let expected_true_output_size = layers_to_merge[0].output_dimension;
@@ -275,8 +383,7 @@ impl EmbeddingLayer {
     }
 }
 
-mod tests {
-
+mod test {
     use super::*;
 
     #[test]
