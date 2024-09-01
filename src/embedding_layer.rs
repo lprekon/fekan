@@ -383,7 +383,9 @@ impl EmbeddingLayer {
     }
 }
 
+#[cfg(test)]
 mod test {
+
     use super::*;
 
     #[test]

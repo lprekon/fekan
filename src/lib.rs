@@ -301,8 +301,13 @@ pub fn train_model(
 
         // prune the model if necessary
         if pruning_times.contains(&epoch) {
+            let samples = training_data.iter().map(|s| s.features.clone()).collect::<Vec<Vec<f64>>>();
             info!("Pruning model...");
-            let pruning_results = model.prune(options.pruning_threshold);
+            let pruning_results = model.prune(samples, options.pruning_threshold).map_err(|e| TrainingError {
+                source: e,
+                epoch,
+                sample: 0,
+            })?;
             info!("Pruned {} edges", pruning_results.len());
         }
 

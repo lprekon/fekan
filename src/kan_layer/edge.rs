@@ -873,22 +873,17 @@ impl Edge {
     /// If called on a symbolic edge... do nothing(?)
     /// # Returns
     /// * `true` if the edge was pruned, `false` otherwise
-    pub(super) fn prune(&mut self, threshold: f64) -> bool {
+    pub(super) fn prune(&mut self, samples: &[f64], threshold: f64) -> bool {
         debug!("pruning edge {}", self);
         match &mut self.kind {
             // this is bad - coefficients that don't see much use don't get trained down.
-            EdgeType::Spline { degree, knots, .. } => {
-                let inputs = linspace(
-                    knots[*degree],
-                    knots[knots.len() - 1 - *degree],
-                    100.max(knots.len() * *degree), // make sure we have enough points to get a good estimate.
-                );
-                let outputs: Vec<f64> = self.infer(&inputs);
+            EdgeType::Spline { .. } => {
+                let outputs: Vec<f64> = self.infer(samples);
                 let mean_displacement =
                     outputs.iter().map(|v| v.abs()).sum::<f64>() / outputs.len() as f64;
                 debug!(
                     "inputs = {:?}\noutputs = {:?}\nmean_displacement: {}",
-                    inputs, outputs, mean_displacement
+                    samples, outputs, mean_displacement
                 );
                 if mean_displacement < threshold {
                     self.kind = EdgeType::Pruned;
@@ -1820,7 +1815,8 @@ mod tests {
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
         )
         .unwrap();
-        spline.prune(1e-6);
+        let inputs = linspace(0.5, 5.5, 30);
+        spline.prune(&inputs, 1e-6);
         assert!(matches!(spline.kind, EdgeType::Pruned));
     }
 
@@ -1832,7 +1828,8 @@ mod tests {
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
         )
         .unwrap();
-        spline.prune(1e-6);
+        let inputs = linspace(0.5, 5.5, 30);
+        spline.prune(&inputs, 1e-6);
         assert!(matches!(spline.kind, EdgeType::Spline { .. }));
     }
 

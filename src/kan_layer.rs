@@ -769,15 +769,17 @@ impl KanLayer {
         clamped_edges
     }
 
-    /// Any edges in this layer with an average absolute output value less than `threshold` will be 'pruned' - that is, they will be replaced with a constant edge that outputs 0.0
+    /// Tests all edges using the samples provided, and 'prunes' any edges in this layer with an average absolute output value less than `threshold` - that is, they will be replaced with a constant edge that outputs 0.0
     /// # Returns
     /// A vector of the indices of the pruned edges
-    pub fn prune(&mut self, threshold: f64) -> Vec<usize> {
+    pub fn prune(&mut self, samples: &[Vec<f64>], threshold: f64) -> Vec<usize> {
         assert!(threshold >= 0.0, "Pruning threhsold must be >= 0.0");
+        let transposed_samples = transpose(samples);
         let mut pruned_indices = Vec::new();
         for i in 0..self.splines.len() {
             trace!("Pruning edge {}", i);
-            if self.splines[i].prune(threshold) {
+            let in_node_idx = i / self.output_dimension;
+            if self.splines[i].prune(&transposed_samples[in_node_idx], threshold) {
                 pruned_indices.push(i);
             }
         }
@@ -793,6 +795,16 @@ impl KanLayer {
     pub fn output_dimension(&self) -> usize {
         self.output_dimension
     }
+}
+
+fn transpose(matrix: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    let mut transposed = vec![vec![0.0; matrix.len()]; matrix[0].len()];
+    for i in 0..matrix.len() {
+        for j in 0..matrix[0].len() {
+            transposed[j][i] = matrix[i][j];
+        }
+    }
+    transposed
 }
 
 impl PartialEq for KanLayer {

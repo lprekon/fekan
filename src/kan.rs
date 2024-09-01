@@ -600,14 +600,24 @@ impl Kan {
 
     /// Prune the model, removing any edges that have low average output. See [`KanLayer::prune`] for more information
     /// Returns a list of the indices of pruned edges (i,j), where i is the index of the layer, and j is the index of the edge in that layer that was pruned
-    pub fn prune(&mut self, threshold: f64) -> Vec<(usize, usize)> {
+    pub fn prune(
+        &mut self,
+        samples: Vec<Vec<f64>>,
+        threshold: f64,
+    ) -> Result<Vec<(usize, usize)>, KanError> {
         let mut pruned_edges = Vec::new();
+        let mut samples = samples;
         for i in 0..self.layers.len() {
             debug!("Pruning layer {}", i);
-            let layer_prunings = self.layers[i].prune(threshold);
+            let this_layer = &mut self.layers[i];
+            let next_samples = this_layer
+                .infer(&samples)
+                .map_err(|e| KanError::forward(e, i))?;
+            let layer_prunings = this_layer.prune(&samples, threshold);
             pruned_edges.extend(layer_prunings.into_iter().map(|j| (i, j)));
+            samples = next_samples;
         }
-        pruned_edges
+        Ok(pruned_edges)
     }
 }
 

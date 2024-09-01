@@ -1,5 +1,9 @@
 
-running 55 tests
+running 59 tests
+test embedding_layer::test::test_build_embedding_table ... ignored
+test embedding_layer::test::test_embed_float ... ignored
+test embedding_layer::test::test_embedding_forward ... ignored
+test embedding_layer::test::test_embedding_forward_and_backward ... ignored
 test kan::test::test_error_send ... ignored
 test kan::test::test_error_sync ... ignored
 test kan::test::test_forward ... ignored
@@ -40,8 +44,6 @@ test kan_layer::edge::tests::test_suggest_symbolic_quadratic ... ignored
 test kan_layer::edge::tests::test_suggest_symbolic_y_equals_x ... ignored
 test kan_layer::edge::tests::test_update_knots ... ignored
 test kan_layer::edge::tests::test_update_knots_from_bad_samples ... ignored
-test kan_layer::kan_layer_errors::test::test_layer_error_send ... ignored
-test kan_layer::kan_layer_errors::test::test_layer_error_sync ... ignored
 test kan_layer::test::test_backward_bad_error_length ... ignored
 test kan_layer::test::test_backward_before_forward ... ignored
 test kan_layer::test::test_forward ... ignored
@@ -51,22 +53,24 @@ test kan_layer::test::test_layer_send ... ignored
 test kan_layer::test::test_layer_sync ... ignored
 test kan_layer::test::test_merge_identical_layers_yield_identical_output ... ignored
 test kan_layer::test::test_new ... ignored
+test layer_errors::test::test_layer_error_send ... ignored
+test layer_errors::test::test_layer_error_sync ... ignored
 test test::test_error_send ... ignored
 test test::test_error_sync ... ignored
 test test::test_nll_loss_and_gradient ... ignored
 test test::test_nll_loss_and_gradient_2 ... ignored
 
-test result: ok. 0 passed; 0 failed; 55 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 59 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 running 7 tests
-test bench_backward                  ... bench:          21.06 ns/iter (+/- 0.68)
-test bench_forward                   ... bench:  10,381,391.60 ns/iter (+/- 806,743.40)
-test bench_prune                     ... bench:      31,313.04 ns/iter (+/- 180.66)
-test bench_set_knot_length           ... bench:  29,526,858.30 ns/iter (+/- 534,282.06)
-test bench_suggest_symbolic          ... bench:  79,622,258.40 ns/iter (+/- 10,937,369.97)
-test bench_update                    ... bench:      83,110.43 ns/iter (+/- 3,447.89)
-test bench_update_knots_from_samples ... bench:   1,079,720.80 ns/iter (+/- 138,029.92)
+test bench_backward                  ... bench:          21.61 ns/iter (+/- 3.52)
+test bench_forward                   ... bench:  11,287,137.60 ns/iter (+/- 751,013.08)
+test bench_prune                     ... bench:      46,846.03 ns/iter (+/- 1,946.74)
+test bench_set_knot_length           ... bench:  30,281,254.20 ns/iter (+/- 299,763.35)
+test bench_suggest_symbolic          ... bench:  82,670,283.30 ns/iter (+/- 7,390,855.87)
+test bench_update                    ... bench:      82,091.65 ns/iter (+/- 19,560.20)
+test bench_update_knots_from_samples ... bench:   1,144,530.21 ns/iter (+/- 36,369.63)
 
-test result: ok. 0 passed; 0 failed; 0 ignored; 7 measured; 0 filtered out; finished in 37.61s
+test result: ok. 0 passed; 0 failed; 0 ignored; 7 measured; 0 filtered out; finished in 44.26s
 

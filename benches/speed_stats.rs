@@ -143,9 +143,14 @@ fn bench_prune(b: &mut Bencher) {
         degree: 3,
         coef_size: 10,
     });
-    let batch_inputs = generate_batch_inputs();
-    let _ = layer.forward(batch_inputs); // we have to give the edges some output history in order to prune
+    let mut batch_inputs = vec![vec![0.0; INPUT_DIMENSION_BIG]; 100]; // generate 100 samples to we're feeding the same amount through we used to before the refactor
+    for i in 0..100 {
+        // create multiple samples so we can see parallelism improvements later
+        for j in 0..INPUT_DIMENSION_BIG {
+            batch_inputs[i][j] = thread_rng().gen();
+        }
+    }
     b.iter(|| {
-        let _ = layer.prune(0.0);
+        let _ = layer.prune(&batch_inputs, 0.0);
     });
 }
