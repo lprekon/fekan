@@ -490,32 +490,25 @@ fn calculate_nll_loss_and_gradient(
     (batch_loss, batch_dlogits)
 }
 
-/// Calculates the mean squared error loss and the gradient of the loss with respect to the actual value
-// fn calculate_mse_and_gradient(actual: f64, expected: f64) -> (f64, f64) {
-//     let loss = (actual - expected).powi(2);
-//     let gradient = 2.0 * (actual - expected);
-//     (loss, gradient)
-// }
-
 const HUBER_DELTA: f64 = 1.3407807929942596e154 - 1.0; // f64::MAX ^ 0.5 - 1.0. Chosen so the loss is equivalent to the MSE loss until the error would be greater than f64::MAX, and then it becomes linear
 
 /// Calculates the huber loss and the gradient of the loss with respect to the actual value
-/// NOTE: currently only supports a single output node
 fn calculate_huber_loss_and_gradient(
     batch_actual: &[Vec<f64>],
     batch_expected: &[Vec<f64>],
+    label_masks: &[BitVec]
 ) -> (Vec<f64>, Vec<Vec<f64>>) {
     let mut loss = vec![0.0; batch_actual.len()];
     let mut gradients = vec![vec![0.0; batch_actual[0].len()]; batch_actual.len()];
-    for i in 0..batch_actual.len(){
-        for j in 0..batch_actual[0].len(){
-            let diff = batch_actual[i][j] - batch_expected[i][j];
+    for sample_idx in 0..batch_actual.len(){
+        for used_label_idx in label_masks[sample_idx].iter_ones(){
+            let diff = batch_actual[sample_idx][used_label_idx] - batch_expected[sample_idx][used_label_idx];
             if diff.abs() < HUBER_DELTA {
-                loss[i] += 0.5 * diff.powi(2);
-                gradients[i][j] = diff;
+                loss[sample_idx] += 0.5 * diff.powi(2);
+                gradients[sample_idx][used_label_idx] += diff;
             } else {
-                loss[i] += HUBER_DELTA * diff.abs() - 0.5 * HUBER_DELTA.powi(2);
-                gradients[i][j] = HUBER_DELTA * diff.signum();
+                loss[sample_idx] += HUBER_DELTA * diff.abs() - 0.5 * HUBER_DELTA.powi(2);
+                gradients[sample_idx][used_label_idx] += HUBER_DELTA * diff.signum();
             }
         }
     }
