@@ -107,7 +107,9 @@ impl Sample {
     /// # Panics
     /// Panics if `labels.len() != label_mask.len()`
     /// 
-    /// # Notes
+    /// # Notes for samples for Classification models
+    /// * Labels should be integers representing the class of the sample
+    /// * `fekan` does not currently support multi-label classification. Only the first label will be considered when calculating loss and gradient, regardless of the label mask
     pub fn new(features: Vec<f64>, labels: Vec<f64>, label_mask: Vec<bool>) -> Self {
         assert_eq!(label_mask.len(), labels.len(), "label_mask and labels must be the same length");
         let mut l_mask = BitVec::with_capacity(label_mask.len());
@@ -234,11 +236,8 @@ pub fn train_model(
                         let mut chunk_samples_seen = 0;
                         for batch in training_data_chunk.chunks(options.batch_size) {
                             chunk_samples_seen += options.batch_size;
-                            // forward
-                            // let batch_inputs: Vec<Vec<f64>> = batch.iter().map(|s| s.features.clone()).collect();
-                            // let batch_labels: Vec<f64> = batch.iter().map(|s| s.label).collect();
                             debug!("Forwarding batch");
-                            let (batch_inputs, batch_labels): (Vec<Vec<f64>>, Vec<f64>) = batch.iter().map(|s| (s.features.clone(), s.label)).collect();
+                            let (batch_inputs, batch_labels, batch_masks) = split_sample_batch(batch);
                             let batch_logits =
                                 model.forward(batch_inputs).map_err(|e| {
                                     TrainingError {
@@ -252,15 +251,10 @@ pub fn train_model(
                             let (batch_loss, batch_gradients) = match model.model_type() {
                                 ModelType::Classification => calculate_nll_loss_and_gradient(
                                     &batch_logits,
-                                    batch_labels.iter().map(|l| *l as usize).collect::<Vec<usize>>().as_slice(),
+                                    batch_labels.iter().map(|l| l[0] as usize).collect::<Vec<usize>>().as_slice(),
                                 ),
                                 ModelType::Regression => {
-                                    assert!(batch_logits.iter().all(|logits| logits.len() == 1), "Regression models must have a single output node");
-                                    let (loss, dlogit) = calculate_huber_loss_and_gradient(
-                                        &batch_logits,
-                                        &batch_labels.iter().map(|l| vec![*l]).collect::<Vec<Vec<f64>>>(),  
-                                    );
-                                    (loss, dlogit)
+                                    calculate_huber_loss_and_gradient(&batch_logits, &batch_labels, &batch_masks)
                                 }
                             };
                             debug!("Batch loss: {}", batch_loss.iter().sum::<f64>() / batch_loss.len() as f64);
@@ -311,6 +305,7 @@ pub fn train_model(
         let epoch_loss = chunk_losses.iter().sum::<f64>() / training_data.len() as f64;
 
         // log the epoch loss, and the validation loss if necessary
+        // TODO multithread this, you buffoon
         match options.each_epoch {
             EachEpoch::ValidateModel(validation_data) => {
                 let validation_lostt = validate_model(validation_data, &mut model);
@@ -359,6 +354,18 @@ pub fn train_model(
     }
 
     Ok(model)
+}
+
+fn split_sample_batch(batch: &[Sample]) -> (Vec<Vec<f64>>, Vec<&[f64]>, Vec<&BitVec>) {
+    let mut batch_inputs: Vec<Vec<f64>> = Vec::with_capacity(batch.len());
+    let mut batch_labels: Vec<&[f64]> = Vec::with_capacity(batch.len());
+    let mut batch_masks: Vec<&BitVec> = Vec::with_capacity(batch.len());
+    for sample in batch.iter(){
+        batch_inputs.push(sample.features.clone());
+        batch_labels.push(&sample.labels);
+        batch_masks.push(&sample.label_mask);
+    }
+    (batch_inputs, batch_labels, batch_masks)
 }
 
 /// Scan over the training data and adjust model knot ranges. This is equivalent to calling [`Kan::forward`] on each sample in the training data, then calling [`Kan::update_knots_from_samples`] with a `knot_adaptivity` of 0.0.
@@ -427,17 +434,16 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
 ///
 pub fn validate_model(validation_data: &[Sample], model: &Kan) -> f64 {
 
-    let (batch_features, batch_labels): (Vec<Vec<f64>>, Vec<f64>) = validation_data.iter().map(|s| (s.features.clone(), s.label)).unzip();
-    let batch_logits = model.infer(batch_features).unwrap();
+    let (batch_inputs, batch_labels, batch_masks) = split_sample_batch(validation_data);
+    let batch_logits = model.infer(batch_inputs).unwrap();
     let batch_loss = match model.model_type() {
         ModelType::Classification => {
-            let (loss, _) = calculate_nll_loss_and_gradient(&batch_logits, batch_labels.iter().map(|l| *l as usize).collect::<Vec<usize>>().as_slice());
-            loss
+            let (losses, _) = calculate_nll_loss_and_gradient(&batch_logits, batch_labels.iter().map(|&l| l[0] as usize).collect::<Vec<usize>>().as_slice());
+            losses
         }
         ModelType::Regression => {
-            assert!(batch_logits.iter().all(|logits| logits.len() == 1), "Regression models must have a single output node");
-            let (loss, _) = calculate_huber_loss_and_gradient(&batch_logits, &batch_labels.iter().map(|l| vec![*l]).collect::<Vec<Vec<f64>>>()); //TODO allow different delta values
-            loss
+            let (losses, _) = calculate_huber_loss_and_gradient(&batch_logits, &batch_labels, &batch_masks);
+            losses
         }
     };
         
@@ -495,8 +501,8 @@ const HUBER_DELTA: f64 = 1.3407807929942596e154 - 1.0; // f64::MAX ^ 0.5 - 1.0. 
 /// Calculates the huber loss and the gradient of the loss with respect to the actual value
 fn calculate_huber_loss_and_gradient(
     batch_actual: &[Vec<f64>],
-    batch_expected: &[Vec<f64>],
-    label_masks: &[BitVec]
+    batch_expected: &[&[f64]],
+    label_masks: &[&BitVec]
 ) -> (Vec<f64>, Vec<Vec<f64>>) {
     let mut loss = vec![0.0; batch_actual.len()];
     let mut gradients = vec![vec![0.0; batch_actual[0].len()]; batch_actual.len()];
