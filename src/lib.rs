@@ -74,6 +74,7 @@ pub mod training_options;
 
 use std::thread;
 
+use bitvec::vec::BitVec;
 use kan::{kan_error::KanError, Kan, ModelType};
 use log::{debug, info};
 use rand::thread_rng;
@@ -90,13 +91,30 @@ pub struct Sample {
     /// The input data for the model
     features: Vec<f64>,
     /// The expected output of the model
-    label: f64, // use a f64 so the size doesn't change between platforms
+    labels: Vec<f64>, // use a f64 so the size doesn't change between platforms
+    /// A mask of which label values are valid
+    label_mask: BitVec
 }
 
 impl Sample {
     /// Create a new Sample
-    pub fn new(features: Vec<f64>, label: f64) -> Self {
-        Sample { features, label }
+    /// 
+    /// # Arguments
+    /// * `features` - the input data for the model
+    /// * `labels` - the expected output of the model
+    /// * `label_mask` - a mask of which label values are valid. If label_mask[i] is false, labels[i] will be ignored during training
+    /// 
+    /// # Panics
+    /// Panics if `labels.len() != label_mask.len()`
+    /// 
+    /// # Notes
+    pub fn new(features: Vec<f64>, labels: Vec<f64>, label_mask: Vec<bool>) -> Self {
+        assert_eq!(label_mask.len(), labels.len(), "label_mask and labels must be the same length");
+        let mut l_mask = BitVec::with_capacity(label_mask.len());
+        for (idx, mask) in label_mask.iter().enumerate() {
+            l_mask.set(idx, *mask);
+        }
+        Sample { features, labels, label_mask: l_mask }
     }
 
     /// Get the features of the sample
@@ -104,8 +122,13 @@ impl Sample {
         &self.features
     }
     /// Get the label of the sample
-    pub fn label(&self) -> f64 {
-        self.label
+    pub fn label(&self) -> &[f64] {
+        &self.labels
+    }
+
+    /// Get the label mask of the sample
+    pub fn label_mask(&self) -> &BitVec {
+        &self.label_mask
     }
 }
 
