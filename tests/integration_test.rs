@@ -22,7 +22,7 @@ mod classification {
                 let y = thread_rng().gen_range(function_domain.clone());
                 let z = thread_rng().gen_range(function_domain.clone());
                 let label = ((x + y + z) > 0.0) as u32;
-                Sample::new(vec![x, y, z], label as f64)
+                Sample::new_classification_sample(vec![x, y, z], label as usize)
             })
             .collect::<Vec<Sample>>();
         let validation_data = (0..100)
@@ -31,7 +31,7 @@ mod classification {
                 let y = thread_rng().gen_range(function_domain.clone());
                 let z = thread_rng().gen_range(function_domain.clone());
                 let label = ((x + y + z) > 0.0) as u32;
-                Sample::new(vec![x, y, z], label as f64)
+                Sample::new_classification_sample(vec![x, y, z], label as usize)
             })
             .collect::<Vec<Sample>>();
 
@@ -86,7 +86,9 @@ mod classification {
         }
         let training_data: Vec<Sample> = function_domain
             .clone()
-            .map(|x| Sample::new(vec![x as f64], true_function(x as f64)))
+            .map(|x| {
+                Sample::new_classification_sample(vec![x as f64], true_function(x as f64) as usize)
+            })
             .collect();
         let untrained_model = Kan::new(&KanOptions {
             num_features: 1,
@@ -139,12 +141,12 @@ mod regression {
         for _ in 0..1000 {
             let x = rand.gen_range(-1000.0..1000.0);
             let y = rand.gen_range(-1000.0..1000.0);
-            training_data.push(Sample::new(vec![x, y], x * y));
+            training_data.push(Sample::new_regression_sample(vec![x, y], x * y));
         }
         for _ in 0..100 {
             let x = rand.gen_range(-1000.0..1000.0);
             let y = rand.gen_range(-1000.0..1000.0);
-            validation_data.push(Sample::new(vec![x, y], x * y));
+            validation_data.push(Sample::new_regression_sample(vec![x, y], x * y));
         }
         let mut untrained_model = Kan::new(&KanOptions {
             num_features: 2,
@@ -190,7 +192,7 @@ mod regression {
                 let x = thread_rng().gen_range(-1.0..1.0);
                 let y = thread_rng().gen_range(-1.0..1.0);
                 let label = true_function(x, y);
-                Sample::new(vec![x, y], label)
+                Sample::new_regression_sample(vec![x, y], label)
             })
             .collect::<Vec<Sample>>();
         let validation_data = (0..100)
@@ -198,7 +200,7 @@ mod regression {
                 let x = thread_rng().gen_range(-1.0..1.0);
                 let y = thread_rng().gen_range(-1.0..1.0);
                 let label = true_function(x, y);
-                Sample::new(vec![x, y], label)
+                Sample::new_regression_sample(vec![x, y], label)
             })
             .collect::<Vec<Sample>>();
         let mut untrained_model = Kan::new(&KanOptions {
@@ -258,7 +260,7 @@ mod regression {
                 let x = thread_rng().gen_range(x_range.clone());
                 let y = thread_rng().gen_range(y_range.clone());
                 let label = true_function(x, y);
-                Sample::new(vec![x, y], label)
+                Sample::new_regression_sample(vec![x, y], label)
             })
             .collect::<Vec<Sample>>();
         let validation_data = (0..1000)
@@ -266,7 +268,7 @@ mod regression {
                 let x = thread_rng().gen_range(x_range.clone());
                 let y = thread_rng().gen_range(y_range.clone());
                 let label = true_function(x, y);
-                Sample::new(vec![x, y], label)
+                Sample::new_regression_sample(vec![x, y], label)
             })
             .collect::<Vec<Sample>>();
         let mut untrained_model = Kan::new(&KanOptions {
@@ -307,6 +309,368 @@ mod regression {
         assert_eq!(prune_results, vec![(0, 1)])
     }
 
+    #[test]
+    // tests a model that trains on both labels every sample
+    fn full_multiregression() {
+        fn true_function(x: f64) -> Vec<f64> {
+            let new_x = x.powi(2);
+            vec![new_x.sin(), new_x.exp()]
+        }
+        let input_range = 0.0..2.5;
+        let rng = &mut thread_rng();
+        let training_data: Vec<Sample> = (0..1000)
+            .map(|_| {
+                let x = rng.gen_range(input_range.clone());
+                let labels = true_function(x);
+                Sample::new_multiregression_sample(vec![x], labels, vec![true, true])
+            })
+            .collect();
+        let validation_data: Vec<Sample> = (0..100)
+            .map(|_| {
+                let x = rng.gen_range(input_range.clone());
+                let labels = true_function(x);
+                Sample::new_multiregression_sample(vec![x], labels, vec![true, true])
+            })
+            .collect();
+        let mut untrained_model = Kan::new(&KanOptions {
+            num_features: 1,
+            layer_sizes: vec![1, 2],
+            degree: 3,
+            coef_size: 10,
+            model_type: ModelType::Regression,
+            class_map: None,
+            embedding_options: None,
+        });
+        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
+        let trained_model = train_model(
+            untrained_model,
+            &training_data,
+            TrainingOptions {
+                num_threads: 5,
+                num_epochs: 100,
+                learning_rate: 0.01,
+                each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,
+                ..TrainingOptions::default()
+            },
+        )
+        .unwrap();
+        let validation_loss = validate_model(&validation_data, &trained_model);
+        assert!(
+            validation_loss < untrained_validation_loss,
+            "Validation loss did not decrease after training. Before training: {}, After training: {}",
+            untrained_validation_loss,
+            validation_loss
+            );
+    }
+
+    #[test]
+    // tests a model that trains on one of two labels every sample, but both target functions are built from the same base function (let y = x^2, then f1 = sin(y), f2 = exp(y))
+    // which label each sample uses is determined by the value of x
+    fn partial_multiregression_identical_base_determined_split() {
+        fn true_function(x: f64) -> Vec<f64> {
+            let new_x = x.powi(2);
+            vec![new_x.sin(), new_x.exp()]
+        }
+        let input_range = 0.0..2.5;
+        let rng = &mut thread_rng();
+        let training_data: Vec<Sample> = (0..1000)
+            .map(|_| {
+                let x = rng.gen_range(input_range.clone());
+                let mut labels = true_function(x);
+                let mut label_mask = vec![true, true];
+                if x > 3.0 {
+                    labels[0] = 0.0;
+                    label_mask[0] = false;
+                } else {
+                    labels[1] = 0.0;
+                    label_mask[1] = false;
+                }
+                Sample::new_multiregression_sample(vec![x], labels, vec![true, false])
+            })
+            .collect();
+        let validation_data: Vec<Sample> = (0..100)
+            .map(|_| {
+                let x = rng.gen_range(input_range.clone());
+                let labels = true_function(x);
+                Sample::new_multiregression_sample(vec![x], labels, vec![true, false])
+            })
+            .collect();
+        let mut untrained_model = Kan::new(&KanOptions {
+            num_features: 1,
+            layer_sizes: vec![1, 2],
+            degree: 3,
+            coef_size: 10,
+            model_type: ModelType::Regression,
+            class_map: None,
+            embedding_options: None,
+        });
+        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
+        let trained_model = train_model(
+            untrained_model,
+            &training_data,
+            TrainingOptions {
+                num_threads: 5,
+                num_epochs: 100,
+                learning_rate: 0.01,
+                each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,
+                ..TrainingOptions::default()
+            },
+        )
+        .unwrap();
+        let validation_loss = validate_model(&validation_data, &trained_model);
+        assert!(
+            validation_loss < untrained_validation_loss,
+            "Validation loss did not decrease after training. Before training: {}, After training: {}",
+            untrained_validation_loss,
+            validation_loss
+            );
+    }
+
+    #[test]
+    // tests a model that trains on one of two labels every sample, but both target functions are built from the same base function (let y = x^2, then f1 = sin(y), f2 = exp(y))
+    // which label each sample uses is determined randomly
+    fn partial_multiregression_identical_base_random_split() {
+        fn true_function(x: f64) -> Vec<f64> {
+            let new_x = x.powi(2);
+            vec![new_x.sin(), new_x.exp()]
+        }
+        let input_range = 0.0..2.5;
+        let rng = &mut thread_rng();
+        let training_data: Vec<Sample> = (0..1000)
+            .map(|_| {
+                let x = rng.gen_range(input_range.clone());
+                let mut labels = true_function(x);
+                let mut label_mask = vec![true, true];
+                let use_first = rng.gen_bool(0.5);
+                if use_first {
+                    labels[1] = 0.0;
+                    label_mask[1] = false;
+                } else {
+                    labels[0] = 0.0;
+                    label_mask[0] = false;
+                }
+                Sample::new_multiregression_sample(vec![x], labels, vec![true, false])
+            })
+            .collect();
+        let validation_data: Vec<Sample> = (0..100)
+            .map(|_| {
+                let x = rng.gen_range(input_range.clone());
+                let labels = true_function(x);
+                Sample::new_multiregression_sample(vec![x], labels, vec![true, false])
+            })
+            .collect();
+        let mut untrained_model = Kan::new(&KanOptions {
+            num_features: 1,
+            layer_sizes: vec![1, 2],
+            degree: 3,
+            coef_size: 10,
+            model_type: ModelType::Regression,
+            class_map: None,
+            embedding_options: None,
+        });
+        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
+        let trained_model = train_model(
+            untrained_model,
+            &training_data,
+            TrainingOptions {
+                num_threads: 5,
+                num_epochs: 100,
+                learning_rate: 0.01,
+                each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,
+                ..TrainingOptions::default()
+            },
+        )
+        .unwrap();
+        let validation_loss = validate_model(&validation_data, &trained_model);
+        assert!(
+            validation_loss < untrained_validation_loss,
+            "Validation loss did not decrease after training. Before training: {}, After training: {}",
+            untrained_validation_loss,
+            validation_loss
+            );
+    }
+
+    #[test]
+    // tests a model that trains on one of two labels every sample, where each target function is a different function of x (let f1 = sin(x^2), f2 = exp(x))
+    // which label each sample uses is determined by the value of x
+    fn partial_multiregression_different_base_determined_split() {
+        fn true_function(x: f64) -> Vec<f64> {
+            vec![(x.powi(2)).sin(), x.exp()]
+        }
+        let input_range = 0.0..2.5;
+        let rng = &mut thread_rng();
+        let training_data: Vec<Sample> = (0..1000)
+            .map(|_| {
+                let x = rng.gen_range(input_range.clone());
+                let mut labels = true_function(x);
+                let mut label_mask = vec![true, true];
+                if x > 3.0 {
+                    labels[0] = 0.0;
+                    label_mask[0] = false;
+                } else {
+                    labels[1] = 0.0;
+                    label_mask[1] = false;
+                }
+                Sample::new_multiregression_sample(vec![x], labels, vec![true, false])
+            })
+            .collect();
+        let validation_data: Vec<Sample> = (0..100)
+            .map(|_| {
+                let x = rng.gen_range(input_range.clone());
+                let labels = true_function(x);
+                Sample::new_multiregression_sample(vec![x], labels, vec![true, false])
+            })
+            .collect();
+        let mut untrained_model = Kan::new(&KanOptions {
+            num_features: 1,
+            layer_sizes: vec![1, 2],
+            degree: 3,
+            coef_size: 10,
+            model_type: ModelType::Regression,
+            class_map: None,
+            embedding_options: None,
+        });
+        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
+        let trained_model = train_model(
+            untrained_model,
+            &training_data,
+            TrainingOptions {
+                num_threads: 5,
+                num_epochs: 100,
+                learning_rate: 0.01,
+                each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,
+                ..TrainingOptions::default()
+            },
+        )
+        .unwrap();
+        let validation_loss = validate_model(&validation_data, &trained_model);
+        assert!(
+        validation_loss < untrained_validation_loss,
+        "Validation loss did not decrease after training. Before training: {}, After training: {}",
+        untrained_validation_loss,
+        validation_loss
+        );
+    }
+
+    #[test]
+    // tests a model that trains on one of two labels every sample, where each target function is a different function of x (let f1 = sin(x^2), f2 = exp(x))
+    // which label each sample uses is determined randomly
+    fn partial_multiregression_different_base_random_split() {
+        fn true_function(x: f64) -> Vec<f64> {
+            vec![(x.powi(2)).sin(), x.exp()]
+        }
+        let input_range = 0.0..2.5;
+        let rng = &mut thread_rng();
+        let training_data: Vec<Sample> = (0..1000)
+            .map(|_| {
+                let x = rng.gen_range(input_range.clone());
+                let mut labels = true_function(x);
+                let mut label_mask = vec![true, true];
+                let use_first = rng.gen_bool(0.5);
+                if use_first {
+                    labels[1] = 0.0;
+                    label_mask[1] = false;
+                } else {
+                    labels[0] = 0.0;
+                    label_mask[0] = false;
+                }
+                Sample::new_multiregression_sample(vec![x], labels, vec![true, false])
+            })
+            .collect();
+        let validation_data: Vec<Sample> = (0..100)
+            .map(|_| {
+                let x = rng.gen_range(input_range.clone());
+                let labels = true_function(x);
+                Sample::new_multiregression_sample(vec![x], labels, vec![true, false])
+            })
+            .collect();
+        let mut untrained_model = Kan::new(&KanOptions {
+            num_features: 1,
+            layer_sizes: vec![1, 2],
+            degree: 3,
+            coef_size: 10,
+            model_type: ModelType::Regression,
+            class_map: None,
+            embedding_options: None,
+        });
+        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
+        let trained_model = train_model(
+            untrained_model,
+            &training_data,
+            TrainingOptions {
+                num_threads: 5,
+                num_epochs: 100,
+                learning_rate: 0.01,
+                each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,
+                ..TrainingOptions::default()
+            },
+        )
+        .unwrap();
+        let validation_loss = validate_model(&validation_data, &trained_model);
+        assert!(
+            validation_loss < untrained_validation_loss,
+            "Validation loss did not decrease after training. Before training: {}, After training: {}",
+            untrained_validation_loss,
+            validation_loss
+            );
+    }
+
+    #[test]
+    // tests a model that trains on two labels every sample, where each target function is a function of a different input (let f1 = sin(x), f2 = exp(y))
+    fn full_multiregression_distinct_functions() {
+        fn true_function(x: f64, y: f64) -> Vec<f64> {
+            vec![x.sin(), y.exp()]
+        }
+        let input_range = 0.0..6.0;
+        let training_data: Vec<Sample> = (0..1000)
+            .map(|_| {
+                let x = thread_rng().gen_range(input_range.clone());
+                let y = thread_rng().gen_range(input_range.clone());
+                let labels = true_function(x, y);
+                let label_mask = vec![true, true];
+                Sample::new_multiregression_sample(vec![x, y], labels, label_mask)
+            })
+            .collect();
+        let validation_data: Vec<Sample> = (0..100)
+            .map(|_| {
+                let x = thread_rng().gen_range(input_range.clone());
+                let y = thread_rng().gen_range(input_range.clone());
+                let labels = true_function(x, y);
+                let label_mask = vec![true, true];
+                Sample::new_multiregression_sample(vec![x, y], labels, label_mask)
+            })
+            .collect();
+        let mut untrained_model = Kan::new(&KanOptions {
+            num_features: 2,
+            layer_sizes: vec![2, 2],
+            degree: 3,
+            coef_size: 10,
+            model_type: ModelType::Regression,
+            class_map: None,
+            embedding_options: None,
+        });
+        let untrained_validation_loss = validate_model(&validation_data, &mut untrained_model);
+        let trained_model = train_model(
+            untrained_model,
+            &training_data,
+            TrainingOptions {
+                num_threads: 5,
+                num_epochs: 100,
+                learning_rate: 0.01,
+                each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,
+                ..TrainingOptions::default()
+            },
+        )
+        .unwrap();
+        let validation_loss = validate_model(&validation_data, &trained_model);
+        assert!(
+            validation_loss < untrained_validation_loss,
+            "Validation loss did not decrease after training. Before training: {}, After training: {}",
+            untrained_validation_loss,
+            validation_loss
+        );
+    }
+
     mod symbols {
         use super::*;
         use test_log::test;
@@ -322,14 +686,14 @@ mod regression {
                 .map(|_| {
                     let x: f64 = thread_rng().gen_range(input_range.clone());
                     let label = true_function(x);
-                    Sample::new(vec![x], label)
+                    Sample::new_regression_sample(vec![x], label)
                 })
                 .collect::<Vec<Sample>>();
             let validation_data = (0..100)
                 .map(|_| {
                     let x: f64 = thread_rng().gen_range(input_range.clone());
                     let label = true_function(x);
-                    Sample::new(vec![x], label)
+                    Sample::new_regression_sample(vec![x], label)
                 })
                 .collect::<Vec<Sample>>();
             let mut untrained_model = Kan::new(&KanOptions {
@@ -409,14 +773,14 @@ mod regression {
                 .map(|_| {
                     let x: f64 = thread_rng().gen_range(input_range.clone());
                     let label = true_function(x);
-                    Sample::new(vec![x], label)
+                    Sample::new_regression_sample(vec![x], label)
                 })
                 .collect::<Vec<Sample>>();
             let validation_data = (0..100)
                 .map(|_| {
                     let x: f64 = thread_rng().gen_range(input_range.clone());
                     let label = true_function(x);
-                    Sample::new(vec![x], label)
+                    Sample::new_regression_sample(vec![x], label)
                 })
                 .collect::<Vec<Sample>>();
             let mut untrained_model = Kan::new(&KanOptions {
@@ -496,14 +860,14 @@ mod regression {
                 .map(|_| {
                     let x: f64 = thread_rng().gen_range(input_range.clone());
                     let label = true_function(x);
-                    Sample::new(vec![x], label)
+                    Sample::new_regression_sample(vec![x], label)
                 })
                 .collect::<Vec<Sample>>();
             let validation_data = (0..100)
                 .map(|_| {
                     let x: f64 = thread_rng().gen_range(input_range.clone());
                     let label = true_function(x);
-                    Sample::new(vec![x], label)
+                    Sample::new_regression_sample(vec![x], label)
                 })
                 .collect::<Vec<Sample>>();
             let mut untrained_model = Kan::new(&KanOptions {

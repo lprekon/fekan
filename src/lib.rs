@@ -119,6 +119,33 @@ impl Sample {
         Sample { features, labels, label_mask: l_mask }
     }
 
+    /// Create a new sample for a classification model
+    /// # Arguments
+    /// * `features` - the input data for the model
+    /// * `label` - the expected class of the sample. This number corresponds to the index of the class in the output layer of the model
+    pub fn new_classification_sample(features: Vec<f64>, label: usize) -> Self {
+        Sample { features, labels: vec![label as f64], label_mask: BitVec::from_element(1) }
+    }
+
+    /// Create a new sample for a multiregression model
+    /// # Arguments
+    /// * `features` - the input data for the model
+    /// * `labels` - the expected output values of the model
+    /// * `label_mask` - a mask of which label values are valid. If label_mask[i] is false, labels[i] will be ignored during training
+    /// # Panics
+    /// Panics if `labels.len() != label_mask.len()`
+    pub fn new_multiregression_sample(features: Vec<f64>, labels: Vec<f64>, label_mask: Vec<bool>) -> Self {
+        Self::new(features, labels, label_mask)
+    }
+
+    /// Create a new sample for a single regression model
+    /// # Arguments
+    /// * `features` - the input data for the model
+    /// * `label` - the expected output value of the model
+    pub fn new_regression_sample(features: Vec<f64>, label: f64) -> Self {
+        Self::new(features, vec![label], vec![true])
+    }
+
     /// Get the features of the sample
     pub fn features(&self) -> &Vec<f64> {
         &self.features
