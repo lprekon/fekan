@@ -49,6 +49,7 @@ fekan build classifier --data dog_or_cat_data.json --classes "cat,dog" --degree 
 
 <details>
 <summary>where the data file looks like this...</summary>
+classification
 
 ```json
 [
@@ -62,6 +63,55 @@ fekan build classifier --data dog_or_cat_data.json --classes "cat,dog" --degree 
   }
 ]
 ```
+`fekan` will assign each distinct string found in the `label` field to a different output node, and store the mapping with the model for future use
+
+single regression
+
+```json
+[
+  {
+    features: [1.2, 3.14159, -22.0],
+    label: -0.01
+  }
+  {
+    features: [2.89, -0.002, 16.288844],
+    label: 100.5
+  }
+]
+```
+multi regression
+
+```json
+[
+  {
+    features: [1.2, 3.14159, -22.0],
+    label: [-0.01, 2.2]
+  }
+  {
+    features: [2.89, -0.002, 16.288844],
+    label: [100.5, 22.0]
+  }
+]
+```
+
+multiregression with label masking
+
+```json
+[
+  {
+    features: [1.2, 3.14159, -22.0],
+    label: [-0.01, 0.0]
+    label_mask: [true, false]
+  }
+  {
+    features: [2.89, -0.002, 16.288844],
+    label: [0.0, 22.0]
+    label_mask: [false, true]
+  }
+]
+```
+in the above example, the first sample will only be trained on the first label, and the second sample will only be trained on the second label, because those are the only labels with a corresponding `true` value in their resepective samples' `label_mask` field
+
 </details>
 
 

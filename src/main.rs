@@ -700,11 +700,12 @@ struct ClassificationSample {
     label: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 #[cfg_attr(test, derive(serde::Serialize, PartialEq))]
 struct RegressionSample {
     features: Vec<f64>,
-    label: f64,
+    labels: Vec<f64>,
+    label_mask: Option<Vec<bool>>,
 }
 
 const SUPPORTED_EXTENSIONS: [&str; 3] = ["pkl", "json", "avro"];
@@ -758,7 +759,7 @@ fn load_classification_data(
         }
         let label = class_map[&raw_sample.label];
         let features: Vec<f64> = raw_sample.features;
-        data.push(Sample::new(features, label as f64));
+        data.push(Sample::new_classification_sample(features, label as usize));
     }
 
     split_data(validation_split, data, rows_loaded)
@@ -797,12 +798,25 @@ fn load_regression_data(
     // turn the raw data into a vector of Samples
     let data: Vec<Sample> = data
         .into_iter()
-        .map(|raw_sample| Sample::new(raw_sample.features, raw_sample.label))
+        .map(|raw_sample| raw_regression_to_true_sample(raw_sample))
         .collect();
 
     println!("creating validation set");
     // separate the data into training and validation sets
     split_data(validation_split, data, rows_loaded)
+}
+
+fn raw_regression_to_true_sample(raw_sample: RegressionSample) -> Sample {
+    if raw_sample.labels.len() > 1 {
+        let label_count = raw_sample.labels.len();
+        Sample::new_multiregression_sample(
+            raw_sample.features,
+            raw_sample.labels,
+            raw_sample.label_mask.unwrap_or(vec![true; label_count]),
+        )
+    } else {
+        Sample::new_regression_sample(raw_sample.features, raw_sample.labels[0])
+    }
 }
 
 fn load_inference_data(data_file_path: &PathBuf) -> Result<Vec<Sample>, Box<dyn Error>> {
@@ -838,7 +852,7 @@ fn load_inference_data(data_file_path: &PathBuf) -> Result<Vec<Sample>, Box<dyn 
     // turn the raw data into a vector of Samples
     Ok(raw_data
         .into_iter()
-        .map(|raw_sample| Sample::new(raw_sample.features, 0.0))
+        .map(|raw_sample| Sample::new(raw_sample.features, vec![0.0], vec![false]))
         .collect())
 }
 
@@ -915,15 +929,28 @@ mod test_main {
         vec![
             RegressionSample {
                 features: vec![1.0, 2.0, 3.0],
-                label: -1.0,
+                labels: vec![-1.0 as f64],
+                label_mask: None,
             },
             RegressionSample {
                 features: vec![f64::MIN, 0.0, f64::MAX],
-                label: 0.001,
+                labels: vec![0.001 as f64],
+                label_mask: None,
             },
             RegressionSample {
                 features: vec![-1.1, -2.5, 9.7],
-                label: 3.14,
+                labels: vec![3.14 as f64],
+                label_mask: None,
+            },
+            RegressionSample {
+                features: vec![1.0, 2.0, 3.0],
+                labels: vec![1.0 as f64, 2.0 as f64],
+                label_mask: None,
+            },
+            RegressionSample {
+                features: vec![f64::MIN, 0.0, f64::MAX],
+                labels: vec![0.001 as f64, 0.002 as f64],
+                label_mask: Some(vec![true, false]),
             },
         ]
     }
@@ -940,7 +967,7 @@ mod test_main {
         let expected_data: Vec<Sample> = test_data
             .iter()
             .enumerate()
-            .map(|(i, sample)| Sample::new(sample.features.clone(), i as f64))
+            .map(|(i, sample)| Sample::new_classification_sample(sample.features.clone(), i))
             .collect();
         assert_eq!(expected_data, loaded_data);
     }
@@ -957,7 +984,7 @@ mod test_main {
         let expected_data: Vec<Sample> = test_data
             .iter()
             .enumerate()
-            .map(|(i, sample)| Sample::new(sample.features.clone(), i as f64))
+            .map(|(i, sample)| Sample::new_classification_sample(sample.features.clone(), i))
             .collect();
         assert_eq!(expected_data, loaded_data);
     }
@@ -996,8 +1023,8 @@ mod test_main {
         file.seek(std::io::SeekFrom::Start(0)).unwrap();
         let (loaded_data, _) = load_regression_data(&file_path, 0.0).unwrap();
         let expected_data: Vec<Sample> = test_data
-            .iter()
-            .map(|sample| Sample::new(sample.features.clone(), sample.label))
+            .into_iter()
+            .map(|sample| raw_regression_to_true_sample(sample))
             .collect();
         assert_eq!(expected_data, loaded_data);
     }
@@ -1008,13 +1035,14 @@ mod test_main {
         let file_path = tmp_dir.path().join("test.json");
         let mut file = File::create(&file_path).unwrap();
         let test_data = regression_data();
+        let expected_data: Vec<Sample> = test_data
+            .clone()
+            .into_iter()
+            .map(|sample| raw_regression_to_true_sample(sample))
+            .collect();
         serde_json::to_writer(&mut file, &test_data).unwrap();
         file.seek(std::io::SeekFrom::Start(0)).unwrap();
         let (loaded_data, _) = load_regression_data(&file_path, 0.0).unwrap();
-        let expected_data: Vec<Sample> = test_data
-            .iter()
-            .map(|sample| Sample::new(sample.features.clone(), sample.label))
-            .collect();
         assert_eq!(expected_data, loaded_data);
     }
 
