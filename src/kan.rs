@@ -478,7 +478,7 @@ impl Kan {
     /// #    embedding_options: None,
     /// };
     /// # let num_training_threads = 1;
-    /// # let training_data = vec![Sample::new(vec![], 0.0)];
+    /// # let training_data = vec![ Sample::new_regression_sample(vec![], 0.0) ];
     /// # fn my_train_model_function(model: Kan, data: &[Sample]) -> Kan {model}
     /// let mut my_model = Kan::new(&model_options);
     /// let partially_trained_models: Vec<Kan> = thread::scope(|s|{

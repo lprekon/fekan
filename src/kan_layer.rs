@@ -646,7 +646,7 @@ impl KanLayer {
     /// #    coef_size: 6
     /// # };
     /// # let num_training_threads = 1;
-    /// # let training_data = vec![Sample::new(vec![], 0.0)];
+    /// # let training_data = vec![Sample::new_regression_sample(vec![], 0.0)];
     /// # fn train_layer(layer: KanLayer, data: &[Sample]) -> KanLayer {layer}
     /// let my_layer = KanLayer::new(&layer_options);
     /// let partially_trained_layers: Vec<KanLayer> = thread::scope(|s|{

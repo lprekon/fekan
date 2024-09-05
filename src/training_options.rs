@@ -67,7 +67,7 @@ impl<'a> TrainingOptions<'_> {
         pruning_threshold: Option<f64>,
         num_threads: usize,
         each_epoch: EachEpoch<'a>,
-    ) -> Result<TrainingOptions, TrainingOptionsError> {
+    ) -> Result<TrainingOptions<'a>, TrainingOptionsError> {
         if knot_extension_targets.is_some() && knot_extension_times.is_none() {
             return Err(TrainingOptionsError::MissingKnotExtensionTimes);
         }

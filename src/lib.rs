@@ -45,8 +45,8 @@
 //! // train the model
 //! let training_data: Vec<Sample> = Vec::new();
 //! /* Load training data */
-//! # let sample_1 = Sample::new(vec![1.0, 2.0], 3.0);
-//! # let sample_2 = Sample::new(vec![-1.0, 1.0], 0.0);
+//! # let sample_1 = Sample::new_regression_sample(vec![1.0, 2.0], 3.0);
+//! # let sample_2 = Sample::new_regression_sample(vec![-1.0, 1.0], 0.0);
 //! # let training_data = vec![sample_1, sample_2];
 //!
 //! let trained_model = fekan::train_model(untrained_model, &training_data, TrainingOptions::default())?;
@@ -189,7 +189,7 @@ impl Sample {
 /// let untrained_model = Kan::new(&some_model_options);
 /// let mut training_data: Vec<Sample> = Vec::new();
 /// /* Load training data */
-/// # training_data.push(Sample::new(vec![1.0, 2.0], 3.0));
+/// # training_data.push(Sample::new_regression_sample(vec![1.0, 2.0], 3.0));
 ///
 /// let trained_model = train_model(
 ///     untrained_model,
@@ -210,8 +210,8 @@ impl Sample {
 /// let mut training_data: Vec<Sample> = Vec::new();
 /// let mut validation_data: Vec<Sample> = Vec::new();
 /// /* Load training and validation data */
-/// # training_data.push(Sample::new(vec![1.0, 2.0], 3.0));
-/// # validation_data.push(Sample::new(vec![1.0, 2.0], 3.0));
+/// # training_data.push(Sample::new_regression_sample(vec![1.0, 2.0], 3.0));
+/// # validation_data.push(Sample::new_regression_sample(vec![1.0, 2.0], 3.0));
 ///
 /// let trained_model = train_model(
 ///     untrained_model,
