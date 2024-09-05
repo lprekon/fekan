@@ -117,11 +117,11 @@ impl KanLayer {
     ///
     /// each vector in `preactivations` should be of length `input_dimension`, and each vector in the output will have length `output_dimension`
     /// # Errors
-    /// Returns an [`KanLayerError`] if
+    /// Returns an [`LayerError`] if
     /// * the length of any `preactivation` in `preactivations` is not equal to the input_dimension this layer
     /// * the output would contain NaNs.
     ///
-    /// See [`KanLayerError`] for more information
+    /// See [`LayerError`] for more information
     ///
     /// # Examples
     /// ```
@@ -210,7 +210,7 @@ impl KanLayer {
     /// This method should be used when the model is not being trained, for example during inference or validation: when you won't be backpropogating, this method is faster uses less memory than [`KanLayer::forward`]
     ///
     /// # Errors
-    /// Returns a [`KanLayerError`] if...
+    /// Returns a [`LayerError`] if...
     /// * the length of `preactivation` is not equal to the input_dimension this layer
     /// * the output would contain NaNs.
 
@@ -369,7 +369,7 @@ impl KanLayer {
     /// Calculated gradients are stored internally, and only applied during [`KanLayer::update`].
     ///
     /// # Errors
-    /// Returns a [`KanLayerError`] if...
+    /// Returns a [`LayerError`] if...
     /// * the length of `gradient` is not equal to the number of nodes in this layer (i.e this layer's output dimension)
     /// * this method is called before [`KanLayer::forward`]
     ///
@@ -628,7 +628,7 @@ impl KanLayer {
     /// Create a new KanLayer by merging the splines of multiple KanLayers. Splines are merged by averaging their knots and control points.
     /// `new_layer.splines[0] = spline_merge([layer1.splines[0], layer2.splines[0], ...])`, etc. The output of the merged layer is not necessarily the average of the outputs of the input layers.
     /// # Errors
-    /// Returns a [`KanLayerError`] if...
+    /// Returns a [`LayerError`] if...
     /// * `kan_layers` is empty
     /// * the input dimensions of the layers in `kan_layers` are not all equal
     /// * the output dimensions of the layers in `kan_layers` are not all equal
@@ -646,7 +646,7 @@ impl KanLayer {
     /// #    coef_size: 6
     /// # };
     /// # let num_training_threads = 1;
-    /// # let training_data = vec![Sample::new(vec![], 0.0)];
+    /// # let training_data = vec![Sample::new_regression_sample(vec![], 0.0)];
     /// # fn train_layer(layer: KanLayer, data: &[Sample]) -> KanLayer {layer}
     /// let my_layer = KanLayer::new(&layer_options);
     /// let partially_trained_layers: Vec<KanLayer> = thread::scope(|s|{
@@ -703,7 +703,7 @@ impl KanLayer {
         // let mut i = 0;
         // while let Some(splines) = splines_to_merge.pop_front() {
         //     let merge_result =
-        //         Edge::merge_edges(splines).map_err(|e| KanLayerError::spline_merge(i, e))?;
+        //         Edge::merge_edges(splines).map_err(|e| LayerError::spline_merge(i, e))?;
         //     i += 1;
         //     merged_splines.push(merge_result);
         // }
