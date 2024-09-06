@@ -468,7 +468,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     layer_sizes: layers,
                     degree: regressor_args.params.degree,
                     coef_size: regressor_args.params.num_coefficients,
-                    model_type: ModelType::Classification,
+                    model_type: ModelType::Regression,
                     class_map: None,
                     embedding_options,
                 };
