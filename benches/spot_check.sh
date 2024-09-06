@@ -14,7 +14,7 @@ trap 'rm -f $DATA_FILE' EXIT
 
 git rev-parse HEAD
 
-python3 generate_feynman_I-9-18_data.py 6000 > "$DATA_FILE"
+python3 generate_ellipj_data.py 6000 > "$DATA_FILE"
 
 
 cargo run --features serialization --profile release -- build regressor --data "$DATA_FILE" \

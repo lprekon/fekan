@@ -113,7 +113,6 @@ impl Sample {
     pub fn new(features: Vec<f64>, labels: Vec<f64>, label_mask: Vec<bool>) -> Self {
         assert_eq!(label_mask.len(), labels.len(), "label_mask and labels must be the same length");
         let mut l_mask = BitVec::with_capacity(label_mask.len());
-        println!("l_mask: {l_mask:?}");
         for mask in label_mask.iter() {
             l_mask.push(*mask);
         }

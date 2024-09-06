@@ -20,7 +20,7 @@ def generate_complex_data(num_samples):
         features = [u, m]  # Store inputs as a list of features
         sn, cn, dn, ph = ellipj(u, m)  # Compute the Jacobian elliptic functions
         label = sn  # Use the first of the four outputs as the label
-        sample = {"features": features, "label": label}  # Store the sample as a dictionary"
+        sample = {"features": features, "labels": [label]}  # Store the sample as a dictionary"
         samples.append(sample)
     return samples
 

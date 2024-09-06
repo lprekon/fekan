@@ -71,11 +71,11 @@ single regression
 [
   {
     features: [1.2, 3.14159, -22.0],
-    label: -0.01
+    labels: [-0.01]
   }
   {
     features: [2.89, -0.002, 16.288844],
-    label: 100.5
+    labels: [100.5]
   }
 ]
 ```
@@ -85,11 +85,11 @@ multi regression
 [
   {
     features: [1.2, 3.14159, -22.0],
-    label: [-0.01, 2.2]
+    labels: [-0.01, 2.2]
   }
   {
     features: [2.89, -0.002, 16.288844],
-    label: [100.5, 22.0]
+    labels: [100.5, 22.0]
   }
 ]
 ```
@@ -100,12 +100,12 @@ multiregression with label masking
 [
   {
     features: [1.2, 3.14159, -22.0],
-    label: [-0.01, 0.0]
+    labels: [-0.01, 0.0]
     label_mask: [true, false]
   }
   {
     features: [2.89, -0.002, 16.288844],
-    label: [0.0, 22.0]
+    labels: [0.0, 22.0]
     label_mask: [false, true]
   }
 ]

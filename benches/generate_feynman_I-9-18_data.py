@@ -16,7 +16,7 @@ def generate_function_data(num_samples):
         f = np.random.uniform(-3, 7)
         features = [a, b, c, d, e, f]
         label = a / ((b - 1) ** 2 + (c - d) ** 2 + (e - f) ** 2)
-        sample = {"features": features, "label": label}  # Store the sample as a dictionary"
+        sample = {"features": features, "labels": [label]}  # Store the sample as a dictionary"
         samples.append(sample)
     return samples
 

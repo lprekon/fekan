@@ -19,7 +19,7 @@ def generate_complex_data(num_samples):
         features = [x]  # Store inputs as a list of features
         y = 1.5 * (2.2 * x - 3) ** 2  # Compute the quadratic function
         label = y  # Use the first of the four outputs as the label
-        sample = {"features": features, "label": label}  # Store the sample as a dictionary"
+        sample = {"features": features, "labels": label}  # Store the sample as a dictionary"
         samples.append(sample)
     return samples
 

@@ -13,7 +13,7 @@ def generate_function_data(num_samples):
         y = np.random.uniform(-1, 1)
         label = np.exp(math.sin(math.pi * x) + y**2)
         features = [x, y]
-        sample = {"features": features, "label": label}  # Store the sample as a dictionary"
+        sample = {"features": features, "labels": label}  # Store the sample as a dictionary"
         samples.append(sample)
     return samples
 
