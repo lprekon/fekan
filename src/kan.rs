@@ -606,7 +606,7 @@ impl Kan {
         threshold: f64,
     ) -> Result<Vec<(usize, usize)>, KanError> {
         let mut pruned_edges = Vec::new();
-        let mut samples = match self.embedding_layer {
+        let mut samples = match &self.embedding_layer {
             None => samples,
             Some(embedding_layer) => embedding_layer
                 .infer(&samples)
