@@ -396,7 +396,7 @@ mod test {
         let embed = EmbeddingLayer::new(&embedding_options);
         assert_eq!(embed.embedding_table.len(), vocab_size);
         assert_eq!(embed.embedding_table[0].len(), embedding_dimension);
-        assert_eq!(embed.embedded_features.len(), 2); // the highest index in the embedded features + 1
+        assert_eq!(embed.embedded_features.len(), 3); // equal to the full input dimension
         assert_eq!(embed.embedded_features.count_ones(), 1);
         assert_eq!(embed.output_dimension, 6);
     }
