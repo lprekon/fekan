@@ -253,7 +253,7 @@ pub fn train_model(
             f32::ceil(shuffled_data.len() as f32 / options.num_threads as f32) as usize;
         let multithreaded_training: Result<Vec<(Kan, f64)>, TrainingError> = // I love that Result implements FromIterator, so Vec<Result<T,E>> gets automatically converted to Result<Vec<T>, E>
         thread::scope(|s| {
-            let handles: Vec<_> = training_data
+            let handles: Vec<_> = shuffled_data // I'm such a FUCKING idiot. I wasn't using the shuffled data before. I'm leaving this comment as a monument to my sins.
                 .chunks(chunk_size)
                 .map(|training_data_chunk| {
                     let cloned_model = model.clone();
