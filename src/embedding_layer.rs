@@ -68,12 +68,7 @@ impl EmbeddingLayer {
     /// # Ok::<(), fekan::layer_errors::LayerError>(())
     /// ```
     pub fn new(options: &EmbeddingOptions) -> Self {
-        let highest_embedded_index = *options
-            .embedded_features
-            .iter()
-            .max()
-            .expect("Embedding features should not be empty"); // the minimum number of features this layer should reasonably receive is at least as large as the larges index in the embedded features
-        let mut embedded_features_bitvec = BitVec::repeat(false, highest_embedded_index + 1); // +1 because the highest index needs to be included
+        let mut embedded_features_bitvec = BitVec::repeat(false, options.full_input_dimension); // full input dimension because we need a go/no-go for every feature. You'd think this was obvious, but I screwed it up the first time
         for feature in options.embedded_features.iter() {
             embedded_features_bitvec.set(*feature, true);
         }
