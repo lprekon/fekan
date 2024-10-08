@@ -22,7 +22,7 @@ use strum::{EnumIter, IntoEnumIterator};
 pub(crate) mod edge_errors;
 use edge_errors::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Edge {
     kind: EdgeType,
     #[serde(skip)]
@@ -32,7 +32,7 @@ pub(crate) struct Edge {
     l1_norm: Option<f64>,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize)]
 enum EdgeType {
     Spline {
         // degree, control points, and knots are the parameters of the spline
@@ -95,6 +95,51 @@ impl fmt::Debug for EdgeType {
                 write!(f, "Pruned")
             }
         }
+    }
+}
+
+impl PartialEq for EdgeType {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                EdgeType::Spline {
+                    degree: d1,
+                    control_points: cp1,
+                    knots: k1,
+                    ..
+                },
+                EdgeType::Spline {
+                    degree: d2,
+                    control_points: cp2,
+                    knots: k2,
+                    ..
+                },
+            ) => d1 == d2 && cp1 == cp2 && k1 == k2,
+            (
+                EdgeType::Symbolic {
+                    a: a1,
+                    b: b1,
+                    c: c1,
+                    d: d1,
+                    function: f1,
+                },
+                EdgeType::Symbolic {
+                    a: a2,
+                    b: b2,
+                    c: c2,
+                    d: d2,
+                    function: f2,
+                },
+            ) => a1 == a2 && b1 == b2 && c1 == c2 && d1 == d2 && f1 == f2,
+            (EdgeType::Pruned, EdgeType::Pruned) => true,
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq for Edge {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
     }
 }
 
