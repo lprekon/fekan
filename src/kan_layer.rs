@@ -274,6 +274,16 @@ impl KanLayer {
             Ok(())
         });
         threaded_result?;
+        self.layer_l1 = Some(
+            self.splines
+                .iter()
+                .map(|s| {
+                    s.l1_norm()
+                        .expect("edges should have L1 norm stored after forward pass")
+                })
+                .sum::<f64>()
+                / self.splines.len() as f64,
+        );
         let result = activations.lock().unwrap().clone();
         Ok(result)
     }
@@ -537,6 +547,89 @@ impl KanLayer {
         trace!("Backpropped gradients: {:?}", backpropped_gradients);
         self.layer_l1 = None; // The L1 should be re-set after the next forward pass, and backward should not be called before forward, so this serves as a (redundant) check
         Ok(backpropped_gradients)
+    }
+
+    /// as [`KanLayer::backward`], but divides the work among the passed number of threads
+    pub fn backward_multithreaded(
+        &mut self,
+        gradients: &[Vec<f64>],
+        num_threads: usize,
+    ) -> Result<Vec<Vec<f64>>, LayerError> {
+        for gradient in gradients.iter() {
+            if gradient.len() != self.output_dimension {
+                return Err(LayerError::missized_gradient(
+                    gradient.len(),
+                    self.output_dimension,
+                ));
+            }
+
+            if gradient.iter().any(|f| f.is_nan()) {
+                return Err(LayerError::nans_in_gradient());
+            }
+        }
+        if let None = self.layer_l1 {
+            return Err(LayerError::backward_before_forward(None, 0));
+        }
+        let layer_l1 = self.layer_l1.unwrap();
+
+        let num_gradients = gradients.len();
+        let mut transposed_gradients = vec![vec![0.0; num_gradients]; self.output_dimension];
+        for i in 0..num_gradients {
+            for j in 0..self.output_dimension {
+                let to_move_gradient = gradients[i][j]; // separate the lines for easier debugging
+                transposed_gradients[j][i] = to_move_gradient;
+            }
+        }
+        // dim0 = num_gradients, dim1 = input_dimension
+        let backpropped_gradients = Arc::new(Mutex::new(vec![
+            vec![0.0; self.input_dimension];
+            num_gradients
+        ]));
+        let backprop_result = thread::scope(|s| {
+            let edges_per_thread = (self.splines.len() as f64 / num_threads as f64).ceil() as usize;
+            let output_dimension = self.output_dimension;
+            let handles: Vec<ScopedJoinHandle<Result<Vec<Edge>, LayerError>>> = (0..num_threads)
+                .map(|thread_idx| {
+                    let edges_for_thread: Vec<Edge> = self
+                        .splines
+                        .drain(0..edges_per_thread.min(self.splines.len()))
+                        .collect();
+                    let transposed_gradients = &transposed_gradients;
+                    let threaded_gradients = Arc::clone(&backpropped_gradients);
+                    let thread_result = s.spawn(move || {
+                        let mut thread_edges = edges_for_thread; // explicitly move the edges into the thread because it makes me feel good
+                        for edge_index in 0..thread_edges.len() {
+                            let this_edge: &mut Edge = &mut thread_edges[edge_index];
+                            let true_edge_index = thread_idx * edges_per_thread + edge_index;
+                            let in_node_idx = true_edge_index / output_dimension;
+                            let out_node_idx = true_edge_index % output_dimension;
+                            let sample_wise_outputs = this_edge
+                                .backward(&transposed_gradients[out_node_idx], layer_l1)
+                                .map_err(|e| {
+                                    LayerError::backward_before_forward(Some(e), true_edge_index)
+                                })?;
+                            let mut mutex_acquired_gradients = threaded_gradients.lock().unwrap();
+                            for sample_idx in 0..num_gradients {
+                                let sample_gradients = &mut mutex_acquired_gradients[sample_idx];
+                                let in_node = &mut sample_gradients[in_node_idx];
+                                let edge_output = sample_wise_outputs[sample_idx];
+                                *in_node += edge_output;
+                            }
+                        }
+                        Ok(thread_edges)
+                    });
+                    thread_result
+                })
+                .collect();
+            for handle in handles {
+                let thread_result: Vec<Edge> = handle.join().unwrap()?;
+                self.splines.extend(thread_result);
+            }
+            Ok(())
+        });
+        backprop_result?;
+        let result = backpropped_gradients.lock().unwrap().clone();
+        Ok(result)
     }
 
     // /// as [KanLayer::backward], but divides the work among the passed thread pool
@@ -1031,6 +1124,46 @@ mod test {
         let preacts = vec![vec![0.0, 0.5]];
         let _ = layer.forward_multithreaded(preacts, 4).unwrap();
         assert_eq!(layer, reference_layer);
+    }
+
+    #[test]
+    fn test_forward_then_backward_multithreaded_result() {
+        let mut layer = build_test_layer();
+        let preacts = vec![vec![0.0, 0.5]];
+        let acts = layer.forward_multithreaded(preacts, 4).unwrap();
+        let expected_activations = vec![0.3177, -0.3177];
+        let rounded_activations: Vec<f64> = acts[0]
+            .iter()
+            .map(|x| (x * 10000.0).round() / 10000.0)
+            .collect();
+        assert_eq!(rounded_activations, expected_activations, "forward failed");
+
+        let error = vec![vec![1.0, 0.5]];
+        let input_error = layer.backward_multithreaded(&error, 4).unwrap();
+        let expected_input_error = vec![0.0, 1.20313];
+        let rounded_input_error: Vec<f64> = input_error[0]
+            .iter()
+            .map(|f| (f * 100000.0).round() / 100000.0)
+            .collect();
+        assert_eq!(rounded_input_error, expected_input_error, "backward failed");
+    }
+
+    #[test]
+    fn test_forward_then_backward_reassemble() {
+        let mut layer = build_test_layer();
+        let reference_layer = layer.clone();
+        let preacts = vec![vec![0.0, 0.5]];
+        let acts = layer.forward_multithreaded(preacts, 4).unwrap();
+        let expected_activations = vec![0.3177, -0.3177];
+        let rounded_activations: Vec<f64> = acts[0]
+            .iter()
+            .map(|x| (x * 10000.0).round() / 10000.0)
+            .collect();
+        assert_eq!(rounded_activations, expected_activations, "forward failed");
+
+        let error = vec![vec![1.0, 0.5]];
+        let _ = layer.backward_multithreaded(&error, 4).unwrap();
+        assert_eq!(layer, reference_layer, "edges not reassembled correctly");
     }
 
     // #[test]
