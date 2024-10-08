@@ -223,7 +223,6 @@ impl KanLayer {
          */
         let edges_per_thread = (self.splines.len() as f64 / num_threads as f64).ceil() as usize;
         let output_dimension = self.output_dimension;
-        let input_dimension = self.input_dimension;
         let threaded_result: Result<(), LayerError> = thread::scope(|s| {
             // since the threads will be adding to the activations vector themselves, they don't need to return anything but the edges they took ownership of
             let handles: Vec<ScopedJoinHandle<Result<Vec<Edge>, LayerError>>> = (0..num_threads)
@@ -240,7 +239,7 @@ impl KanLayer {
                             let this_edge: &mut Edge = &mut thread_edges[edge_index];
                             let true_edge_index = thread_idx * edges_per_thread + edge_index;
                             let in_node_idx = true_edge_index / output_dimension;
-                            let out_node_idx = true_edge_index % input_dimension;
+                            let out_node_idx = true_edge_index % output_dimension;
                             let sample_wise_outputs =
                                 this_edge.forward(&transposed_preacts[in_node_idx]);
 
@@ -255,8 +254,11 @@ impl KanLayer {
                             let mut mutex_acquired_activations =
                                 threaded_activations.lock().unwrap();
                             for sample_idx in 0..num_samples {
-                                mutex_acquired_activations[sample_idx][out_node_idx] +=
-                                    sample_wise_outputs[sample_idx];
+                                let sample_activations =
+                                    &mut mutex_acquired_activations[sample_idx];
+                                let out_node = &mut sample_activations[out_node_idx];
+                                let edge_output = sample_wise_outputs[sample_idx];
+                                *out_node += edge_output;
                             }
                         }
                         Ok(thread_edges) // give the edges back once we're done
