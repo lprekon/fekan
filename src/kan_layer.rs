@@ -9,7 +9,12 @@ use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use statrs::distribution::Normal; // apparently the statrs distributions use the rand Distribution trait
 
-use std::{collections::VecDeque, vec};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+    thread::{self, ScopedJoinHandle},
+    vec,
+};
 
 /// A layer in a Kolmogorov-Arnold neural Network (KAN)
 ///
@@ -154,7 +159,7 @@ impl KanLayer {
             }
         }
         // go output-node-by-output-node so we can sum as we go and reduce memory usage
-        // dim0 = output_dimension, dim1 = num_inputs
+        // dim0 = num_inputs, dim1 = output_dimension
         let mut activations = vec![vec![0.0; self.output_dimension]; num_inputs];
 
         // not the cleanest implementation maybe, but it'll work
@@ -187,6 +192,88 @@ impl KanLayer {
         );
         trace!("Activations: {:?}", activations);
         Ok(activations)
+    }
+
+    /// As [`KanLayer::forward`], but divides the work among the passed number of threads
+    pub fn forward_multithreaded(
+        &mut self,
+        preactivations: Vec<Vec<f64>>,
+        num_threads: usize,
+    ) -> Result<Vec<Vec<f64>>, LayerError> {
+        let num_samples = preactivations.len(); // grab this value, since we're about to move the preactivations into the internal cache
+        self.forward_preamble(preactivations)?;
+        // clone the last `num_inputs` preactivations from the internal cache (since we just moved them in), then transpose them so that dim0 = input_dimension, dim1 = number of samples
+        let mut transposed_preacts = vec![vec![0.0; num_samples]; self.input_dimension];
+        for i in 0..num_samples {
+            for j in 0..self.input_dimension {
+                transposed_preacts[j][i] = self.samples[i][j];
+            }
+        }
+        // dim0 = num_samples, dim1 = output_dimension
+        let activations = Arc::new(Mutex::new(vec![
+            vec![0.0; self.output_dimension];
+            num_samples
+        ]));
+
+        /* spawn new threads, give those threads ownership of chunks of splines (so they don't have to worry about locking spline chaches),
+         * a reference to the transposed preacts, and the activations vector behnd a mutex.
+         *
+         * The threads will need to return ownership of the edges; as long as we join the threads in the same order we spawned them,
+         * we should be able to reassemble the splines in the correct order without issue
+         */
+        let edges_per_thread = (self.splines.len() as f64 / num_threads as f64).ceil() as usize;
+        let output_dimension = self.output_dimension;
+        let input_dimension = self.input_dimension;
+        let threaded_result: Result<(), LayerError> = thread::scope(|s| {
+            // since the threads will be adding to the activations vector themselves, they don't need to return anything but the edges they took ownership of
+            let handles: Vec<ScopedJoinHandle<Result<Vec<Edge>, LayerError>>> = (0..num_threads)
+                .map(|thread_idx| {
+                    let edges_for_thread: Vec<Edge> = self
+                        .splines
+                        .drain(0..edges_per_thread.min(self.splines.len()))
+                        .collect();
+                    let transposed_preacts = &transposed_preacts;
+                    let threaded_activations = Arc::clone(&activations);
+                    let thread_result = s.spawn(move || {
+                        let mut thread_edges = edges_for_thread; // just to explicitly move the edges into the thread
+                        for edge_index in 0..thread_edges.len() {
+                            let this_edge: &mut Edge = &mut thread_edges[edge_index];
+                            let true_edge_index = thread_idx * edges_per_thread + edge_index;
+                            let in_node_idx = true_edge_index / output_dimension;
+                            let out_node_idx = true_edge_index % input_dimension;
+                            let sample_wise_outputs =
+                                this_edge.forward(&transposed_preacts[in_node_idx]);
+
+                            if sample_wise_outputs.iter().any(|v| v.is_nan()) {
+                                return Err(LayerError::nans_in_activations(
+                                    edge_index,
+                                    sample_wise_outputs,
+                                    this_edge.clone(),
+                                ));
+                            }
+
+                            let mut mutex_acquired_activations =
+                                threaded_activations.lock().unwrap();
+                            for sample_idx in 0..num_samples {
+                                mutex_acquired_activations[sample_idx][out_node_idx] +=
+                                    sample_wise_outputs[sample_idx];
+                            }
+                        }
+                        Ok(thread_edges) // give the edges back once we're done
+                    });
+                    thread_result
+                })
+                .collect();
+            // reassmble the splines in the correct order
+            for handle in handles {
+                let thread_result = handle.join().unwrap()?;
+                self.splines.extend(thread_result);
+            }
+            Ok(())
+        });
+        threaded_result?;
+        let result = activations.lock().unwrap().clone();
+        Ok(result)
     }
 
     /// check the length of the preactivation vector and save the inputs to the internal cache
@@ -920,6 +1007,28 @@ mod test {
             .map(|f| (f * 100000.0).round() / 100000.0)
             .collect();
         assert_eq!(rounded_input_error, expected_input_error, "backward failed");
+    }
+
+    #[test]
+    fn test_forward_multithreaded_activations() {
+        let mut layer = build_test_layer();
+        let preacts = vec![vec![0.0, 0.5]];
+        let acts = layer.forward_multithreaded(preacts, 4).unwrap();
+        let expected_activations = vec![0.3177, -0.3177];
+        let rounded_activations: Vec<f64> = acts[0]
+            .iter()
+            .map(|x| (x * 10000.0).round() / 10000.0)
+            .collect();
+        assert_eq!(rounded_activations, expected_activations);
+    }
+
+    #[test]
+    fn test_forward_multhreaded_reassemble() {
+        let mut layer = build_test_layer();
+        let reference_layer = layer.clone();
+        let preacts = vec![vec![0.0, 0.5]];
+        let _ = layer.forward_multithreaded(preacts, 4).unwrap();
+        assert_eq!(layer, reference_layer);
     }
 
     // #[test]
