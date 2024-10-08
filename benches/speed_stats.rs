@@ -77,6 +77,42 @@ fn bench_forward(b: &mut Bencher) {
 }
 
 #[bench]
+fn bench_one_threaded_forward(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    b.iter(|| {
+        let _ = layer.forward_multithreaded(batch_inputs.clone(), 1);
+    });
+}
+
+#[bench]
+fn bench_two_threaded_forward(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    b.iter(|| {
+        let _ = layer.forward_multithreaded(batch_inputs.clone(), 2);
+    });
+}
+
+#[bench]
+fn bench_four_threaded_forward(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    b.iter(|| {
+        let _ = layer.forward_multithreaded(batch_inputs.clone(), 4);
+    });
+}
+
+#[bench]
+fn bench_eight_threaded_forward(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    b.iter(|| {
+        let _ = layer.forward_multithreaded(batch_inputs.clone(), 8);
+    });
+}
+
+#[bench]
 fn bench_backward(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
     let batch_inputs = generate_batch_inputs();
