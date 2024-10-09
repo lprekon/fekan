@@ -120,8 +120,52 @@ fn bench_backward(b: &mut Bencher) {
     let batch_gradients = generate_batch_gradients();
     b.iter(|| {
         // run multiple times per iteration so cache improvements will show
+        let gradients = test::black_box(&batch_gradients);
+        let _ = test::black_box(layer.backward(gradients));
+    });
+}
 
-        let _ = layer.backward(&batch_gradients);
+#[bench]
+fn bench_one_threaded_backward(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+    let batch_gradients = generate_batch_gradients();
+    b.iter(|| {
+        let _ = layer.backward_multithreaded(&batch_gradients, 1);
+    });
+}
+
+#[bench]
+fn bench_two_threaded_backward(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+    let batch_gradients = generate_batch_gradients();
+    b.iter(|| {
+        let _ = layer.backward_multithreaded(&batch_gradients, 2);
+    });
+}
+
+#[bench]
+fn bench_four_threaded_backward(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+    let batch_gradients = generate_batch_gradients();
+    b.iter(|| {
+        let _ = layer.backward_multithreaded(&batch_gradients, 4);
+    });
+}
+
+#[bench]
+fn bench_eight_threaded_backward(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+    let batch_gradients = generate_batch_gradients();
+    b.iter(|| {
+        let _ = layer.backward_multithreaded(&batch_gradients, 8);
     });
 }
 
