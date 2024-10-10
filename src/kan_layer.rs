@@ -849,6 +849,43 @@ impl KanLayer {
         }
     }
 
+    pub fn update_multithreaded(
+        &mut self,
+        learning_rate: f64,
+        l1_penalty: f64,
+        entropy_penalty: f64,
+        num_threads: usize,
+    ) {
+        let edges_per_thread = (self.splines.len() as f64 / num_threads as f64).ceil() as usize;
+        thread::scope(|s| {
+            let handles: Vec<ScopedJoinHandle<Vec<Edge>>> = (0..num_threads)
+                .map(|thread_idx| {
+                    let edges_for_thread: Vec<Edge> = self
+                        .splines
+                        .drain(0..edges_per_thread.min(self.splines.len()))
+                        .collect();
+                    let thread_result = s.spawn(move || {
+                        let mut thread_edges = edges_for_thread; // just to explicitly move the edges into the thread
+                        for edge_index in 0..thread_edges.len() {
+                            let this_edge: &mut Edge = &mut thread_edges[edge_index];
+                            this_edge.update_control_points(
+                                learning_rate,
+                                l1_penalty,
+                                entropy_penalty,
+                            );
+                        }
+                        thread_edges // make sure to give the edges back once we're done
+                    });
+                    thread_result
+                })
+                .collect();
+            for handle in handles {
+                let thread_result: Vec<Edge> = handle.join().unwrap();
+                self.splines.extend(thread_result);
+            }
+        });
+    }
+
     /// clear gradients for each incoming edge in this layer
     ///
     /// # Examples
