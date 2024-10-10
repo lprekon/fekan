@@ -439,6 +439,60 @@ impl KanLayer {
         Ok(())
     }
 
+    pub fn update_knots_from_samples_multithreaded(
+        &mut self,
+        knot_adaptivity: f64,
+        num_threads: usize,
+    ) -> Result<(), LayerError> {
+        if self.samples.is_empty() {
+            return Err(LayerError::no_samples());
+        }
+
+        let mut sorted_samples: Vec<Vec<f64>> =
+            vec![Vec::with_capacity(self.samples.len()); self.input_dimension];
+        for i in 0..self.samples.len() {
+            for j in 0..self.input_dimension {
+                sorted_samples[j].push(self.samples[i][j]); // remember, push is just an indexed insert that checks capacity first. As long as capacity isn't exceeded, push is O(1)
+            }
+        }
+
+        // dim0 = input_dimension, dim1 = number of samples
+        // now we sort along dim1
+        for j in 0..self.input_dimension {
+            sorted_samples[j].sort_by(|a, b| a.partial_cmp(b).unwrap());
+        }
+        // TODO: it might be worth checking if the above operation would be faster if I changed the order of the loops and sorted inside the outer loop. Maybe something to do with cache performance?
+        let edges_per_thread = (self.splines.len() as f64 / num_threads as f64).ceil() as usize;
+        let output_dimension = self.output_dimension;
+        thread::scope(|s| {
+            let handles: Vec<ScopedJoinHandle<Vec<Edge>>> = (0..num_threads)
+                .map(|thread_idx| {
+                    let edges_for_thread: Vec<Edge> = self
+                        .splines
+                        .drain(0..edges_per_thread.min(self.splines.len()))
+                        .collect();
+                    let sorted_samples = &sorted_samples;
+                    s.spawn(move || {
+                        let mut thread_edges = edges_for_thread; // just to explicitly move the edges into the thread
+                        for edge_idx in 0..thread_edges.len() {
+                            let this_edge = &mut thread_edges[edge_idx];
+                            let true_edge_idx = thread_idx * edges_per_thread + edge_idx;
+                            let input_idx = true_edge_idx / output_dimension;
+                            let samples = &sorted_samples[input_idx];
+                            this_edge.update_knots_from_samples(samples, knot_adaptivity);
+                        }
+                        thread_edges // make sure to give the edges back once we're done
+                    })
+                })
+                .collect();
+            for handle in handles {
+                let thread_result: Vec<Edge> = handle.join().unwrap();
+                self.splines.extend(thread_result);
+            }
+        });
+        Ok(())
+    }
+
     /// wipe the internal state that tracks the samples used to update the knot vectors
     ///
     /// # Examples
@@ -1237,6 +1291,22 @@ mod test {
         let error = vec![vec![1.0, 0.5, 0.5]];
         let input_error = layer.backward(&error);
         assert!(input_error.is_err());
+    }
+
+    #[test]
+    fn test_update_knots_from_samples_multithreaded_results_and_reassemble() {
+        let mut layer = build_test_layer();
+        let preacts = vec![vec![0.0, 1.0], vec![0.5, 2.0]];
+        let _ = layer.forward_multithreaded(preacts, 4).unwrap();
+        layer
+            .update_knots_from_samples_multithreaded(0.0, 4)
+            .unwrap();
+        let expected_knots_1 = vec![-0.1875, -0.125, -0.0625, 0.0, 0.5, 0.5625, 0.625, 0.6875]; // accounts for the padding added in Edge::update_knots_from_samples
+        let expected_knots_2 = vec![0.625, 0.75, 0.875, 1.0, 2.0, 2.125, 2.25, 2.375]; // accounts for the padding added in Edge::update_knots_from_samples
+        assert_eq!(layer.splines[0].knots(), expected_knots_1, "edge 0");
+        assert_eq!(layer.splines[1].knots(), expected_knots_1, "edge 1");
+        assert_eq!(layer.splines[2].knots(), expected_knots_2, "edge 2");
+        assert_eq!(layer.splines[3].knots(), expected_knots_2, "edge 3");
     }
 
     #[test]

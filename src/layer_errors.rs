@@ -279,7 +279,7 @@ impl fmt::Display for LayerError {
                     self.spline_idx
                         .expect("NaNsInActivations error must have a spline index"),
                     preacts,
-                    offending_spline.knots().collect::<Vec<&f64>>()
+                    offending_spline.knots()
                 )
             }
             LayerErrorType::MissizedGradient { actual, expected } => {
