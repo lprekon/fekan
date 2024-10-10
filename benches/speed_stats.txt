@@ -1,5 +1,5 @@
 
-running 63 tests
+running 64 tests
 test embedding_layer::test::test_build_embedding_table ... ignored
 test embedding_layer::test::test_embed_float ... ignored
 test embedding_layer::test::test_embedding_forward ... ignored
@@ -57,6 +57,7 @@ test kan_layer::test::test_layer_send ... ignored
 test kan_layer::test::test_layer_sync ... ignored
 test kan_layer::test::test_merge_identical_layers_yield_identical_output ... ignored
 test kan_layer::test::test_new ... ignored
+test kan_layer::test::test_update_knots_from_samples_multithreaded_results_and_reassemble ... ignored
 test layer_errors::test::test_layer_error_send ... ignored
 test layer_errors::test::test_layer_error_sync ... ignored
 test test::test_error_send ... ignored
@@ -64,25 +65,37 @@ test test::test_error_sync ... ignored
 test test::test_nll_loss_and_gradient ... ignored
 test test::test_nll_loss_and_gradient_2 ... ignored
 
-test result: ok. 0 passed; 0 failed; 63 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 64 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
-running 15 tests
-test bench_backward                  ... bench:          21.44 ns/iter (+/- 2.20)
-test bench_eight_threaded_backward   ... bench:   3,923,487.45 ns/iter (+/- 2,090,102.06)
-test bench_eight_threaded_forward    ... bench:   2,819,970.85 ns/iter (+/- 586,558.21)
-test bench_forward                   ... bench:  10,895,250.00 ns/iter (+/- 892,027.12)
-test bench_four_threaded_backward    ... bench:   4,073,097.90 ns/iter (+/- 617,858.39)
-test bench_four_threaded_forward     ... bench:   3,215,343.75 ns/iter (+/- 772,923.52)
-test bench_one_threaded_backward     ... bench:  14,910,391.60 ns/iter (+/- 223,291.54)
-test bench_one_threaded_forward      ... bench:  11,339,275.00 ns/iter (+/- 6,885,226.71)
-test bench_prune                     ... bench:      47,606.77 ns/iter (+/- 5,584.50)
-test bench_set_knot_length           ... bench:  30,243,262.50 ns/iter (+/- 2,763,135.44)
-test bench_suggest_symbolic          ... bench:  87,426,574.90 ns/iter (+/- 17,804,329.86)
-test bench_two_threaded_backward     ... bench:   8,191,122.95 ns/iter (+/- 1,026,137.08)
-test bench_two_threaded_forward      ... bench:   5,783,010.45 ns/iter (+/- 403,477.71)
-test bench_update                    ... bench:      82,350.51 ns/iter (+/- 760.37)
-test bench_update_knots_from_samples ... bench:   1,069,404.18 ns/iter (+/- 84,307.10)
+running 27 tests
+test bench_backward                                 ... bench:          21.44 ns/iter (+/- 0.23)
+test bench_eight_threaded_backward                  ... bench:   3,854,533.35 ns/iter (+/- 618,984.32)
+test bench_eight_threaded_forward                   ... bench:   2,733,392.67 ns/iter (+/- 110,175.44)
+test bench_eight_threaded_set_knot_length           ... bench:  29,592,816.70 ns/iter (+/- 760,459.94)
+test bench_eight_threaded_update                    ... bench:     110,980.64 ns/iter (+/- 2,304.26)
+test bench_eight_threaded_update_knots_from_samples ... bench:     666,496.09 ns/iter (+/- 502,057.84)
+test bench_forward                                  ... bench:  10,844,845.70 ns/iter (+/- 1,290,718.75)
+test bench_four_threaded_backward                   ... bench:   4,224,981.30 ns/iter (+/- 1,451,672.66)
+test bench_four_threaded_forward                    ... bench:   3,154,212.45 ns/iter (+/- 1,778,553.35)
+test bench_four_threaded_set_knot_length            ... bench:  29,607,545.90 ns/iter (+/- 5,989,609.97)
+test bench_four_threaded_update                     ... bench:     101,713.61 ns/iter (+/- 9,620.80)
+test bench_four_threaded_update_knots_from_samples  ... bench:     654,305.21 ns/iter (+/- 95,147.92)
+test bench_one_threaded_backward                    ... bench:  14,991,858.40 ns/iter (+/- 673,057.52)
+test bench_one_threaded_forward                     ... bench:  10,811,854.20 ns/iter (+/- 635,187.88)
+test bench_one_threaded_set_knot_length             ... bench:  29,645,537.50 ns/iter (+/- 1,240,403.72)
+test bench_one_threaded_update                      ... bench:     121,273.57 ns/iter (+/- 27,534.52)
+test bench_one_threaded_update_knots_from_samples   ... bench:   1,217,179.15 ns/iter (+/- 286,003.72)
+test bench_prune                                    ... bench:      45,968.33 ns/iter (+/- 539.21)
+test bench_set_knot_length                          ... bench:  30,026,520.80 ns/iter (+/- 7,229,331.22)
+test bench_suggest_symbolic                         ... bench:  83,398,179.10 ns/iter (+/- 8,813,557.59)
+test bench_two_threaded_backward                    ... bench:   7,784,562.50 ns/iter (+/- 226,626.07)
+test bench_two_threaded_forward                     ... bench:   5,711,268.75 ns/iter (+/- 236,141.23)
+test bench_two_threaded_set_knot_length             ... bench:  29,555,433.30 ns/iter (+/- 804,492.09)
+test bench_two_threaded_update                      ... bench:     103,663.02 ns/iter (+/- 1,775.68)
+test bench_two_threaded_update_knots_from_samples   ... bench:     806,902.07 ns/iter (+/- 30,034.17)
+test bench_update                                   ... bench:      82,118.24 ns/iter (+/- 342.15)
+test bench_update_knots_from_samples                ... bench:   1,068,520.83 ns/iter (+/- 32,461.97)
 
-test result: ok. 0 passed; 0 failed; 0 ignored; 15 measured; 0 filtered out; finished in 78.44s
+test result: ok. 0 passed; 0 failed; 0 ignored; 27 measured; 0 filtered out; finished in 149.12s
 

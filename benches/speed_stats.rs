@@ -182,12 +182,96 @@ fn bench_update(b: &mut Bencher) {
 }
 
 #[bench]
+fn bench_one_threaded_update(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+    let error = vec![(0..OUTPUT_DIMENSION_BIG)
+        .map(|_| thread_rng().gen())
+        .collect()];
+    let _ = layer.backward(&error);
+    b.iter(|| layer.update_multithreaded(0.1, 0.75, 0.25, 1));
+}
+
+#[bench]
+fn bench_two_threaded_update(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+    let error = vec![(0..OUTPUT_DIMENSION_BIG)
+        .map(|_| thread_rng().gen())
+        .collect()];
+    let _ = layer.backward(&error);
+    b.iter(|| layer.update_multithreaded(0.1, 0.75, 0.25, 2));
+}
+
+#[bench]
+fn bench_four_threaded_update(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+    let error = vec![(0..OUTPUT_DIMENSION_BIG)
+        .map(|_| thread_rng().gen())
+        .collect()];
+    let _ = layer.backward(&error);
+    b.iter(|| layer.update_multithreaded(0.1, 0.75, 0.25, 4));
+}
+
+#[bench]
+fn bench_eight_threaded_update(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+    let error = vec![(0..OUTPUT_DIMENSION_BIG)
+        .map(|_| thread_rng().gen())
+        .collect()];
+    let _ = layer.backward(&error);
+    b.iter(|| layer.update_multithreaded(0.1, 0.75, 0.25, 8));
+}
+
+#[bench]
 fn bench_update_knots_from_samples(b: &mut Bencher) {
     let mut layer = big_layer_big_spline();
     let batch_inputs = generate_batch_inputs();
     let _ = layer.forward(batch_inputs);
 
     b.iter(|| layer.update_knots_from_samples(0.1));
+}
+
+#[bench]
+fn bench_one_threaded_update_knots_from_samples(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+
+    b.iter(|| layer.update_knots_from_samples_multithreaded(0.1, 1));
+}
+
+#[bench]
+fn bench_two_threaded_update_knots_from_samples(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+
+    b.iter(|| layer.update_knots_from_samples_multithreaded(0.1, 2));
+}
+
+#[bench]
+fn bench_four_threaded_update_knots_from_samples(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+
+    b.iter(|| layer.update_knots_from_samples_multithreaded(0.1, 4));
+}
+
+#[bench]
+fn bench_eight_threaded_update_knots_from_samples(b: &mut Bencher) {
+    let mut layer = big_layer_big_spline();
+    let batch_inputs = generate_batch_inputs();
+    let _ = layer.forward(batch_inputs);
+
+    b.iter(|| layer.update_knots_from_samples_multithreaded(0.1, 8));
 }
 
 #[bench]
@@ -200,6 +284,54 @@ fn bench_set_knot_length(b: &mut Bencher) {
     });
 
     b.iter(|| layer.set_knot_length(COEF_SIZE_BIG * 2));
+}
+
+#[bench]
+fn bench_one_threaded_set_knot_length(b: &mut Bencher) {
+    let mut layer = KanLayer::new(&KanLayerOptions {
+        input_dimension: 1,
+        output_dimension: 1,
+        degree: 3,
+        coef_size: COEF_SIZE_BIG,
+    });
+
+    b.iter(|| layer.set_knot_length_multithreaded(COEF_SIZE_BIG * 2, 1));
+}
+
+#[bench]
+fn bench_two_threaded_set_knot_length(b: &mut Bencher) {
+    let mut layer = KanLayer::new(&KanLayerOptions {
+        input_dimension: 1,
+        output_dimension: 1,
+        degree: 3,
+        coef_size: COEF_SIZE_BIG,
+    });
+
+    b.iter(|| layer.set_knot_length_multithreaded(COEF_SIZE_BIG * 2, 2));
+}
+
+#[bench]
+fn bench_four_threaded_set_knot_length(b: &mut Bencher) {
+    let mut layer = KanLayer::new(&KanLayerOptions {
+        input_dimension: 1,
+        output_dimension: 1,
+        degree: 3,
+        coef_size: COEF_SIZE_BIG,
+    });
+
+    b.iter(|| layer.set_knot_length_multithreaded(COEF_SIZE_BIG * 2, 4));
+}
+
+#[bench]
+fn bench_eight_threaded_set_knot_length(b: &mut Bencher) {
+    let mut layer = KanLayer::new(&KanLayerOptions {
+        input_dimension: 1,
+        output_dimension: 1,
+        degree: 3,
+        coef_size: COEF_SIZE_BIG,
+    });
+
+    b.iter(|| layer.set_knot_length_multithreaded(COEF_SIZE_BIG * 2, 8));
 }
 
 #[bench]
