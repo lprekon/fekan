@@ -439,6 +439,7 @@ impl KanLayer {
         Ok(())
     }
 
+    /// as [`KanLayer::update_knots_from_samples`], but divides the work among the passed number of threads
     pub fn update_knots_from_samples_multithreaded(
         &mut self,
         knot_adaptivity: f64,
@@ -849,6 +850,7 @@ impl KanLayer {
         }
     }
 
+    /// as [`KanLayer::update`], but divides the work among the passed number of threads
     pub fn update_multithreaded(
         &mut self,
         learning_rate: f64,
@@ -859,7 +861,7 @@ impl KanLayer {
         let edges_per_thread = (self.splines.len() as f64 / num_threads as f64).ceil() as usize;
         thread::scope(|s| {
             let handles: Vec<ScopedJoinHandle<Vec<Edge>>> = (0..num_threads)
-                .map(|thread_idx| {
+                .map(|_| {
                     let edges_for_thread: Vec<Edge> = self
                         .splines
                         .drain(0..edges_per_thread.min(self.splines.len()))

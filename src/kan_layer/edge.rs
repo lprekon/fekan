@@ -16,7 +16,7 @@ use log::{debug, trace};
 use nalgebra::{DMatrix, DVector, SVD};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, fmt, slice::Iter, thread, vec};
+use std::{collections::VecDeque, fmt, thread, vec};
 use strum::{EnumIter, IntoEnumIterator};
 
 pub(crate) mod edge_errors;
