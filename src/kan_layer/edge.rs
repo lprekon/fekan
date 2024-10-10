@@ -501,7 +501,7 @@ impl Edge {
 
     #[allow(dead_code)]
     // used in tests for parent module
-    pub(crate) fn knots<'a>(&'a self) -> Iter<'a, f64> {
+    pub(crate) fn knots<'a>(&'a self) -> &'a [f64] {
         match &self.kind {
             EdgeType::Spline {
                 degree: _,
@@ -509,8 +509,8 @@ impl Edge {
                 knots,
                 activations: _,
                 gradients: _,
-            } => knots.iter(),
-            _ => Iter::default(),
+            } => knots,
+            _ => &[],
         }
     }
 
@@ -664,7 +664,9 @@ impl Edge {
 
     /// Find symbolic functions that best fit the spline over the given input data. Return the `num_suggestions` best fits, along with their coefficients of determination (R^2)
     ///
-    /// IMPORTANT NOTE: despite my wishes, this function does an unreliable job at suggesting constant functions. I'm not going to make constant function a class, because I'm just going to add a bias node at some point
+    /// Already multithreads - no need for multithreading in the caller
+    ///
+    ///  IMPORTANT NOTE: despite my wishes, this function does an unreliable job at suggesting constant functions. I'm not going to make constant function a class, because I'm just going to add a bias node at some point
     pub(super) fn suggest_symbolic(&self, num_suggestions: usize) -> Vec<(Edge, f64)> {
         // if the edge is pruned or symbolic, don't suggest anything
         if matches!(&self.kind, EdgeType::Pruned) || matches!(&self.kind, EdgeType::Symbolic { .. })

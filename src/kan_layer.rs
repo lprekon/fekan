@@ -776,6 +776,46 @@ impl KanLayer {
         Ok(())
     }
 
+    /// as [`KanLayer::set_knot_length`], but divides the work among the passed number of threads
+    pub fn set_knot_length_multithreaded(
+        &mut self,
+        knot_length: usize,
+        num_threads: usize,
+    ) -> Result<(), LayerError> {
+        let edges_per_thread = (self.splines.len() as f64 / num_threads as f64).ceil() as usize;
+        let threaded_result: Result<(), LayerError> = thread::scope(|s| {
+            let handles: Vec<ScopedJoinHandle<Result<Vec<Edge>, LayerError>>> = (0..num_threads)
+                .map(|thread_idx| {
+                    let edges_for_thread: Vec<Edge> = self
+                        .splines
+                        .drain(0..edges_per_thread.min(self.splines.len()))
+                        .collect();
+                    let thread_result = s.spawn(move || {
+                        let mut thread_edges = edges_for_thread; // just to explicitly move the edges into the thread
+                        for edge_index in 0..thread_edges.len() {
+                            let this_edge: &mut Edge = &mut thread_edges[edge_index];
+                            this_edge.set_knot_length(knot_length).map_err(|e| {
+                                LayerError::set_knot_length(
+                                    edge_index + thread_idx * edges_per_thread,
+                                    e,
+                                )
+                            })?;
+                        }
+                        Ok(thread_edges) // give the edges back once we're done
+                    });
+                    thread_result
+                })
+                .collect();
+            for handle in handles {
+                let thread_result = handle.join().unwrap()?;
+                self.splines.extend(thread_result);
+            }
+            Ok(())
+        });
+        threaded_result?;
+        Ok(())
+    }
+
     /// return the length of the knot vectors for each incoming edge in this layer
     /// # Examples
     /// ```
