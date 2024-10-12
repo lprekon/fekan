@@ -285,6 +285,33 @@ impl Kan {
         Ok(preacts)
     }
 
+    /// as [`Kan::forward`], but uses multiple threads to forward the input through the model
+    pub fn forward_multithreaded(
+        &mut self,
+        input: Vec<Vec<f64>>,
+        num_threads: usize,
+    ) -> Result<Vec<Vec<f64>>, KanError> {
+        debug!(
+            "Forwarding {} samples through model using {} threads",
+            input.len(),
+            num_threads
+        );
+        trace!("Preactivations: {:?}", input);
+        let mut preacts = input;
+        if let Some(embedding_layer) = self.embedding_layer.as_mut() {
+            preacts = embedding_layer
+                .forward(preacts)
+                .map_err(|e| KanError::forward(e, 0))?;
+        }
+        for (idx, layer) in self.layers.iter_mut().enumerate() {
+            debug!("Forwarding through layer {}", idx);
+            preacts = layer
+                .forward_multithreaded(preacts, num_threads)
+                .map_err(|e| KanError::forward(e, idx))?;
+        }
+        Ok(preacts)
+    }
+
     /// as [`Kan::forward`], but does not accumulate any internal state
     ///
     /// This method should be used when the model is not being trained, for example during inference or validation: when you won't be backpropogating, this method is faster uses less memory than [`Kan::forward`]
@@ -303,6 +330,26 @@ impl Kan {
         for (idx, layer) in self.layers.iter().enumerate() {
             preacts = layer
                 .infer(&preacts)
+                .map_err(|e| KanError::forward(e, idx))?;
+        }
+        Ok(preacts)
+    }
+
+    /// as [`Kan::infer`], but uses multiple threads to forward the input through the model
+    pub fn infer_multithreaded(
+        &self,
+        input: Vec<Vec<f64>>,
+        num_threads: usize,
+    ) -> Result<Vec<Vec<f64>>, KanError> {
+        let mut preacts = input;
+        if let Some(embedding_layer) = self.embedding_layer.as_ref() {
+            preacts = embedding_layer
+                .infer(&preacts)
+                .map_err(|e| KanError::forward(e, 0))?;
+        }
+        for (idx, layer) in self.layers.iter().enumerate() {
+            preacts = layer
+                .infer_multithreaded(&preacts, num_threads)
                 .map_err(|e| KanError::forward(e, idx))?;
         }
         Ok(preacts)
@@ -367,6 +414,28 @@ impl Kan {
         Ok(())
     }
 
+    /// as [`Kan::backward`], but uses multiple threads to back-propogate the gradient through the model
+    pub fn backward_multithreaded(
+        &mut self,
+        gradients: Vec<Vec<f64>>,
+        num_threads: usize,
+    ) -> Result<(), KanError> {
+        debug!("Backwarding {} gradients through model", gradients.len());
+        let mut gradients = gradients;
+        for (idx, layer) in self.layers.iter_mut().enumerate().rev() {
+            gradients = layer
+                .backward_multithreaded(&gradients, num_threads)
+                .map_err(|e| KanError::backward(e, idx))?;
+        }
+        if let Some(embedding_layer) = self.embedding_layer.as_mut() {
+            embedding_layer
+                .backward(gradients)
+                .map_err(|e| KanError::backward(e, 0))?;
+        }
+
+        Ok(())
+    }
+
     /// Update the model's parameters based on the gradients that have been accumulated with [`Kan::backward`].
     /// # Example
     /// see [`Kan::backward`]
@@ -419,6 +488,23 @@ impl Kan {
         for (idx, layer) in self.layers.iter_mut().enumerate() {
             debug!("Updating knots for layer {}", idx);
             if let Err(e) = layer.update_knots_from_samples(knot_adaptivity) {
+                return Err(KanError::update_knots(e, idx));
+            }
+        }
+        return Ok(());
+    }
+
+    /// as [`Kan::update_knots_from_samples`], but uses multiple threads to update the knot vectors
+    pub fn update_knots_from_samples_multithreaded(
+        &mut self,
+        knot_adaptivity: f64,
+        num_threads: usize,
+    ) -> Result<(), KanError> {
+        for (idx, layer) in self.layers.iter_mut().enumerate() {
+            debug!("Updating knots for layer {}", idx);
+            if let Err(e) =
+                layer.update_knots_from_samples_multithreaded(knot_adaptivity, num_threads)
+            {
                 return Err(KanError::update_knots(e, idx));
             }
         }
