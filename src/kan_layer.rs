@@ -343,6 +343,88 @@ impl KanLayer {
         Ok(activations)
     }
 
+    /// as [`KanLayer::infer`], but divides the work among the passed number of threads
+    pub fn infer_multithreaded(
+        &self,
+        preactivations: &[Vec<f64>],
+        num_threads: usize,
+    ) -> Result<Vec<Vec<f64>>, LayerError> {
+        for preactivation in preactivations.iter() {
+            if preactivation.len() != self.input_dimension {
+                return Err(LayerError::missized_preacts(
+                    preactivation.len(),
+                    self.input_dimension,
+                ));
+            }
+        }
+        let num_inputs = preactivations.len();
+        let mut transposed_preacts = vec![vec![0.0; num_inputs]; self.input_dimension];
+        for i in 0..num_inputs {
+            for j in 0..self.input_dimension {
+                transposed_preacts[j][i] = preactivations[i][j];
+            }
+        }
+
+        let activations = Arc::new(Mutex::new(vec![
+            vec![0.0; self.output_dimension];
+            num_inputs
+        ]));
+
+        let edges_per_thread = (self.splines.len() as f64 / num_threads as f64).ceil() as usize;
+        let output_dimension = self.output_dimension;
+        let num_samples = preactivations.len();
+        let threaded_result: Result<(), LayerError> = thread::scope(|s| {
+            // since the threads will be adding to the activations vector themselves, they don't need to return anything but the edges they took ownership of
+            let handles: Vec<ScopedJoinHandle<Result<(), LayerError>>> = (0..num_threads)
+                .map(|thread_idx| {
+                    let edges_for_thread: &[Edge] = &self.splines
+                        [thread_idx * edges_per_thread..(thread_idx + 1) * edges_per_thread];
+                    let transposed_preacts = &transposed_preacts;
+                    let threaded_activations = Arc::clone(&activations);
+                    let thread_result = s.spawn(move || {
+                        let thread_edges = edges_for_thread; // just to explicitly move the edges into the thread
+                        for edge_index in 0..thread_edges.len() {
+                            let this_edge: &Edge = &thread_edges[edge_index];
+                            let true_edge_index = thread_idx * edges_per_thread + edge_index;
+                            let in_node_idx = true_edge_index / output_dimension;
+                            let out_node_idx = true_edge_index % output_dimension;
+                            let sample_wise_outputs =
+                                this_edge.infer(&transposed_preacts[in_node_idx]);
+
+                            if sample_wise_outputs.iter().any(|v| v.is_nan()) {
+                                return Err(LayerError::nans_in_activations(
+                                    edge_index,
+                                    sample_wise_outputs,
+                                    this_edge.clone(),
+                                ));
+                            }
+
+                            let mut mutex_acquired_activations =
+                                threaded_activations.lock().unwrap();
+                            for sample_idx in 0..num_samples {
+                                let sample_activations =
+                                    &mut mutex_acquired_activations[sample_idx];
+                                let out_node = &mut sample_activations[out_node_idx];
+                                let edge_output = sample_wise_outputs[sample_idx];
+                                *out_node += edge_output;
+                            }
+                        }
+                        Ok(()) // give the edges back once we're done
+                    });
+                    thread_result
+                })
+                .collect();
+            // reassmble the splines in the correct order
+            for handle in handles {
+                handle.join().unwrap()?;
+            }
+            Ok(())
+        });
+        threaded_result?;
+
+        let result = activations.lock().unwrap().clone();
+        Ok(result)
+    }
     /// Using samples memoized by [`KanLayer::forward`], update the knot vectors for each incoming edge in this layer.
     ///
     /// When `knot_adaptivity` is 0, the new knot vectors will be uniformly distributed over the range spanned by the samples;
