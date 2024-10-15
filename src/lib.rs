@@ -173,7 +173,7 @@ impl Sample {
 ///
 /// # Notes
 /// * if training_data.len() % knot_update_interval == 0, the knot update interval will be increased by 1 until the modulo is no longer 0, to ensure the knots are not updated at the very end of an epoch, which prevents grid extension after the epoch
-///
+/// * this function is optimized for multi-threaded training of small models and batches, which can fit in memory several times over. For larger models, please consider writing your own training loop using the multi-threaded functions provided in by the [`Kan`], struct such [`Kan::forward_multithreaded`], [`Kan::backward_multithreaded`]
 /// # Errors
 /// returns a [TrainingError] if the model reports an error at any point during training.
 ///

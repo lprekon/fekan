@@ -1364,7 +1364,7 @@ mod test {
     }
 
     #[test]
-    fn test_forward_then_backward_reassemble() {
+    fn test_forward_then_backward_multithreaded_reassemble() {
         let mut layer = build_test_layer();
         let reference_layer = layer.clone();
         let preacts = vec![vec![0.0, 0.5]];
