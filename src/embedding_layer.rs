@@ -15,8 +15,9 @@ pub struct EmbeddingLayer {
     output_dimension: usize,
     embedding_dimension: usize,
 
-    #[serde(skip)]
+    // this field wasn't being serialized because their values represented operating state, not identity. However, it needs to be initialized to an appropriate size when deserializing, and manually implementing serde::Deserialize is more trouble than I want right now, so I'm just going to serialize them.
     embedding_gradients: Vec<Vec<f64>>,
+
     #[serde(skip)]
     past_inputs: Vec<Vec<f64>>,
 }

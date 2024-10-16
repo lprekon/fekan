@@ -46,11 +46,10 @@ enum EdgeType {
         /// the most recent parameter used in the forward pass
 
         /// the activations of the spline at each interval, stored from calls to [`forward()`](Spline::forward) and cleared on calls to [`update_knots_from_samples()`](Spline::update_knots_from_samples)
-        #[serde(skip)] // only used during training
+        // the following two fields weren't being serialized because their values represented operating state, not identity. However, they need to be initialized to an appropriate size when deserializing, and manually implementing serde::Deserialize is more trouble than I want right now, so I'm just going to serialize them.
         /// dim0: degree (idx 0 = self.degree, idx 1 = self.degree - 1, etc.), dim1: control point index, dim2: t value
         activations: Vec<Vec<FxHashMap<u64, f64>>>,
         /// accumulated gradients for each control point
-        #[serde(skip)] // only used during training
         gradients: Vec<Gradient>,
     },
     Symbolic {
@@ -143,7 +142,7 @@ impl PartialEq for Edge {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 struct Gradient {
     prediction_gradient: f64,
     l1_gradient: f64,
