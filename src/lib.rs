@@ -1,5 +1,6 @@
 #![warn(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
+#![feature(portable_simd)]
 
 //! A library to build and train Kolmogorov-Arnold neural networks.
 //!

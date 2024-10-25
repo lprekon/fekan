@@ -1212,6 +1212,70 @@ fn basis_cached(
     return result;
 }
 
+/// calculate the basis activation over all i values at once - testing compiler autovectorization
+fn basis_autovectorize_across_i(i: &[usize], k: usize, t: f64, knots: &[f64]) -> Vec<f64> {
+    if k == 0 {
+        let mut result = Vec::with_capacity(i.len());
+        for i_val in i {
+            if knots[*i_val] <= t && t < knots[*i_val + 1] {
+                result.push(1.0);
+            } else {
+                result.push(0.0);
+            }
+        }
+        return result;
+    }
+    let left_coefficients: Vec<f64> = i
+        .iter()
+        .map(|i_val| (t - knots[*i_val]) / (knots[*i_val + k] - knots[*i_val]))
+        .collect();
+    let right_coefficients: Vec<f64> = i
+        .iter()
+        .map(|i_val| (knots[*i_val + k + 1] - t) / (knots[*i_val + k + 1] - knots[*i_val + 1]))
+        .collect();
+    let left_vals = basis_autovectorize_across_i(i, k - 1, t, knots);
+    let right_is: Vec<usize> = i.iter().map(|i_val| i_val + 1).collect();
+    let right_vals = basis_autovectorize_across_i(&right_is, k - 1, t, knots);
+
+    let left_results = left_coefficients
+        .iter()
+        .zip(left_vals.iter())
+        .map(|(c, v)| c * v);
+    let right_results = right_coefficients
+        .iter()
+        .zip(right_vals.iter())
+        .map(|(c, v)| c * v);
+    return left_results
+        .zip(right_results)
+        .map(|(l, r)| l + r)
+        .collect();
+}
+
+use std::simd::prelude::*;
+/// calculate the basis activation over multiple i values at once, using the rust portable SIMD crate
+#[inline] // recommended by the crate docs to avoid large function prologues and epilogues, since SIMD values passed/returned in memory and not in registers due to ABI/safety guarantees
+fn basis_portable_simd_across_i(i: usizex4, k: usize, t: f64, knots: &[f64]) -> f64x4 {
+    let knots_i = Simd::gather_or(knots, i, f64x4::splat(-1.0));
+    let knots_i_1 = Simd::gather_or(knots, i + usizex4::splat(1), f64x4::splat(-1.0));
+    let t_splat = f64x4::splat(t);
+    if k == 0 {
+        let left_mask = knots_i.simd_le(t_splat);
+        let right_mask = t_splat.simd_lt(knots_i_1);
+        let full_mask = left_mask & right_mask;
+        trace!("k: {k}, t:{t}\ni_vec: {i:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nleft_mask: {left_mask:?}\nright_mask: {right_mask:?}\nfull_mask: {full_mask:?}\n");
+        return full_mask.select(f64x4::splat(1.0), f64x4::splat(0.0));
+    }
+    let knots_i_k = Simd::gather_or(knots, i + usizex4::splat(k), f64x4::splat(-1.0));
+    let knots_i_k_1 = Simd::gather_or(knots, i + usizex4::splat(k + 1), f64x4::splat(-1.0));
+    let left_coefficients = (t_splat - knots_i) / (knots_i_k - knots_i);
+    let right_coefficients = (knots_i_k_1 - t_splat) / (knots_i_k_1 - knots_i_1);
+    let left_vals = basis_portable_simd_across_i(i, k - 1, t, knots);
+    let right_vals = basis_portable_simd_across_i(i + usizex4::splat(1), k - 1, t, knots);
+    let result = left_coefficients * left_vals + right_coefficients * right_vals;
+    trace!("k: {k}, t: {t}\ni_vec: {i:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nknots_i_plus_k_plus_1: {knots_i_k_1:?}\nleft_coefficients: {left_coefficients:?}\nleft_vals: {left_vals:?}\nright_coefficients: {right_coefficients:?}\nright_vals: {right_vals:?}\nresult: {result:?}\n");
+    return result;
+}
+
 /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
 /// These functions need to be outside the impl block because they need to borrow the cache mutably, which would conflict with the borrow of self used to iterate over the coefficients
 fn basis_no_cache(i: usize, k: usize, t: f64, knots: &[f64]) -> f64 {
@@ -1877,6 +1941,68 @@ mod tests {
         let inputs = linspace(0.5, 5.5, 30);
         spline.prune(&inputs, 1e-6);
         assert!(matches!(spline.kind, EdgeType::Spline { .. }));
+    }
+
+    mod simd {
+
+        use super::*;
+        use test_log::test;
+
+        #[test]
+        fn test_basis_autovec_i() {
+            let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+            let expected_results = vec![0.0513, 0.5782, 0.3648, 0.0057];
+            let k = 3;
+            let t = 0.95;
+            let result = basis_autovectorize_across_i(&[0, 1, 2, 3], k, t, &knots);
+            let rounded_result: Vec<f64> = result
+                .iter()
+                .map(|r| (r * 10000.0).round() / 10000.0)
+                .collect();
+            assert_eq!(rounded_result, expected_results);
+        }
+
+        #[test]
+        fn test_basis_portable_i_k0() {
+            let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+            let i_vec = usizex4::from_array([0, 1, 2, 3]);
+            let t = 0.3;
+            let expected_results = f64x4::from_array([0.0, 1.0, 0.0, 0.0]);
+            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots);
+            assert_eq!(result, expected_results, "knot[1] < t < knot[2]");
+
+            let t = 0.95;
+            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots);
+            let expected_results = f64x4::from_array([0.0, 0.0, 0.0, 1.0]);
+            assert_eq!(result, expected_results, "knot[3] < t < knot[4]");
+
+            let t = 1.5;
+            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots);
+            let expected_results = f64x4::from_array([0.0, 0.0, 0.0, 0.0]);
+            assert_eq!(result, expected_results, "t > knot[5]");
+
+            let t = -0.5;
+            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots);
+            let expected_results = f64x4::from_array([0.0, 0.0, 0.0, 0.0]);
+            assert_eq!(result, expected_results, "t < knot[0]");
+        }
+
+        #[test]
+        fn test_basis_portable_i_k3() {
+            let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+            let k = 3;
+            let t = 0.95;
+            let expected_results: Vec<f64> =
+                (0..4).map(|i| basis_no_cache(i, k, t, &knots)).collect();
+            let i_vec = usizex4::from_array([0, 1, 2, 3]);
+            let result = basis_portable_simd_across_i(i_vec, k, t, &knots);
+            // let rounded_result: Vec<f64> = result
+            //     .to_array()
+            //     .iter()
+            //     .map(|r| (r * 10000.0).round() / 10000.0)
+            //     .collect();
+            assert_eq!(result.to_array().to_vec(), expected_results);
+        }
     }
 
     mod symbolic_tests {
