@@ -1282,42 +1282,49 @@ fn basis_portable_simd_across_i(i_vec: usizex4, k: usize, t: f64, knots: &[f64])
     target_feature = "sse2",
     target_feature = "avx2",
 ))]
-/// calculate the basis activation over multiple i values at once, using extended x86 intrinsics. Takes 4 32-bit integers as the `i` values, and returns 4 64-bit floats as the basis values
-fn basis_x86_intrinsics_across_i(i_vec: __m128i, k: usize, t: f64, knots: &[f64]) -> __m256d {
+/// calculate the basis activation over multiple i values at once, using extended x86 intrinsics. Takes 4 64-bit integers as the `i` values, and returns 4 64-bit floats as the basis values
+fn basis_x86_intrinsics_across_i(
+    i_vec: std::arch::x86_64::__m256i,
+    k: usize,
+    t: f64,
+    knots: &[f64],
+) -> std::arch::x86_64::__m256d {
     use std::arch::x86_64::*;
-    let t_splat = unsafe { _mm_set_pd1(t) };
-    let knots_i = unsafe { _mm256_i32gather_pd(i_vec, knots.as_ptr(), 1) };
-    let i_1 = unsafe { _mm128_add_epi32(i_vec, _mm128_set1_epi32(1)) };
-    let knots_i_1 = unsafe { _mm256_i32gather_pd(i_1, knots.as_ptr(), 1) };
-    if k == 0 {
-        let left_mask = unsafe { _mm256_cmp_pd_mask(knots_i, t_splat, _CMP_LE_OQ) };
-        let right_mask = unsafe { _mm256_cmp_pd_mask(t_splat, knots_i_1, _CMP_LT_OQ) };
-        let full_mask = left_mask & right_mask;
-        return unsafe {
-            // _mm256_mask_blend_pd(full_mask, _mm256_set1_pd(1.0), _mm256_set1_pd(0.0))
-            _mm256_set1_pd(1.0) & full_mask
-        };
+    // unsafe justification: this function is only available when both SSE2 and AVX2 are enabled, which promises the availability of all instructions below
+    unsafe {
+        let t_splat: __m256d = _mm256_set1_pd(t);
+        let knots_i = _mm256_i64gather_pd::<1>(knots.as_ptr(), i_vec);
+
+        let i_1 = _mm256_add_epi64(i_vec, _mm256_set1_epi64x(1));
+        let knots_i_1 = _mm256_i64gather_pd::<1>(knots.as_ptr(), i_1);
+        if k == 0 {
+            let left_mask = _mm256_cmp_pd(knots_i, t_splat, _CMP_LE_OQ);
+            let right_mask = _mm256_cmp_pd(t_splat, knots_i_1, _CMP_LT_OQ);
+            let full_mask = _mm256_and_pd(left_mask, right_mask);
+            return
+                // _mm256_mask_blend_pd(full_mask, _mm256_set1_pd(1.0), _mm256_set1_pd(0.0))
+                _mm256_and_pd(_mm256_set1_pd(1.0) , full_mask);
+        }
+        let i_k = _mm256_add_epi64(i_vec, _mm256_set1_epi64x(k.try_into().unwrap()));
+        let i_k_1 = _mm256_add_epi32(i_vec, _mm256_set1_epi32((k + 1) as i32));
+        let knots_i_k = _mm256_i64gather_pd::<1>(knots.as_ptr(), i_k);
+        let knots_i_k_1 = _mm256_i64gather_pd::<1>(knots.as_ptr(), i_k_1);
+        let left_numerator = _mm256_sub_pd(t_splat, knots_i);
+        let left_denominator = _mm256_sub_pd(knots_i_k, knots_i);
+        let left_coefficients = _mm256_div_pd(left_numerator, left_denominator);
+
+        let right_numerator = _mm256_sub_pd(knots_i_k_1, t_splat);
+        let right_denominator = _mm256_sub_pd(knots_i_k_1, knots_i_1);
+        let right_coefficients = _mm256_div_pd(right_numerator, right_denominator);
+
+        let left_vals = basis_x86_intrinsics_across_i(i_vec, k - 1, t, knots);
+        let right_vals = basis_x86_intrinsics_across_i(i_1, k - 1, t, knots);
+
+        let left_results = _mm256_mul_pd(left_coefficients, left_vals);
+        let right_results = _mm256_mul_pd(right_coefficients, right_vals);
+        let result = _mm256_add_pd(left_results, right_results);
+        return result;
     }
-    let i_k = unsafe { _mm128_add_epi32(i_vec, _mm128_set1_epi32(k as i32)) };
-    let i_k_1 = unsafe { _mm128_add_epi32(i_vec, _mm128_set1_epi32((k + 1) as i32)) };
-    let knots_i_k = unsafe { _mm256_i32gather_pd(i_k, knots.as_ptr(), 1) };
-    let knots_i_k_1 = unsafe { _mm256_i32gather_pd(i_k_1, knots.as_ptr(), 1) };
-
-    let left_numerator = unsafe { _mm256_sub_pd(t_splat, knots_i) };
-    let left_denominator = unsafe { _mm256_sub_pd(knots_i_k, knots_i) };
-    let left_coefficients = unsafe { _mm256_div_pd(left_numerator, left_denominator) };
-
-    let right_numerator = unsafe { _mm256_sub_pd(knots_i_k_1, t_splat) };
-    let right_denominator = unsafe { _mm256_sub_pd(knots_i_k_1, knots_i_1) };
-    let right_coefficients = unsafe { _mm256_div_pd(right_numerator, right_denominator) };
-
-    let left_vals = basis_x86_intrinsics_across_i(i_vec, k - 1, t, knots);
-    let right_vals = basis_x86_intrinsics_across_i(i_1, k - 1, t, knots);
-
-    let left_results = unsafe { _mm256_mul_pd(left_coefficients, left_vals) };
-    let right_results = unsafe { _mm256_mul_pd(right_coefficients, right_vals) };
-    let result = unsafe { _mm256_add_pd(left_results, right_results) };
-    return result;
 }
 
 /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
