@@ -2059,20 +2059,22 @@ mod tests {
         #[cfg(all(
             target_arch = "x86_64",
             target_feature = "sse2",
-            target_feature = "avx512f",
+            target_feature = "avx2",
         ))]
         fn test_basis_x86_i_k0() {
             use std::{arch::x86_64::*, mem};
             let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-            let i_slice = [0, 1, 2, 3];
-            let i_vec = unsafe { _mm_load_si128(i_slice.as_ptr() as *const __m128i) };
+            let i_slice: [i64; 4] = [0, 1, 2, 3];
+            let i_vec = unsafe { mem::transmute(i_slice) };
+
             let t = 0.3;
             let expected_results = vec![0.0, 1.0, 0.0, 0.0];
 
             let result: __m256d = basis_x86_intrinsics_across_i(i_vec, 0, t, &knots);
-            let transmuted_result: [f64; 4] = mem::transmute(result); // the in-memory representation of a __m256d is the same as an array of 4 f64s
+            let transmuted_result: [f64; 4] = unsafe { mem::transmute(result) };
+
             assert_eq!(
-                trasmuted_result.to_vec(),
+                transmuted_result.to_vec(),
                 expected_results,
                 "knot[1] < t < knot[2]"
             );
@@ -2080,9 +2082,9 @@ mod tests {
             let t = 0.95;
             let expected_results = vec![0.0, 0.0, 0.0, 1.0];
             let result: __m256d = basis_x86_intrinsics_across_i(i_vec, 0, t, &knots);
-            let transmuted_result: [f64; 4] = mem::transmute(result); // the in-memory representation of a __m256d is the same as an array of 4 f64s
+            let transmuted_result: [f64; 4] = unsafe { mem::transmute(result) };
             assert_eq!(
-                trasmuted_result.to_vec(),
+                transmuted_result.to_vec(),
                 expected_results,
                 "knot[3] < t < knot[4]"
             );
@@ -2090,14 +2092,14 @@ mod tests {
             let t = 1.5;
             let expected_results = vec![0.0, 0.0, 0.0, 0.0];
             let result = basis_x86_intrinsics_across_i(i_vec, 0, t, &knots);
-            let transmuted_result: [f64; 4] = mem::transmute(result); // the in-memory representation of a __m256d is the same as an array of 4 f64s
-            assert_eq!(trasmuted_result.to_vec(), expected_results, "t > knot[5]");
+            let transmuted_result: [f64; 4] = unsafe { mem::transmute(result) };
+            assert_eq!(transmuted_result.to_vec(), expected_results, "t > knot[5]");
 
             let t = -0.5;
             let expected_results = vec![0.0, 0.0, 0.0, 0.0];
             let result = basis_x86_intrinsics_across_i(i_vec, 0, t, &knots);
-            let transmuted_result: [f64; 4] = mem::transmute(result); // the in-memory representation of a __m256d is the same as an array of 4 f64s
-            assert_eq!(trasmuted_result.to_vec(), expected_results, "t < knot[0]");
+            let transmuted_result: [f64; 4] = unsafe { mem::transmute(result) };
+            assert_eq!(transmuted_result.to_vec(), expected_results, "t < knot[0]");
         }
     }
 
