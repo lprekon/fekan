@@ -1289,14 +1289,14 @@ fn basis_x86_intrinsics_across_i(
     t: f64,
     knots: &[f64],
 ) -> std::arch::x86_64::__m256d {
-    use std::arch::x86_64::*;
+    use std::{arch::x86_64::*, mem};
     // unsafe justification: this function is only available when both SSE2 and AVX2 are enabled, which promises the availability of all instructions below
     unsafe {
         let t_splat: __m256d = _mm256_set1_pd(t);
-        let knots_i = _mm256_i64gather_pd::<1>(knots.as_ptr(), i_vec);
+        let knots_i = _mm256_i64gather_pd::<8>(knots.as_ptr(), i_vec);
 
         let i_1 = _mm256_add_epi64(i_vec, _mm256_set1_epi64x(1));
-        let knots_i_1 = _mm256_i64gather_pd::<1>(knots.as_ptr(), i_1);
+        let knots_i_1 = _mm256_i64gather_pd::<8>(knots.as_ptr(), i_1);
         if k == 0 {
             let left_mask = _mm256_cmp_pd(knots_i, t_splat, _CMP_LE_OQ);
             let right_mask = _mm256_cmp_pd(t_splat, knots_i_1, _CMP_LT_OQ);
@@ -1307,8 +1307,8 @@ fn basis_x86_intrinsics_across_i(
         }
         let i_k = _mm256_add_epi64(i_vec, _mm256_set1_epi64x(k.try_into().unwrap()));
         let i_k_1 = _mm256_add_epi32(i_vec, _mm256_set1_epi32((k + 1) as i32));
-        let knots_i_k = _mm256_i64gather_pd::<1>(knots.as_ptr(), i_k);
-        let knots_i_k_1 = _mm256_i64gather_pd::<1>(knots.as_ptr(), i_k_1);
+        let knots_i_k = _mm256_i64gather_pd::<8>(knots.as_ptr(), i_k);
+        let knots_i_k_1 = _mm256_i64gather_pd::<8>(knots.as_ptr(), i_k_1);
         let left_numerator = _mm256_sub_pd(t_splat, knots_i);
         let left_denominator = _mm256_sub_pd(knots_i_k, knots_i);
         let left_coefficients = _mm256_div_pd(left_numerator, left_denominator);
