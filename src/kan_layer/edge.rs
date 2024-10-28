@@ -1305,14 +1305,16 @@ fn basis_x86_intrinsics_across_i(
                 // _mm256_mask_blend_pd(full_mask, _mm256_set1_pd(1.0), _mm256_set1_pd(0.0))
                 _mm256_and_pd(_mm256_set1_pd(1.0) , full_mask);
         }
+
         let i_k = _mm256_add_epi64(i_vec, _mm256_set1_epi64x(k.try_into().unwrap()));
-        let i_k_1 = _mm256_add_epi32(i_vec, _mm256_set1_epi32((k + 1) as i32));
+        let i_k_1 = _mm256_add_epi64(i_vec, _mm256_set1_epi64x((k + 1) as i64));
         let knots_i_k = _mm256_i64gather_pd::<8>(knots.as_ptr(), i_k);
+        trace!("k: {k}, t:{t}\nknots_i: {knots_i:?}\nknots_i_1: {knots_i_1:?}\nknots_i_k: {knots_i_k:?}\ni_k_1: {i_k_1:?}");
         let knots_i_k_1 = _mm256_i64gather_pd::<8>(knots.as_ptr(), i_k_1);
+        trace!("\nknots_i_k_1: {knots_i_k_1:?}\n");
         let left_numerator = _mm256_sub_pd(t_splat, knots_i);
         let left_denominator = _mm256_sub_pd(knots_i_k, knots_i);
         let left_coefficients = _mm256_div_pd(left_numerator, left_denominator);
-
         let right_numerator = _mm256_sub_pd(knots_i_k_1, t_splat);
         let right_denominator = _mm256_sub_pd(knots_i_k_1, knots_i_1);
         let right_coefficients = _mm256_div_pd(right_numerator, right_denominator);
@@ -2100,6 +2102,29 @@ mod tests {
             let result = basis_x86_intrinsics_across_i(i_vec, 0, t, &knots);
             let transmuted_result: [f64; 4] = unsafe { mem::transmute(result) };
             assert_eq!(transmuted_result.to_vec(), expected_results, "t < knot[0]");
+        }
+
+        #[test]
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "sse2",
+            target_feature = "avx2",
+        ))]
+        fn test_basis_x86_i_k3() {
+            use std::{arch::x86_64::*, mem};
+            let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+            let k = 3;
+            let t = 0.95;
+            let i_slice: [i64; 4] = [0, 1, 2, 3];
+            println!("0");
+            let i_vec: __m256i = unsafe { mem::transmute(i_slice) };
+
+            let result = basis_x86_intrinsics_across_i(i_vec, k, t, &knots);
+
+            let expected_results: Vec<f64> =
+                (0..4).map(|i| basis_no_cache(i, k, t, &knots)).collect();
+            let transmuted_results: [f64; 4] = unsafe { mem::transmute(result) };
+            assert_eq!(transmuted_results.to_vec(), expected_results);
         }
     }
 
