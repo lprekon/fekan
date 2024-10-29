@@ -230,28 +230,16 @@ impl Edge {
     /// accumulate the activations of the spline at each interval in the internal `activations` field
     pub fn forward(&mut self, inputs: &[f64]) -> Vec<f64> {
         self.last_t.extend(inputs.iter()); // store the most recent input for use in the backward pass. This happens regardless of the edge type
-        let mut outputs = Vec::with_capacity(inputs.len());
-        match &mut self.kind {
+        let outputs = match &mut self.kind {
             EdgeType::Spline {
                 degree,
                 control_points,
                 knots,
                 activations,
                 ..
-            } => {
-                for t in inputs.iter() {
-                    let mut sum = 0.0;
-                    for (idx, coef) in control_points.iter().enumerate() {
-                        let basis_activation =
-                            basis_cached(idx, *degree, *t, &knots, activations, *degree);
-                        sum += *coef * basis_activation;
-                    }
-                    outputs.push(sum);
-                }
-                // trace!("edge activations: {:?}", outputs);
-            }
-            _ => outputs = self.infer(inputs), // symbolic edges don't cache activations, so they have the same forward and infer implementations
-        }
+            } => fallback_scalar_spline(inputs, control_points, *degree, knots, activations),
+            _ => self.infer(inputs), // symbolic edges don't cache activations, so they have the same forward and infer implementations
+        };
         self.l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
         outputs
     }
@@ -1139,6 +1127,31 @@ impl Edge {
             _ => (f64::NEG_INFINITY, f64::INFINITY), // symbolic edges have unbounded input range
         }
     }
+}
+
+// fn portable_simd_spline(inputs: &[f64], cont)
+
+/// Calculate the value of S(t) where S is a B-spline defined by the control points `control_points` and the knot vector `knots`.
+///
+/// This function uses scalar operations to calculate the value of the spline at the given parameter `t`, and thus should be suitable for all platforms
+fn fallback_scalar_spline(
+    inputs: &[f64],
+    control_points: &[f64],
+    degree: usize,
+    knots: &[f64],
+    activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
+) -> Vec<f64> {
+    let mut outputs = Vec::with_capacity(inputs.len());
+    for t in inputs.iter() {
+        let mut sum = 0.0;
+        for (idx, coef) in control_points.iter().enumerate() {
+            let basis_activation = basis_cached(idx, degree, *t, &knots, activations, degree);
+            sum += *coef * basis_activation;
+        }
+        outputs.push(sum);
+    }
+    // trace!("edge activations: {:?}", outputs);
+    outputs
 }
 
 /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
