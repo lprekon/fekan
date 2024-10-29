@@ -237,7 +237,17 @@ impl Edge {
                 knots,
                 activations,
                 ..
-            } => fallback_scalar_spline(inputs, control_points, *degree, knots, activations),
+            } => {
+                #[cfg(not(no_simd))]
+                {
+                    portable_simd_spline(inputs, control_points, *degree, knots, activations)
+                }
+
+                #[cfg(no_simd)]
+                {
+                    fallback_scalar_spline(inputs, control_points, *degree, knots, activations)
+                }
+            }
             _ => self.infer(inputs), // symbolic edges don't cache activations, so they have the same forward and infer implementations
         };
         self.l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
@@ -335,7 +345,8 @@ impl Edge {
                     // ∴ d_model_L1/d_C_i = d_model_L1/d_edge_L1 * d_edge_L1/d_C_i
                     // d_model_L1/d_edge_L1 = 1
                     // d_edge_L1/d_C_i = 1/N * ΣB_i(t) * sign(C_i)
-                    assert!(!activations[0][i].is_empty());
+                    trace!("Checking cache line activations[0][{}]", i);
+                    debug_assert!(!activations[0][i].is_empty(), "activations[0][i] is empty");
                     let basis_activations: Vec<f64> = self
                         .last_t
                         .iter()
@@ -344,21 +355,21 @@ impl Edge {
                     let d_edge_l1_d_ci = basis_activations.iter().sum::<f64>()
                         / basis_activations.len() as f64
                         * control_points[i].signum();
-                    assert!(d_edge_l1_d_ci.is_finite(), "d_edge_l1_d_ci is not finite");
+                    debug_assert!(d_edge_l1_d_ci.is_finite(), "d_edge_l1_d_ci is not finite");
 
                     // Entropy loss of layer = -Σ (edge_L1/layer_L1 * log(edge_L1/layer_L1))
                     // ∴ d_layer_entropy/d_C_i = d_layer_entropy/d_edge_L1 * d_edge_L1/d_C_i
                     // assert_ne!(edge_l1_norm, 0.0, "edge_l1_norm is 0");
-                    // assert_ne!(layer_l1, 0.0, "layer_l1 is 0");
+                    // debug_assert_ne!(layer_l1, 0.0, "layer_l1 is 0");
                     let c = layer_l1 - edge_l1;
-                    assert!(c.is_finite(), "c is not finite");
+                    debug_assert!(c.is_finite(), "c is not finite");
                     let d =
                         (edge_l1 / (layer_l1 + f64::MIN_POSITIVE) + f64::MIN_POSITIVE).ln() + 1.0;
-                    assert!(d.is_finite(), "d is not finite");
+                    debug_assert!(d.is_finite(), "d is not finite");
                     let e = layer_l1.powi(2) + f64::MIN_POSITIVE;
-                    assert!(e.is_finite(), "e is not finite");
+                    debug_assert!(e.is_finite(), "e is not finite");
                     let d_entropy_d_edge_l1 = -1.0 * c * d / e;
-                    assert!(
+                    debug_assert!(
                         d_entropy_d_edge_l1.is_finite(),
                         "d_entropy_d_edge_l1 is not finite"
                     );
@@ -1129,11 +1140,45 @@ impl Edge {
     }
 }
 
-// fn portable_simd_spline(inputs: &[f64], cont)
+/// Calculate the value of S(t) where S is a B-spline defined by the control points `control_points` and the knot vector `knots`.
+///
+/// This function uses the Rust SIMD crate, which is designed to be portable across different SIMD instruction sets, including platforms without SIMD support. On such platforms, this function should compile to scalar operations as a fallback
+fn portable_simd_spline(
+    inputs: &[f64],
+    control_points: &[f64],
+    degree: usize,
+    knots: &[f64],
+    activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
+) -> Vec<f64> {
+    let mut outputs = Vec::with_capacity(inputs.len());
+    for t in inputs.iter() {
+        let mut sum = 0.0;
+        let mut coef_idx = 0;
+        // iterate over the control points in chunks of 4
+        const CHUNK_SIZE: usize = 4;
+        for coef_chunk in control_points.chunks_exact(CHUNK_SIZE) {
+            let i_vec = usizex4::from_array([coef_idx, coef_idx + 1, coef_idx + 2, coef_idx + 3]);
+            let basis_vec =
+                basis_portable_simd_across_i(i_vec, degree, *t, knots, activations, degree);
+            let activations = f64x4::from_slice(coef_chunk) * basis_vec;
+            sum += activations.to_array().iter().sum::<f64>();
+            coef_idx += CHUNK_SIZE;
+        }
+        // handle the last chunk, which may not be a full chunk
+        for (idx, coef) in control_points[coef_idx..].iter().enumerate() {
+            let basis_activation =
+                basis_cached(coef_idx + idx, degree, *t, knots, activations, degree);
+            sum += *coef * basis_activation;
+        }
+        outputs.push(sum);
+    }
+    outputs
+}
 
 /// Calculate the value of S(t) where S is a B-spline defined by the control points `control_points` and the knot vector `knots`.
 ///
-/// This function uses scalar operations to calculate the value of the spline at the given parameter `t`, and thus should be suitable for all platforms
+/// This function uses scalar operations to calculate the value of the spline at the given parameter `t`. It should only be used as a fallback when SIMD operations are explicitly disabled, as the portable SIMD implementation should compile to scalar operations on platforms without SIMD support.
+#[allow(dead_code)] // this function is only compiled when SIMD is explicitly disabled with --cfg no_simd
 fn fallback_scalar_spline(
     inputs: &[f64],
     control_points: &[f64],
@@ -1267,7 +1312,14 @@ fn basis_autovectorize_across_i(i_vec: &[usize], k: usize, t: f64, knots: &[f64]
 use std::simd::prelude::*;
 /// calculate the basis activation over multiple i values at once, using the rust portable SIMD crate
 #[inline] // recommended by the crate docs to avoid large function prologues and epilogues, since SIMD values passed/returned in memory and not in registers due to ABI/safety guarantees
-fn basis_portable_simd_across_i(i_vec: usizex4, k: usize, t: f64, knots: &[f64]) -> f64x4 {
+fn basis_portable_simd_across_i(
+    i_vec: usizex4,
+    k: usize,
+    t: f64,
+    knots: &[f64],
+    cache: &mut [Vec<FxHashMap<u64, f64>>],
+    full_degree: usize,
+) -> f64x4 {
     let knots_i = Simd::gather_or(knots, i_vec, f64x4::splat(-1.0));
     let knots_i_1 = Simd::gather_or(knots, i_vec + usizex4::splat(1), f64x4::splat(-1.0));
     let t_splat = f64x4::splat(t);
@@ -1282,11 +1334,26 @@ fn basis_portable_simd_across_i(i_vec: usizex4, k: usize, t: f64, knots: &[f64])
     let knots_i_k_1 = Simd::gather_or(knots, i_vec + usizex4::splat(k + 1), f64x4::splat(-1.0));
     let left_coefficients = (t_splat - knots_i) / (knots_i_k - knots_i);
     let right_coefficients = (knots_i_k_1 - t_splat) / (knots_i_k_1 - knots_i_1);
-    let left_vals = basis_portable_simd_across_i(i_vec, k - 1, t, knots);
-    let right_vals = basis_portable_simd_across_i(i_vec + usizex4::splat(1), k - 1, t, knots);
-    let result = left_coefficients * left_vals + right_coefficients * right_vals;
-    trace!("k: {k}, t: {t}\ni_vec: {i_vec:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nknots_i_plus_k_plus_1: {knots_i_k_1:?}\nleft_coefficients: {left_coefficients:?}\nleft_vals: {left_vals:?}\nright_coefficients: {right_coefficients:?}\nright_vals: {right_vals:?}\nresult: {result:?}\n");
-    return result;
+    let left_vals = basis_portable_simd_across_i(i_vec, k - 1, t, knots, cache, full_degree);
+    let right_vals = basis_portable_simd_across_i(
+        i_vec + usizex4::splat(1),
+        k - 1,
+        t,
+        knots,
+        cache,
+        full_degree,
+    );
+    let result_vec = left_coefficients * left_vals + right_coefficients * right_vals;
+    trace!("k: {k}, t: {t}\ni_vec: {i_vec:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nknots_i_plus_k_plus_1: {knots_i_k_1:?}\nleft_coefficients: {left_coefficients:?}\nleft_vals: {left_vals:?}\nright_coefficients: {right_coefficients:?}\nright_vals: {right_vals:?}\nresult: {result_vec:?}\n");
+    // In this version of basis, we're just computing everything (for now). We only store the results on the cache for the first recursion, because the backpropagation will need them.
+    // if k == full_degree {
+    let transmuted_results = result_vec.to_array();
+    let transmuted_i_vec = i_vec.to_array();
+    for (i, b) in transmuted_i_vec.iter().zip(transmuted_results.iter()) {
+        cache[full_degree - k][*i].insert(t.to_bits(), *b);
+    }
+
+    return result_vec;
 }
 
 #[inline]
@@ -2034,21 +2101,23 @@ mod tests {
             let i_vec = usizex4::from_array([0, 1, 2, 3]);
             let t = 0.3;
             let expected_results = f64x4::from_array([0.0, 1.0, 0.0, 0.0]);
-            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots);
+            let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
+                vec![vec![FxHashMap::default(); knots.len() - 1]; 0];
+            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots, &mut cache, 0);
             assert_eq!(result, expected_results, "knot[1] < t < knot[2]");
 
             let t = 0.95;
-            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots);
+            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots, &mut cache, 0);
             let expected_results = f64x4::from_array([0.0, 0.0, 0.0, 1.0]);
             assert_eq!(result, expected_results, "knot[3] < t < knot[4]");
 
             let t = 1.5;
-            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots);
+            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots, &mut cache, 0);
             let expected_results = f64x4::from_array([0.0, 0.0, 0.0, 0.0]);
             assert_eq!(result, expected_results, "t > knot[5]");
 
             let t = -0.5;
-            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots);
+            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots, &mut cache, 0);
             let expected_results = f64x4::from_array([0.0, 0.0, 0.0, 0.0]);
             assert_eq!(result, expected_results, "t < knot[0]");
         }
@@ -2060,8 +2129,10 @@ mod tests {
             let t = 0.95;
             let expected_results: Vec<f64> =
                 (0..4).map(|i| basis_no_cache(i, k, t, &knots)).collect();
+            let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
+                vec![vec![FxHashMap::default(); knots.len() - 1]; k];
             let i_vec = usizex4::from_array([0, 1, 2, 3]);
-            let result = basis_portable_simd_across_i(i_vec, k, t, &knots);
+            let result = basis_portable_simd_across_i(i_vec, k, t, &knots, &mut cache, k);
             // let rounded_result: Vec<f64> = result
             //     .to_array()
             //     .iter()
