@@ -241,20 +241,15 @@ impl Edge {
                 #[cfg(all(
                     target_arch = "x86_64",
                     target_feature = "sse2",
-                    target_feature = "avx2",
+                    target_feature = "avx512f",
+                    not(portable),
+                    not(no_simd)
                 ))]
                 {
                     x86_spline(inputs, control_points, *degree, knots, activations)
                 }
                 #[allow(unreachable_code)]
-                #[cfg(all(
-                    not(no_simd),
-                    not(all(
-                        target_arch = "x86_64",
-                        target_feature = "sse2",
-                        target_feature = "avx2"
-                    ))
-                ))]
+                #[cfg(all(not(no_simd), portable))]
                 {
                     portable_simd_spline(inputs, control_points, *degree, knots, activations)
                 }
@@ -1156,12 +1151,27 @@ impl Edge {
             _ => (f64::NEG_INFINITY, f64::INFINITY), // symbolic edges have unbounded input range
         }
     }
+
+    /// useful for debugging and benchmarking
+    pub(super) fn wipe_activations(&mut self) {
+        match &mut self.kind {
+            EdgeType::Spline { activations, .. } => {
+                activations
+                    .iter_mut()
+                    .for_each(|v| v.iter_mut().for_each(|h| h.clear()));
+                self.last_t.clear();
+            }
+            _ => (), // symbolic edges don't have activations
+        }
+    }
 }
 
 #[cfg(all(
     target_arch = "x86_64",
     target_feature = "sse2",
-    target_feature = "avx2",
+    target_feature = "avx512f",
+    not(portable),
+    not(no_simd)
 ))]
 /// Calculate the value of S(t) where S is a B-spline defined by the control points `control_points` and the knot vector `knots`.
 ///
@@ -1180,14 +1190,13 @@ fn x86_spline(
             let mut sum = 0.0;
             let mut coef_idx = 0;
             // iterate over the control points in chunks of 4
-            const CHUNK_SIZE: usize = 4;
+            const CHUNK_SIZE: usize = 8;
             for coef_chunk in control_points.chunks_exact(CHUNK_SIZE) {
-                let i_vec = mem::transmute([coef_idx, coef_idx + 1, coef_idx + 2, coef_idx + 3]);
                 let basis_vec =
-                    basis_x86_intrinsics_across_i(i_vec, degree, *t, knots, activations, degree);
-                let coef_vec = _mm256_loadu_pd(coef_chunk.as_ptr());
-                let activation_vec = _mm256_mul_pd(coef_vec, basis_vec);
-                let activations: [f64; 4] = mem::transmute(activation_vec);
+                    basis_x86_intrinsics_across_i(coef_idx, degree, *t, knots, activations, degree);
+                let coef_vec = _mm512_loadu_pd(coef_chunk.as_ptr());
+                let activation_vec = _mm512_mul_pd(coef_vec, basis_vec);
+                let activations: [f64; 8] = mem::transmute(activation_vec);
                 sum += activations.iter().sum::<f64>();
                 coef_idx += CHUNK_SIZE;
             }
@@ -1202,6 +1211,8 @@ fn x86_spline(
         outputs
     }
 }
+
+const SIMD_CHUNK_SIZE: usize = 8;
 
 /// Calculate the value of S(t) where S is a B-spline defined by the control points `control_points` and the knot vector `knots`.
 ///
@@ -1220,14 +1231,12 @@ fn portable_simd_spline(
         let mut sum = 0.0;
         let mut coef_idx = 0;
         // iterate over the control points in chunks of 4
-        const CHUNK_SIZE: usize = 4;
-        for coef_chunk in control_points.chunks_exact(CHUNK_SIZE) {
-            let i_vec = usizex4::from_array([coef_idx, coef_idx + 1, coef_idx + 2, coef_idx + 3]);
+        for coef_chunk in control_points.chunks_exact(SIMD_CHUNK_SIZE) {
             let basis_vec =
-                basis_portable_simd_across_i(i_vec, degree, *t, knots, activations, degree);
-            let activations = f64x4::from_slice(coef_chunk) * basis_vec;
+                basis_portable_simd_across_i(coef_idx, degree, *t, knots, activations, degree);
+            let activations = f64x8::from_slice(coef_chunk) * basis_vec;
             sum += activations.to_array().iter().sum::<f64>();
-            coef_idx += CHUNK_SIZE;
+            coef_idx += SIMD_CHUNK_SIZE;
         }
         // handle the last chunk, which may not be a full chunk
         for (idx, coef) in control_points[coef_idx..].iter().enumerate() {
@@ -1376,46 +1385,40 @@ fn basis_autovectorize_across_i(i_vec: &[usize], k: usize, t: f64, knots: &[f64]
 
 use std::simd::prelude::*;
 /// calculate the basis activation over multiple i values at once, using the rust portable SIMD crate
+#[cfg(not(no_simd))]
+#[allow(dead_code)] // this function may be compiled but never called on some xSIMD_CHUNK_SIZE6_64 platforms
 #[inline] // recommended by the crate docs to avoid large function prologues and epilogues, since SIMD values passed/returned in memory and not in registers due to ABI/safety guarantees
 fn basis_portable_simd_across_i(
-    i_vec: usizex4,
+    i_base: usize,
     k: usize,
     t: f64,
     knots: &[f64],
     cache: &mut [Vec<FxHashMap<u64, f64>>],
     full_degree: usize,
-) -> f64x4 {
-    let knots_i = Simd::gather_or(knots, i_vec, f64x4::splat(-1.0));
-    let knots_i_1 = Simd::gather_or(knots, i_vec + usizex4::splat(1), f64x4::splat(-1.0));
-    let t_splat = f64x4::splat(t);
+) -> f64x8 {
+    let knots_i: f64x8 = Simd::from_slice(&knots[i_base..i_base + SIMD_CHUNK_SIZE]);
+    let knots_i_1: f64x8 = Simd::from_slice(&knots[i_base + 1..i_base + SIMD_CHUNK_SIZE + 1]);
+    let t_splat: f64x8 = f64x8::splat(t);
     if k == 0 {
         let left_mask = knots_i.simd_le(t_splat);
         let right_mask = t_splat.simd_lt(knots_i_1);
         let full_mask = left_mask & right_mask;
-        trace!("k: {k}, t:{t}\ni_vec: {i_vec:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nleft_mask: {left_mask:?}\nright_mask: {right_mask:?}\nfull_mask: {full_mask:?}\n");
-        return full_mask.select(f64x4::splat(1.0), f64x4::splat(0.0));
+        trace!("k: {k}, t:{t}\ni_base: {i_base:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nleft_mask: {left_mask:?}\nright_mask: {right_mask:?}\nfull_mask: {full_mask:?}\n");
+        return full_mask.select(f64x8::splat(1.0), f64x8::splat(0.0));
     }
-    let knots_i_k = Simd::gather_or(knots, i_vec + usizex4::splat(k), f64x4::splat(-1.0));
-    let knots_i_k_1 = Simd::gather_or(knots, i_vec + usizex4::splat(k + 1), f64x4::splat(-1.0));
+    let knots_i_k = Simd::from_slice(&knots[i_base + k..i_base + SIMD_CHUNK_SIZE + k]);
+    let knots_i_k_1 = Simd::from_slice(&knots[i_base + k + 1..i_base + SIMD_CHUNK_SIZE + k + 1]);
     let left_coefficients = (t_splat - knots_i) / (knots_i_k - knots_i);
     let right_coefficients = (knots_i_k_1 - t_splat) / (knots_i_k_1 - knots_i_1);
-    let left_vals = basis_portable_simd_across_i(i_vec, k - 1, t, knots, cache, full_degree);
-    let right_vals = basis_portable_simd_across_i(
-        i_vec + usizex4::splat(1),
-        k - 1,
-        t,
-        knots,
-        cache,
-        full_degree,
-    );
+    let left_vals = basis_portable_simd_across_i(i_base, k - 1, t, knots, cache, full_degree);
+    let right_vals = basis_portable_simd_across_i(i_base + 1, k - 1, t, knots, cache, full_degree);
     let result_vec = left_coefficients * left_vals + right_coefficients * right_vals;
-    trace!("k: {k}, t: {t}\ni_vec: {i_vec:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nknots_i_plus_k_plus_1: {knots_i_k_1:?}\nleft_coefficients: {left_coefficients:?}\nleft_vals: {left_vals:?}\nright_coefficients: {right_coefficients:?}\nright_vals: {right_vals:?}\nresult: {result_vec:?}\n");
+    trace!("k: {k}, t: {t}\ni_base: {i_base:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nknots_i_plus_k_plus_1: {knots_i_k_1:?}\nleft_coefficients: {left_coefficients:?}\nleft_vals: {left_vals:?}\nright_coefficients: {right_coefficients:?}\nright_vals: {right_vals:?}\nresult: {result_vec:?}\n");
     // In this version of basis, we're just computing everything (for now). We only store the results on the cache for the first recursion, because the backpropagation will need them.
     // if k == full_degree {
     let transmuted_results = result_vec.to_array();
-    let transmuted_i_vec = i_vec.to_array();
-    for (i, b) in transmuted_i_vec.iter().zip(transmuted_results.iter()) {
-        cache[full_degree - k][*i].insert(t.to_bits(), *b);
+    for (i, b) in (i_base..i_base + SIMD_CHUNK_SIZE).zip(transmuted_results.iter()) {
+        cache[full_degree - k][i].insert(t.to_bits(), *b);
     }
 
     return result_vec;
@@ -1425,60 +1428,56 @@ fn basis_portable_simd_across_i(
 #[cfg(all(
     target_arch = "x86_64",
     target_feature = "sse2",
-    target_feature = "avx2",
+    target_feature = "avx512f",
+    not(portable),
+    not(no_simd)
 ))]
-/// calculate the basis activation over multiple i values at once, using extended x86 intrinsics. Takes 4 64-bit integers as the `i` values, and returns 4 64-bit floats as the basis values
+/// calculate the basis activation over multiple i values at once, using extended x86 intrinsics. Takes 1 usize i value, and returns 8 64-bit floats as the basis values for the 8 i values starting at i
 fn basis_x86_intrinsics_across_i(
-    i_vec: std::arch::x86_64::__m256i,
+    i_base: usize,
     k: usize,
     t: f64,
     knots: &[f64],
     cache: &mut [Vec<FxHashMap<u64, f64>>],
     full_degree: usize,
-) -> std::arch::x86_64::__m256d {
+) -> std::arch::x86_64::__m512d {
     use std::{arch::x86_64::*, mem};
     // unsafe justification: this function is only available when both SSE2 and AVX2 are enabled, which promises the availability of all instructions below
     unsafe {
-        let t_splat: __m256d = _mm256_set1_pd(t);
-        let knots_i = _mm256_i64gather_pd::<8>(knots.as_ptr(), i_vec);
-
-        let i_1 = _mm256_add_epi64(i_vec, _mm256_set1_epi64x(1));
-        let knots_i_1 = _mm256_i64gather_pd::<8>(knots.as_ptr(), i_1);
+        let t_splat: __m512d = _mm512_set1_pd(t);
+        let knots_i = _mm512_loadu_pd(&knots[i_base]);
+        let knots_i_1 = _mm512_loadu_pd(&knots[i_base + 1]);
         if k == 0 {
-            let left_mask = _mm256_cmp_pd(knots_i, t_splat, _CMP_LE_OQ);
-            let right_mask = _mm256_cmp_pd(t_splat, knots_i_1, _CMP_LT_OQ);
-            let full_mask = _mm256_and_pd(left_mask, right_mask);
-            return
-                // _mm256_mask_blend_pd(full_mask, _mm256_set1_pd(1.0), _mm256_set1_pd(0.0))
-                _mm256_and_pd(_mm256_set1_pd(1.0) , full_mask);
+            let left_mask = _mm512_cmp_pd_mask(knots_i, t_splat, _CMP_LE_OQ);
+            let right_mask = _mm512_cmp_pd_mask(t_splat, knots_i_1, _CMP_LT_OQ);
+            let full_mask = left_mask & right_mask;
+            trace!("k: {k}, t:{t}, i_base: {i_base}\nknots_i: {knots_i:?}\nknots_i_1: {knots_i_1:?}\nleft_mask: {left_mask:b}\nright_mask: {right_mask:b}\nfull_mask: {full_mask:b}\n");
+            return _mm512_mask_blend_pd(full_mask, _mm512_set1_pd(0.0), _mm512_set1_pd(1.0));
         }
 
-        let i_k = _mm256_add_epi64(i_vec, _mm256_set1_epi64x(k.try_into().unwrap()));
-        let i_k_1 = _mm256_add_epi64(i_vec, _mm256_set1_epi64x((k + 1) as i64));
-        let knots_i_k = _mm256_i64gather_pd::<8>(knots.as_ptr(), i_k);
-        trace!("k: {k}, t:{t}\nknots_i: {knots_i:?}\nknots_i_1: {knots_i_1:?}\nknots_i_k: {knots_i_k:?}\ni_k_1: {i_k_1:?}");
-        let knots_i_k_1 = _mm256_i64gather_pd::<8>(knots.as_ptr(), i_k_1);
-        trace!("\nknots_i_k_1: {knots_i_k_1:?}\n");
-        let left_numerator = _mm256_sub_pd(t_splat, knots_i);
-        let left_denominator = _mm256_sub_pd(knots_i_k, knots_i);
-        let left_coefficients = _mm256_div_pd(left_numerator, left_denominator);
-        let right_numerator = _mm256_sub_pd(knots_i_k_1, t_splat);
-        let right_denominator = _mm256_sub_pd(knots_i_k_1, knots_i_1);
-        let right_coefficients = _mm256_div_pd(right_numerator, right_denominator);
+        let knots_i_k = _mm512_loadu_pd(&knots[i_base + k]);
+        let knots_i_k_1 = _mm512_loadu_pd(&knots[i_base + k + 1]);
+        let left_numerator = _mm512_sub_pd(t_splat, knots_i);
+        let left_denominator = _mm512_sub_pd(knots_i_k, knots_i);
+        let left_coefficients = _mm512_div_pd(left_numerator, left_denominator);
+        let right_numerator = _mm512_sub_pd(knots_i_k_1, t_splat);
+        let right_denominator = _mm512_sub_pd(knots_i_k_1, knots_i_1);
+        let right_coefficients = _mm512_div_pd(right_numerator, right_denominator);
 
-        let left_vals = basis_x86_intrinsics_across_i(i_vec, k - 1, t, knots, cache, full_degree);
-        let right_vals = basis_x86_intrinsics_across_i(i_1, k - 1, t, knots, cache, full_degree);
+        let left_vals = basis_x86_intrinsics_across_i(i_base, k - 1, t, knots, cache, full_degree);
+        let right_vals =
+            basis_x86_intrinsics_across_i(i_base + 1, k - 1, t, knots, cache, full_degree);
 
-        let left_results = _mm256_mul_pd(left_coefficients, left_vals);
-        let right_results = _mm256_mul_pd(right_coefficients, right_vals);
-        let result_vec = _mm256_add_pd(left_results, right_results);
+        let left_results = _mm512_mul_pd(left_coefficients, left_vals);
+        let right_results = _mm512_mul_pd(right_coefficients, right_vals);
+        let result_vec = _mm512_add_pd(left_results, right_results);
+        trace!("k: {k}, t:{t}, i_base:{i_base}\nknots_i: {knots_i:?}\nknots_i_1: {knots_i_1:?}\nknots_i_k: {knots_i_k:?}\nknots_i_k_1: {knots_i_k_1:?}\nleft_coefficients: {left_coefficients:?}\nleft_vals: {left_vals:?}\nright_coefficients: {right_coefficients:?}\nright_vals: {right_vals:?}\nresult: {result_vec:?}\n");
 
         // cache the results of the first recursion for later backpropogation
         if k == full_degree {
-            let transmuted_results: [f64; 4] = mem::transmute(result_vec);
-            let transmuted_i_vec: [u64; 4] = mem::transmute(i_vec);
-            for (i, b) in transmuted_i_vec.iter().zip(transmuted_results.iter()) {
-                cache[full_degree - k][*i as usize].insert(t.to_bits(), *b);
+            let transmuted_results: [f64; SIMD_CHUNK_SIZE] = mem::transmute(result_vec);
+            for (i, b) in (i_base..i_base + SIMD_CHUNK_SIZE).zip(transmuted_results.iter()) {
+                cache[full_degree - k][i as usize].insert(t.to_bits(), *b);
             }
         }
         return result_vec;
@@ -2172,48 +2171,44 @@ mod tests {
         }
 
         #[test]
+        #[cfg(not(no_simd))]
         fn test_basis_portable_i_k0() {
-            let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-            let i_vec = usizex4::from_array([0, 1, 2, 3]);
-            let t = 0.3;
-            let expected_results = f64x4::from_array([0.0, 1.0, 0.0, 0.0]);
+            let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
+            let t = 1.3;
+            let expected_results = f64x8::from_array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
             let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
                 vec![vec![FxHashMap::default(); knots.len() - 1]; 0];
-            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots, &mut cache, 0);
+            let result = basis_portable_simd_across_i(0, 0, t, &knots, &mut cache, 0);
             assert_eq!(result, expected_results, "knot[1] < t < knot[2]");
 
-            let t = 0.95;
-            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots, &mut cache, 0);
-            let expected_results = f64x4::from_array([0.0, 0.0, 0.0, 1.0]);
+            let t = 3.95;
+            let result = basis_portable_simd_across_i(0, 0, t, &knots, &mut cache, 0);
+            let expected_results = f64x8::from_array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
             assert_eq!(result, expected_results, "knot[3] < t < knot[4]");
 
-            let t = 1.5;
-            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots, &mut cache, 0);
-            let expected_results = f64x4::from_array([0.0, 0.0, 0.0, 0.0]);
-            assert_eq!(result, expected_results, "t > knot[5]");
+            let t = 11.5;
+            let result = basis_portable_simd_across_i(0, 0, t, &knots, &mut cache, 0);
+            let expected_results = f64x8::from_array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+            assert_eq!(result, expected_results, "t > knot[11]");
 
             let t = -0.5;
-            let result = basis_portable_simd_across_i(i_vec, 0, t, &knots, &mut cache, 0);
-            let expected_results = f64x4::from_array([0.0, 0.0, 0.0, 0.0]);
+            let result = basis_portable_simd_across_i(0, 0, t, &knots, &mut cache, 0);
+            let expected_results = f64x8::from_array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
             assert_eq!(result, expected_results, "t < knot[0]");
         }
 
         #[test]
+        #[cfg(not(no_simd))]
         fn test_basis_portable_i_k3() {
-            let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+            let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
             let k = 3;
             let t = 0.95;
-            let expected_results: Vec<f64> =
-                (0..4).map(|i| basis_no_cache(i, k, t, &knots)).collect();
+            let expected_results: Vec<f64> = (0..knots.len() - k - 1)
+                .map(|i| basis_no_cache(i, k, t, &knots))
+                .collect();
             let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
                 vec![vec![FxHashMap::default(); knots.len() - 1]; k];
-            let i_vec = usizex4::from_array([0, 1, 2, 3]);
-            let result = basis_portable_simd_across_i(i_vec, k, t, &knots, &mut cache, k);
-            // let rounded_result: Vec<f64> = result
-            //     .to_array()
-            //     .iter()
-            //     .map(|r| (r * 10000.0).round() / 10000.0)
-            //     .collect();
+            let result = basis_portable_simd_across_i(0, k, t, &knots, &mut cache, k);
             assert_eq!(result.to_array().to_vec(), expected_results);
         }
 
@@ -2221,22 +2216,22 @@ mod tests {
         #[cfg(all(
             target_arch = "x86_64",
             target_feature = "sse2",
-            target_feature = "avx2",
+            target_feature = "avx512f",
+            not(no_simd),
+            not(portable)
         ))]
         fn test_basis_x86_i_k0() {
             use std::{arch::x86_64::*, mem};
-            let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-            let i_slice: [i64; 4] = [0, 1, 2, 3];
-            let i_vec = unsafe { mem::transmute(i_slice) };
+            let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
 
-            let t = 0.3;
-            let expected_results = vec![0.0, 1.0, 0.0, 0.0];
+            let t = 1.3;
+            let expected_results = vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
 
             let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
                 vec![vec![FxHashMap::default(); knots.len() - 1]; 0];
 
-            let result: __m256d = basis_x86_intrinsics_across_i(i_vec, 0, t, &knots, &mut cache, 0);
-            let transmuted_result: [f64; 4] = unsafe { mem::transmute(result) };
+            let result: __m512d = basis_x86_intrinsics_across_i(0, 0, t, &knots, &mut cache, 0);
+            let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
 
             assert_eq!(
                 transmuted_result.to_vec(),
@@ -2244,26 +2239,26 @@ mod tests {
                 "knot[1] < t < knot[2]"
             );
 
-            let t = 0.95;
-            let expected_results = vec![0.0, 0.0, 0.0, 1.0];
-            let result: __m256d = basis_x86_intrinsics_across_i(i_vec, 0, t, &knots, &mut cache, 0);
-            let transmuted_result: [f64; 4] = unsafe { mem::transmute(result) };
+            let t = 3.95;
+            let expected_results = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
+            let result: __m512d = basis_x86_intrinsics_across_i(0, 0, t, &knots, &mut cache, 0);
+            let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
             assert_eq!(
                 transmuted_result.to_vec(),
                 expected_results,
                 "knot[3] < t < knot[4]"
             );
 
-            let t = 1.5;
-            let expected_results = vec![0.0, 0.0, 0.0, 0.0];
-            let result = basis_x86_intrinsics_across_i(i_vec, 0, t, &knots, &mut cache, 0);
-            let transmuted_result: [f64; 4] = unsafe { mem::transmute(result) };
-            assert_eq!(transmuted_result.to_vec(), expected_results, "t > knot[5]");
+            let t = 11.5;
+            let expected_results = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+            let result = basis_x86_intrinsics_across_i(0, 0, t, &knots, &mut cache, 0);
+            let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
+            assert_eq!(transmuted_result.to_vec(), expected_results, "t > knot[11]");
 
             let t = -0.5;
-            let expected_results = vec![0.0, 0.0, 0.0, 0.0];
-            let result = basis_x86_intrinsics_across_i(i_vec, 0, t, &knots, &mut cache, 0);
-            let transmuted_result: [f64; 4] = unsafe { mem::transmute(result) };
+            let expected_results = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+            let result = basis_x86_intrinsics_across_i(0, 0, t, &knots, &mut cache, 0);
+            let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
             assert_eq!(transmuted_result.to_vec(), expected_results, "t < knot[0]");
         }
 
@@ -2271,23 +2266,24 @@ mod tests {
         #[cfg(all(
             target_arch = "x86_64",
             target_feature = "sse2",
-            target_feature = "avx2",
+            target_feature = "avx512f",
+            not(no_simd),
+            not(portable)
         ))]
         fn test_basis_x86_i_k3() {
             use std::{arch::x86_64::*, mem};
-            let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+            let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
             let k = 3;
-            let t = 0.95;
-            let i_slice: [i64; 4] = [0, 1, 2, 3];
+            let t = 9.2;
             let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
-                vec![vec![FxHashMap::default(); knots.len() - 1]; k];
-            let i_vec: __m256i = unsafe { mem::transmute(i_slice) };
+                vec![vec![FxHashMap::default(); knots.len() - 1 - k]; k];
+            println!("0");
+            let result = basis_x86_intrinsics_across_i(0, k, t, &knots, &mut cache, k);
 
-            let result = basis_x86_intrinsics_across_i(i_vec, k, t, &knots, &mut cache, k);
-
-            let expected_results: Vec<f64> =
-                (0..4).map(|i| basis_no_cache(i, k, t, &knots)).collect();
-            let transmuted_results: [f64; 4] = unsafe { mem::transmute(result) };
+            let expected_results: Vec<f64> = (0..(knots.len() - 1 - k))
+                .map(|i| basis_no_cache(i, k, t, &knots))
+                .collect();
+            let transmuted_results: [f64; 8] = unsafe { mem::transmute(result) };
             assert_eq!(transmuted_results.to_vec(), expected_results);
         }
     }
