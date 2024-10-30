@@ -43,4 +43,7 @@ name = "fekan"
 required-features = ["serialization"]
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(no_simd)'] }
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(no_simd)',
+    'cfg(portable)',
+] }

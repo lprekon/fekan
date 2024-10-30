@@ -1192,6 +1192,13 @@ impl KanLayer {
     pub fn output_dimension(&self) -> usize {
         self.output_dimension
     }
+
+    /// wipe the edge's activations. Useful for debugging and benchmarking
+    pub fn wipe_activations(&mut self) {
+        for edge in self.splines.iter_mut() {
+            edge.wipe_activations();
+        }
+    }
 }
 
 fn transpose(matrix: &[Vec<f64>]) -> Vec<Vec<f64>> {
