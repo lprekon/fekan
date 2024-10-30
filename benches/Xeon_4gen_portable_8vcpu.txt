@@ -72,23 +72,23 @@ test result: ok. 0 passed; 0 failed; 67 ignored; 0 measured; 0 filtered out; fin
 
 
 running 17 tests
-test multithreading::bench_eight_threaded_backward                  ... bench:   5,426,133.90 ns/iter (+/- 253,469.48)
-test multithreading::bench_eight_threaded_forward                   ... bench:  44,985,829.20 ns/iter (+/- 1,533,690.92)
-test multithreading::bench_eight_threaded_set_knot_length           ... bench:  35,746,535.80 ns/iter (+/- 777,922.34)
-test multithreading::bench_eight_threaded_update                    ... bench:     216,820.00 ns/iter (+/- 18,979.89)
-test multithreading::bench_eight_threaded_update_knots_from_samples ... bench:     672,976.38 ns/iter (+/- 31,059.10)
-test multithreading::bench_one_threaded_backward                    ... bench:  33,543,991.20 ns/iter (+/- 549,528.61)
-test multithreading::bench_one_threaded_forward                     ... bench: 150,127,071.80 ns/iter (+/- 3,283,834.62)
-test multithreading::bench_one_threaded_set_knot_length             ... bench:  35,329,431.40 ns/iter (+/- 908,493.57)
-test multithreading::bench_one_threaded_update                      ... bench:     334,398.59 ns/iter (+/- 67,551.37)
-test multithreading::bench_one_threaded_update_knots_from_samples   ... bench:   1,952,853.10 ns/iter (+/- 103,437.87)
-test no_threading::bench_backward                                   ... bench:          36.30 ns/iter (+/- 0.39)
-test no_threading::bench_forward                                    ... bench: 148,234,154.10 ns/iter (+/- 2,425,945.01)
-test no_threading::bench_prune                                      ... bench:      54,200.58 ns/iter (+/- 622.89)
-test no_threading::bench_set_knot_length                            ... bench:  35,472,877.70 ns/iter (+/- 759,182.77)
-test no_threading::bench_suggest_symbolic                           ... bench: 113,369,171.90 ns/iter (+/- 7,611,432.89)
-test no_threading::bench_update                                     ... bench:     187,799.89 ns/iter (+/- 2,409.70)
-test no_threading::bench_update_knots_from_samples                  ... bench:   1,461,351.38 ns/iter (+/- 32,850.24)
+test multithreading::bench_eight_threaded_backward                  ... bench:   4,760,208.65 ns/iter (+/- 328,234.81)
+test multithreading::bench_eight_threaded_forward                   ... bench:  37,160,836.80 ns/iter (+/- 1,447,015.13)
+test multithreading::bench_eight_threaded_set_knot_length           ... bench:  33,722,438.40 ns/iter (+/- 694,886.75)
+test multithreading::bench_eight_threaded_update                    ... bench:     217,685.34 ns/iter (+/- 16,111.10)
+test multithreading::bench_eight_threaded_update_knots_from_samples ... bench:     677,788.07 ns/iter (+/- 34,555.16)
+test multithreading::bench_one_threaded_backward                    ... bench:  28,000,416.90 ns/iter (+/- 920,940.53)
+test multithreading::bench_one_threaded_forward                     ... bench: 127,885,343.70 ns/iter (+/- 1,102,138.05)
+test multithreading::bench_one_threaded_set_knot_length             ... bench:  33,449,880.50 ns/iter (+/- 677,709.69)
+test multithreading::bench_one_threaded_update                      ... bench:     335,293.56 ns/iter (+/- 63,970.74)
+test multithreading::bench_one_threaded_update_knots_from_samples   ... bench:   1,904,075.45 ns/iter (+/- 90,815.65)
+test no_threading::bench_backward                                   ... bench:          25.06 ns/iter (+/- 0.29)
+test no_threading::bench_forward                                    ... bench: 125,756,318.10 ns/iter (+/- 1,185,695.01)
+test no_threading::bench_prune                                      ... bench:      51,896.78 ns/iter (+/- 796.25)
+test no_threading::bench_set_knot_length                            ... bench:  33,106,805.90 ns/iter (+/- 781,506.71)
+test no_threading::bench_suggest_symbolic                           ... bench: 113,498,276.90 ns/iter (+/- 7,582,348.57)
+test no_threading::bench_update                                     ... bench:     186,872.30 ns/iter (+/- 7,050.67)
+test no_threading::bench_update_knots_from_samples                  ... bench:   1,489,932.98 ns/iter (+/- 34,544.04)
 
-test result: ok. 0 passed; 0 failed; 0 ignored; 17 measured; 0 filtered out; finished in 216.22s
+test result: ok. 0 passed; 0 failed; 0 ignored; 17 measured; 0 filtered out; finished in 192.38s
 
