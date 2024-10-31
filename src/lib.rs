@@ -1,6 +1,8 @@
 #![warn(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![feature(portable_simd)]
+#![cfg_attr(all(target_arch="x86_64", target_feature="sse2", target_feature="avx512f"), feature(stdarch_x86_avx512))]
+// #![feature(stdarch_x86_avx512)]
 
 // #![feature(stdarch_x86_avx512)]
 

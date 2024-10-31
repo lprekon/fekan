@@ -246,7 +246,14 @@ impl Edge {
                     not(no_simd)
                 ))]
                 {
-                    return self.x86_forward(inputs, control_points, *degree, knots, activations);
+                    return Edge::x86_forward(
+                        &mut self.l1_norm,
+                        inputs,
+                        control_points,
+                        *degree,
+                        knots,
+                        activations,
+                    );
                 }
 
                 #[allow(unreachable_code)]
@@ -353,16 +360,20 @@ impl Edge {
         knots: &[f64],
         activations: &mut [Vec<FxHashMap<u64, f64>>],
     ) -> Vec<f64> {
+        use std::{arch::x86_64::*, mem};
+
         let mut outputs = Vec::with_capacity(inputs.len());
         for t in inputs.iter() {
             let mut sum = 0.0;
             let mut coef_idx = 0;
             // iterate over the control points in chunks of 4
             for coef_chunk in control_points.chunks_exact(SIMD_CHUNK_SIZE) {
-                let basis_vec =
-                    basis_x86_simd_across_i(coef_idx, degree, *t, knots, activations, degree);
-                let activations = f64x8::from_slice(coef_chunk) * basis_vec;
-                sum += activations.to_array().iter().sum::<f64>();
+                let basis_vec = x86_basis(coef_idx, degree, *t, knots, activations, degree);
+                let ceof_vec = unsafe { _mm512_loadu_pd(coef_chunk.as_ptr()) };
+                let activation_vec = unsafe { _mm512_mul_pd(basis_vec, ceof_vec) };
+                sum += unsafe { mem::transmute::<__m512d, [f64; 8]>(activation_vec) }
+                    .iter()
+                    .sum::<f64>();
                 coef_idx += SIMD_CHUNK_SIZE;
             }
             // handle the last chunk, which may not be a full chunk
@@ -373,7 +384,7 @@ impl Edge {
             }
             outputs.push(sum);
         }
-        self.l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
+        *l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
         outputs
     }
 
@@ -1276,113 +1287,6 @@ impl Edge {
     }
 }
 
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    target_feature = "avx512f",
-    not(portable),
-    not(no_simd)
-))]
-/// Calculate the value of S(t) where S is a B-spline defined by the control points `control_points` and the knot vector `knots`.
-///
-/// This function uses x86 vector intrinsics from the std::arch::x86_64 crate to calculate the value of the spline at the given parameter `t`. It should only be used on platforms that support these intrinsics.
-fn x86_spline(
-    inputs: &[f64],
-    control_points: &[f64],
-    degree: usize,
-    knots: &[f64],
-    activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
-) -> Vec<f64> {
-    use std::{arch::x86_64::*, mem};
-    unsafe {
-        let mut outputs = Vec::with_capacity(inputs.len());
-        for t in inputs {
-            let mut sum = 0.0;
-            let mut coef_idx = 0;
-            // iterate over the control points in chunks of 4
-            const CHUNK_SIZE: usize = 8;
-            for coef_chunk in control_points.chunks_exact(CHUNK_SIZE) {
-                let basis_vec =
-                    basis_x86_intrinsics_across_i(coef_idx, degree, *t, knots, activations, degree);
-                let coef_vec = _mm512_loadu_pd(coef_chunk.as_ptr());
-                let activation_vec = _mm512_mul_pd(coef_vec, basis_vec);
-                let activations: [f64; 8] = mem::transmute(activation_vec);
-                sum += activations.iter().sum::<f64>();
-                coef_idx += CHUNK_SIZE;
-            }
-            // handle the last chunk, which may not be a full chunk
-            for (idx, coef) in control_points[coef_idx..].iter().enumerate() {
-                let basis_activation =
-                    basis_cached(coef_idx + idx, degree, *t, knots, activations, degree);
-                sum += *coef * basis_activation;
-            }
-            outputs.push(sum);
-        }
-        outputs
-    }
-}
-
-const SIMD_CHUNK_SIZE: usize = 8;
-
-/// Calculate the value of S(t) where S is a B-spline defined by the control points `control_points` and the knot vector `knots`.
-///
-/// This function uses the Rust SIMD crate, which is designed to be portable across different SIMD instruction sets, including platforms without SIMD support. On such platforms, this function should compile to scalar operations as a fallback
-#[cfg(not(no_simd))]
-#[allow(dead_code)] // this function may be compiled but never called on some x86_64 platforms
-fn portable_simd_spline(
-    inputs: &[f64],
-    control_points: &[f64],
-    degree: usize,
-    knots: &[f64],
-    activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
-) -> Vec<f64> {
-    let mut outputs = Vec::with_capacity(inputs.len());
-    for t in inputs.iter() {
-        let mut sum = 0.0;
-        let mut coef_idx = 0;
-        // iterate over the control points in chunks of 4
-        for coef_chunk in control_points.chunks_exact(SIMD_CHUNK_SIZE) {
-            let basis_vec =
-                basis_portable_simd_across_i(coef_idx, degree, *t, knots, activations, degree);
-            let activations = f64x8::from_slice(coef_chunk) * basis_vec;
-            sum += activations.to_array().iter().sum::<f64>();
-            coef_idx += SIMD_CHUNK_SIZE;
-        }
-        // handle the last chunk, which may not be a full chunk
-        for (idx, coef) in control_points[coef_idx..].iter().enumerate() {
-            let basis_activation =
-                basis_cached(coef_idx + idx, degree, *t, knots, activations, degree);
-            sum += *coef * basis_activation;
-        }
-        outputs.push(sum);
-    }
-    outputs
-}
-
-/// Calculate the value of S(t) where S is a B-spline defined by the control points `control_points` and the knot vector `knots`.
-///
-/// This function uses scalar operations to calculate the value of the spline at the given parameter `t`. It should only be used as a fallback when SIMD operations are explicitly disabled, as the portable SIMD implementation should compile to scalar operations on platforms without SIMD support.
-#[allow(dead_code)] // this function is only compiled when SIMD is explicitly disabled with --cfg no_simd
-fn fallback_scalar_spline(
-    inputs: &[f64],
-    control_points: &[f64],
-    degree: usize,
-    knots: &[f64],
-    activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
-) -> Vec<f64> {
-    let mut outputs = Vec::with_capacity(inputs.len());
-    for t in inputs.iter() {
-        let mut sum = 0.0;
-        for (idx, coef) in control_points.iter().enumerate() {
-            let basis_activation = basis_cached(idx, degree, *t, &knots, activations, degree);
-            sum += *coef * basis_activation;
-        }
-        outputs.push(sum);
-    }
-    // trace!("edge activations: {:?}", outputs);
-    outputs
-}
-
 /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
 /// checks the provided cache for a memoized result before computing it. If the result is not found, it is computed and stored in the cache before being returned.
 ///
@@ -1493,6 +1397,8 @@ fn basis_autovectorize_across_i(i_vec: &[usize], k: usize, t: f64, knots: &[f64]
         .collect();
 }
 
+const SIMD_CHUNK_SIZE: usize = 8;
+
 use std::simd::prelude::*;
 /// calculate the basis activation over multiple i values at once, using the rust portable SIMD crate
 #[cfg(not(no_simd))]
@@ -1543,7 +1449,7 @@ fn basis_portable_simd_across_i(
     not(no_simd)
 ))]
 /// calculate the basis activation over multiple i values at once, using extended x86 intrinsics. Takes 1 usize i value, and returns 8 64-bit floats as the basis values for the 8 i values starting at i
-fn basis_x86_intrinsics_across_i(
+fn x86_basis(
     i_base: usize,
     k: usize,
     t: f64,
@@ -1574,9 +1480,8 @@ fn basis_x86_intrinsics_across_i(
         let right_denominator = _mm512_sub_pd(knots_i_k_1, knots_i_1);
         let right_coefficients = _mm512_div_pd(right_numerator, right_denominator);
 
-        let left_vals = basis_x86_intrinsics_across_i(i_base, k - 1, t, knots, cache, full_degree);
-        let right_vals =
-            basis_x86_intrinsics_across_i(i_base + 1, k - 1, t, knots, cache, full_degree);
+        let left_vals = x86_basis(i_base, k - 1, t, knots, cache, full_degree);
+        let right_vals = x86_basis(i_base + 1, k - 1, t, knots, cache, full_degree);
 
         let left_results = _mm512_mul_pd(left_coefficients, left_vals);
         let right_results = _mm512_mul_pd(right_coefficients, right_vals);
@@ -2340,7 +2245,7 @@ mod tests {
             let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
                 vec![vec![FxHashMap::default(); knots.len() - 1]; 0];
 
-            let result: __m512d = basis_x86_intrinsics_across_i(0, 0, t, &knots, &mut cache, 0);
+            let result: __m512d = x86_basis(0, 0, t, &knots, &mut cache, 0);
             let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
 
             assert_eq!(
@@ -2351,7 +2256,7 @@ mod tests {
 
             let t = 3.95;
             let expected_results = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
-            let result: __m512d = basis_x86_intrinsics_across_i(0, 0, t, &knots, &mut cache, 0);
+            let result: __m512d = x86_basis(0, 0, t, &knots, &mut cache, 0);
             let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
             assert_eq!(
                 transmuted_result.to_vec(),
@@ -2361,13 +2266,13 @@ mod tests {
 
             let t = 11.5;
             let expected_results = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-            let result = basis_x86_intrinsics_across_i(0, 0, t, &knots, &mut cache, 0);
+            let result = x86_basis(0, 0, t, &knots, &mut cache, 0);
             let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
             assert_eq!(transmuted_result.to_vec(), expected_results, "t > knot[11]");
 
             let t = -0.5;
             let expected_results = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-            let result = basis_x86_intrinsics_across_i(0, 0, t, &knots, &mut cache, 0);
+            let result = x86_basis(0, 0, t, &knots, &mut cache, 0);
             let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
             assert_eq!(transmuted_result.to_vec(), expected_results, "t < knot[0]");
         }
@@ -2381,14 +2286,14 @@ mod tests {
             not(portable)
         ))]
         fn test_basis_x86_i_k3() {
-            use std::{arch::x86_64::*, mem};
+            use std::mem;
             let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
             let k = 3;
             let t = 9.2;
             let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
                 vec![vec![FxHashMap::default(); knots.len() - 1 - k]; k];
             println!("0");
-            let result = basis_x86_intrinsics_across_i(0, k, t, &knots, &mut cache, k);
+            let result = x86_basis(0, k, t, &knots, &mut cache, k);
 
             let expected_results: Vec<f64> = (0..(knots.len() - 1 - k))
                 .map(|i| basis_no_cache(i, k, t, &knots))
