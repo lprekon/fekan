@@ -1,7 +1,8 @@
 #![warn(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![feature(portable_simd)]
-#![feature(stdarch_x86_avx512)]
+
+// #![feature(stdarch_x86_avx512)]
 
 //! A library to build and train Kolmogorov-Arnold neural networks.
 //!
