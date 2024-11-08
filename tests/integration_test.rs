@@ -111,7 +111,7 @@ mod classification {
             TrainingOptions {
                 num_epochs: 300,
                 num_threads: 8,
-                learning_rate: 0.001,
+                learning_rate: 0.0005,
                 l1_penalty: 0.0,
                 entropy_penalty: 0.0,
                 each_epoch: fekan::training_options::EachEpoch::DoNotValidateModel,

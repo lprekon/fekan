@@ -329,7 +329,7 @@ impl Edge {
             for coef_chunk in control_points.chunks_exact(SIMD_CHUNK_SIZE) {
                 let basis_vec =
                     basis_portable_simd_across_i(coef_idx, degree, *t, knots, activations, degree);
-                let activations = f64x8::from_slice(coef_chunk) * basis_vec;
+                let activations = std::simd::prelude::f64x8::from_slice(coef_chunk) * basis_vec;
                 sum += activations.to_array().iter().sum::<f64>();
                 coef_idx += SIMD_CHUNK_SIZE;
             }
@@ -358,31 +358,154 @@ impl Edge {
         control_points: &[f64],
         degree: usize,
         knots: &[f64],
-        activations: &mut [Vec<FxHashMap<u64, f64>>],
+        cache: &mut [Vec<FxHashMap<u64, f64>>],
     ) -> Vec<f64> {
         use std::{arch::x86_64::*, mem};
+        trace!(
+            "Starting x86 forward pass with\ncontrol_points: {control_points:?}\nknots: {knots:?}"
+        );
 
-        let mut outputs = Vec::with_capacity(inputs.len());
+        let mut outputs: Vec<f64> = Vec::with_capacity(inputs.len());
+        debug_assert!(control_points.len() + degree + 1 <= knots.len());
         for t in inputs.iter() {
-            let mut sum = 0.0;
-            let mut coef_idx = 0;
-            // iterate over the control points in chunks of 4
-            for coef_chunk in control_points.chunks_exact(SIMD_CHUNK_SIZE) {
-                let basis_vec = x86_basis(coef_idx, degree, *t, knots, activations, degree);
-                let ceof_vec = unsafe { _mm512_loadu_pd(coef_chunk.as_ptr()) };
-                let activation_vec = unsafe { _mm512_mul_pd(basis_vec, ceof_vec) };
-                sum += unsafe { mem::transmute::<__m512d, [f64; 8]>(activation_vec) }
-                    .iter()
-                    .sum::<f64>();
-                coef_idx += SIMD_CHUNK_SIZE;
+            trace!("Starting forward pass for t={}", t);
+            let activations_size = knots.len() - 1;
+            let mut activations: Vec<f64> = Vec::with_capacity(activations_size);
+            // start with k=0
+            let t_splat = unsafe { _mm512_set1_pd(*t) };
+            // slide the window over SIMD_CHUNK_SIZE points at a time
+            trace!("Starting k=0 activations");
+            for i_chunk in (0..activations_size)
+                .collect::<Vec<usize>>()
+                .chunks_exact(SIMD_CHUNK_SIZE)
+            {
+                let i = i_chunk[0];
+                let knots_i = unsafe { _mm512_loadu_pd(&knots[i]) };
+                let knots_i1 = unsafe { _mm512_loadu_pd(&knots[i + 1]) };
+                let left_mask = unsafe { _mm512_cmp_pd_mask(t_splat, knots_i, _CMP_GE_OQ) };
+                let right_mask = unsafe { _mm512_cmp_pd_mask(t_splat, knots_i1, _CMP_LT_OQ) };
+                trace!(
+                    "knots_i: {:?}\nknots_i1: {:?}\nleft mask {:b}\nright mask: {:b}",
+                    knots_i,
+                    knots_i1,
+                    left_mask,
+                    right_mask
+                );
+                let mask = left_mask & right_mask;
+                let activation_vec =
+                    unsafe { _mm512_mask_blend_pd(mask, _mm512_set1_pd(0.0), _mm512_set1_pd(1.0)) };
+
+                trace!("i: {}, activation_vec: {:?}", i, activation_vec);
+                activations.extend_from_slice(unsafe {
+                    &mem::transmute::<__m512d, [f64; 8]>(activation_vec)
+                }); // use slice extension since this is the first pass through, so the vector knows how many values it's supposed to hold, and later indexing wont fail
+                    // unsafe {
+                    //     _mm512_store_pd(&mut activations[i], activation_vec);
+                    // }
             }
-            // handle the last chunk, which may not be a full chunk
-            for (idx, coef) in control_points[coef_idx..].iter().enumerate() {
-                let basis_activation =
-                    basis_cached(coef_idx + idx, degree, *t, knots, activations, degree);
-                sum += *coef * basis_activation;
+            trace!("Activations after SIMD step: {:?}", activations);
+            // finish up for any remaining points
+            for i in (activations_size - (activations_size % SIMD_CHUNK_SIZE))..activations_size {
+                let activation = if knots[i] <= *t && *t < knots[i + 1] {
+                    1.0
+                } else {
+                    0.0
+                };
+                trace!(
+                    "Scalar step for i={}, t={}\nknots[i]: {}\nknots[i+1]: {}\nactivation: {}",
+                    i,
+                    t,
+                    knots[i],
+                    knots[i + 1],
+                    activation
+                );
+                activations.push(activation);
             }
-            outputs.push(sum);
+
+            trace!("Activations after scalar step: {:?}", activations);
+            // now that we have the k=0 activations, we can calculate the rest
+            for k in 1..=degree {
+                let mut num_simd_steps = 0;
+                trace!("Starting k={} activations", k);
+                for i_chunk in (0..activations_size - k)
+                    .collect::<Vec<usize>>()
+                    .chunks_exact(SIMD_CHUNK_SIZE)
+                {
+                    num_simd_steps += 1;
+                    let i = i_chunk[0];
+                    // have to trust the compiler to order operations in a way that minimizes register pressure
+                    let left_vals = unsafe { _mm512_loadu_pd(&activations[i]) };
+                    let right_vals = unsafe { _mm512_loadu_pd(&activations[i + 1]) };
+                    let knots_i = unsafe { _mm512_loadu_pd(&knots[i]) };
+                    let knots_i1 = unsafe { _mm512_loadu_pd(&knots[i + 1]) };
+                    let knots_ik = unsafe { _mm512_loadu_pd(&knots[i + k]) };
+                    let knots_i1k = unsafe { _mm512_loadu_pd(&knots[i + 1 + k]) };
+                    let left_numerator = unsafe { _mm512_sub_pd(t_splat, knots_i) };
+                    let left_denominator = unsafe { _mm512_sub_pd(knots_ik, knots_i) };
+                    let left_coef = unsafe { _mm512_div_pd(left_numerator, left_denominator) };
+                    let right_numerator = unsafe { _mm512_sub_pd(knots_i1k, t_splat) };
+                    let right_denominator = unsafe { _mm512_sub_pd(knots_i1k, knots_i1) };
+                    let right_coef = unsafe { _mm512_div_pd(right_numerator, right_denominator) };
+                    let left_activations = unsafe { _mm512_mul_pd(left_vals, left_coef) };
+                    let right_activations = unsafe { _mm512_mul_pd(right_vals, right_coef) };
+                    let new_activations =
+                        unsafe { _mm512_add_pd(left_activations, right_activations) };
+                    // trace out all the above values on separate lines
+                    trace!(
+                        "i: {}\nleft_vals: {:?}\nright_vals: {:?}\nknots_i: {:?}\nknots_i1: {:?}\nknots_ik: {:?}\nknots_i1k: {:?}\nleft_numerator: {:?}\nleft_denominator: {:?}\nleft_coef: {:?}\nright_numerator: {:?}\nright_denominator: {:?}\nright_coef: {:?}\nleft_activations: {:?}\nright_activations: {:?}\nnew_activations: {:?}",
+                        i,
+                        left_vals,
+                        right_vals,
+                        knots_i,
+                        knots_i1,
+                        knots_ik,
+                        knots_i1k,
+                        left_numerator,
+                        left_denominator,
+                        left_coef,
+                        right_numerator,
+                        right_denominator,
+                        right_coef,
+                        left_activations,
+                        right_activations,
+                        new_activations
+                    );
+                    unsafe {
+                        _mm512_storeu_pd(&mut activations[i], new_activations); // now that activations has been initialized above, we can write directly
+                    }
+                    trace!("updated activations: {:?}", activations);
+                }
+                // finish up for any remaining points
+                for i in num_simd_steps * SIMD_CHUNK_SIZE..activations_size - k {
+                    trace!("Scalar tesp for i={}, k={}, t={}", i, k, t);
+                    let left_val = activations[i];
+                    let right_val = activations[i + 1];
+                    let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
+                    let right_coefficient =
+                        (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
+                    let new_activation =
+                        left_val * left_coefficient + right_val * right_coefficient;
+                    activations[i] = new_activation;
+                    trace!(
+                        "new activation: {}\nupdated activations: {:?}",
+                        new_activation,
+                        activations
+                    );
+                }
+            }
+            // have to cache basis activationsfor backprop
+            for i in 0..control_points.len() {
+                cache[0][i].insert(t.to_bits(), activations[i]);
+            }
+            let output = control_points
+                .iter()
+                .zip(activations.iter())
+                .map(|(c, a)| {
+                    trace!("multiplying control point {} by activation {}", c, a);
+                    c * a
+                })
+                .sum();
+            outputs.push(output);
         }
         *l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
         outputs
@@ -1359,47 +1482,47 @@ fn basis_cached(
 }
 
 /// calculate the basis activation over all i values at once - testing compiler autovectorization
-fn basis_autovectorize_across_i(i_vec: &[usize], k: usize, t: f64, knots: &[f64]) -> Vec<f64> {
-    if k == 0 {
-        let mut result = Vec::with_capacity(i_vec.len());
-        for i_val in i_vec {
-            if knots[*i_val] <= t && t < knots[*i_val + 1] {
-                result.push(1.0);
-            } else {
-                result.push(0.0);
-            }
-        }
-        return result;
-    }
-    let left_coefficients: Vec<f64> = i_vec
-        .iter()
-        .map(|i_val| (t - knots[*i_val]) / (knots[*i_val + k] - knots[*i_val]))
-        .collect();
-    let right_coefficients: Vec<f64> = i_vec
-        .iter()
-        .map(|i_val| (knots[*i_val + k + 1] - t) / (knots[*i_val + k + 1] - knots[*i_val + 1]))
-        .collect();
-    let left_vals = basis_autovectorize_across_i(i_vec, k - 1, t, knots);
-    let right_is: Vec<usize> = i_vec.iter().map(|i_val| i_val + 1).collect();
-    let right_vals = basis_autovectorize_across_i(&right_is, k - 1, t, knots);
+// fn basis_autovectorize_across_i(i_vec: &[usize], k: usize, t: f64, knots: &[f64]) -> Vec<f64> {
+//     if k == 0 {
+//         let mut result = Vec::with_capacity(i_vec.len());
+//         for i_val in i_vec {
+//             if knots[*i_val] <= t && t < knots[*i_val + 1] {
+//                 result.push(1.0);
+//             } else {
+//                 result.push(0.0);
+//             }
+//         }
+//         return result;
+//     }
+//     let left_coefficients: Vec<f64> = i_vec
+//         .iter()
+//         .map(|i_val| (t - knots[*i_val]) / (knots[*i_val + k] - knots[*i_val]))
+//         .collect();
+//     let right_coefficients: Vec<f64> = i_vec
+//         .iter()
+//         .map(|i_val| (knots[*i_val + k + 1] - t) / (knots[*i_val + k + 1] - knots[*i_val + 1]))
+//         .collect();
+//     let left_vals = basis_autovectorize_across_i(i_vec, k - 1, t, knots);
+//     let right_is: Vec<usize> = i_vec.iter().map(|i_val| i_val + 1).collect();
+//     let right_vals = basis_autovectorize_across_i(&right_is, k - 1, t, knots);
 
-    let left_results = left_coefficients
-        .iter()
-        .zip(left_vals.iter())
-        .map(|(c, v)| c * v);
-    let right_results = right_coefficients
-        .iter()
-        .zip(right_vals.iter())
-        .map(|(c, v)| c * v);
-    return left_results
-        .zip(right_results)
-        .map(|(l, r)| l + r)
-        .collect();
-}
+//     let left_results = left_coefficients
+//         .iter()
+//         .zip(left_vals.iter())
+//         .map(|(c, v)| c * v);
+//     let right_results = right_coefficients
+//         .iter()
+//         .zip(right_vals.iter())
+//         .map(|(c, v)| c * v);
+//     return left_results
+//         .zip(right_results)
+//         .map(|(l, r)| l + r)
+//         .collect();
+// }
 
+#[allow(dead_code)] // this constant is unused in no_simd mode
 const SIMD_CHUNK_SIZE: usize = 8;
 
-use std::simd::prelude::*;
 /// calculate the basis activation over multiple i values at once, using the rust portable SIMD crate
 #[cfg(not(no_simd))]
 #[allow(dead_code)] // this function may be compiled but never called on some xSIMD_CHUNK_SIZE6_64 platforms
@@ -1411,7 +1534,8 @@ fn basis_portable_simd_across_i(
     knots: &[f64],
     cache: &mut [Vec<FxHashMap<u64, f64>>],
     full_degree: usize,
-) -> f64x8 {
+) -> std::simd::prelude::f64x8 {
+    use std::simd::prelude::*;
     let knots_i: f64x8 = Simd::from_slice(&knots[i_base..i_base + SIMD_CHUNK_SIZE]);
     let knots_i_1: f64x8 = Simd::from_slice(&knots[i_base + 1..i_base + SIMD_CHUNK_SIZE + 1]);
     let t_splat: f64x8 = f64x8::splat(t);
@@ -1449,55 +1573,55 @@ fn basis_portable_simd_across_i(
     not(no_simd)
 ))]
 /// calculate the basis activation over multiple i values at once, using extended x86 intrinsics. Takes 1 usize i value, and returns 8 64-bit floats as the basis values for the 8 i values starting at i
-fn x86_basis(
-    i_base: usize,
-    k: usize,
-    t: f64,
-    knots: &[f64],
-    cache: &mut [Vec<FxHashMap<u64, f64>>],
-    full_degree: usize,
-) -> std::arch::x86_64::__m512d {
-    use std::{arch::x86_64::*, mem};
-    // unsafe justification: this function is only available when both SSE2 and AVX2 are enabled, which promises the availability of all instructions below
-    unsafe {
-        let t_splat: __m512d = _mm512_set1_pd(t);
-        let knots_i = _mm512_loadu_pd(&knots[i_base]);
-        let knots_i_1 = _mm512_loadu_pd(&knots[i_base + 1]);
-        if k == 0 {
-            let left_mask = _mm512_cmp_pd_mask(knots_i, t_splat, _CMP_LE_OQ);
-            let right_mask = _mm512_cmp_pd_mask(t_splat, knots_i_1, _CMP_LT_OQ);
-            let full_mask = left_mask & right_mask;
-            trace!("k: {k}, t:{t}, i_base: {i_base}\nknots_i: {knots_i:?}\nknots_i_1: {knots_i_1:?}\nleft_mask: {left_mask:b}\nright_mask: {right_mask:b}\nfull_mask: {full_mask:b}\n");
-            return _mm512_mask_blend_pd(full_mask, _mm512_set1_pd(0.0), _mm512_set1_pd(1.0));
-        }
+// fn x86_basis(
+//     i_base: usize,
+//     k: usize,
+//     t: f64,
+//     knots: &[f64],
+//     cache: &mut [Vec<FxHashMap<u64, f64>>],
+//     full_degree: usize,
+// ) -> std::arch::x86_64::__m512d {
+//     use std::{arch::x86_64::*, mem};
+//     // unsafe justification: this function is only available when both SSE2 and AVX2 are enabled, which promises the availability of all instructions below
+//     unsafe {
+//         let t_splat: __m512d = _mm512_set1_pd(t);
+//         let knots_i = _mm512_loadu_pd(&knots[i_base]);
+//         let knots_i_1 = _mm512_loadu_pd(&knots[i_base + 1]);
+//         if k == 0 {
+//             let left_mask = _mm512_cmp_pd_mask(knots_i, t_splat, _CMP_LE_OQ);
+//             let right_mask = _mm512_cmp_pd_mask(t_splat, knots_i_1, _CMP_LT_OQ);
+//             let full_mask = left_mask & right_mask;
+//             trace!("k: {k}, t:{t}, i_base: {i_base}\nknots_i: {knots_i:?}\nknots_i_1: {knots_i_1:?}\nleft_mask: {left_mask:b}\nright_mask: {right_mask:b}\nfull_mask: {full_mask:b}\n");
+//             return _mm512_mask_blend_pd(full_mask, _mm512_set1_pd(0.0), _mm512_set1_pd(1.0));
+//         }
 
-        let knots_i_k = _mm512_loadu_pd(&knots[i_base + k]);
-        let knots_i_k_1 = _mm512_loadu_pd(&knots[i_base + k + 1]);
-        let left_numerator = _mm512_sub_pd(t_splat, knots_i);
-        let left_denominator = _mm512_sub_pd(knots_i_k, knots_i);
-        let left_coefficients = _mm512_div_pd(left_numerator, left_denominator);
-        let right_numerator = _mm512_sub_pd(knots_i_k_1, t_splat);
-        let right_denominator = _mm512_sub_pd(knots_i_k_1, knots_i_1);
-        let right_coefficients = _mm512_div_pd(right_numerator, right_denominator);
+//         let knots_i_k = _mm512_loadu_pd(&knots[i_base + k]);
+//         let knots_i_k_1 = _mm512_loadu_pd(&knots[i_base + k + 1]);
+//         let left_numerator = _mm512_sub_pd(t_splat, knots_i);
+//         let left_denominator = _mm512_sub_pd(knots_i_k, knots_i);
+//         let left_coefficients = _mm512_div_pd(left_numerator, left_denominator);
+//         let right_numerator = _mm512_sub_pd(knots_i_k_1, t_splat);
+//         let right_denominator = _mm512_sub_pd(knots_i_k_1, knots_i_1);
+//         let right_coefficients = _mm512_div_pd(right_numerator, right_denominator);
 
-        let left_vals = x86_basis(i_base, k - 1, t, knots, cache, full_degree);
-        let right_vals = x86_basis(i_base + 1, k - 1, t, knots, cache, full_degree);
+//         let left_vals = x86_basis(i_base, k - 1, t, knots, cache, full_degree);
+//         let right_vals = x86_basis(i_base + 1, k - 1, t, knots, cache, full_degree);
 
-        let left_results = _mm512_mul_pd(left_coefficients, left_vals);
-        let right_results = _mm512_mul_pd(right_coefficients, right_vals);
-        let result_vec = _mm512_add_pd(left_results, right_results);
-        trace!("k: {k}, t:{t}, i_base:{i_base}\nknots_i: {knots_i:?}\nknots_i_1: {knots_i_1:?}\nknots_i_k: {knots_i_k:?}\nknots_i_k_1: {knots_i_k_1:?}\nleft_coefficients: {left_coefficients:?}\nleft_vals: {left_vals:?}\nright_coefficients: {right_coefficients:?}\nright_vals: {right_vals:?}\nresult: {result_vec:?}\n");
+//         let left_results = _mm512_mul_pd(left_coefficients, left_vals);
+//         let right_results = _mm512_mul_pd(right_coefficients, right_vals);
+//         let result_vec = _mm512_add_pd(left_results, right_results);
+//         trace!("k: {k}, t:{t}, i_base:{i_base}\nknots_i: {knots_i:?}\nknots_i_1: {knots_i_1:?}\nknots_i_k: {knots_i_k:?}\nknots_i_k_1: {knots_i_k_1:?}\nleft_coefficients: {left_coefficients:?}\nleft_vals: {left_vals:?}\nright_coefficients: {right_coefficients:?}\nright_vals: {right_vals:?}\nresult: {result_vec:?}\n");
 
-        // cache the results of the first recursion for later backpropogation
-        if k == full_degree {
-            let transmuted_results: [f64; SIMD_CHUNK_SIZE] = mem::transmute(result_vec);
-            for (i, b) in (i_base..i_base + SIMD_CHUNK_SIZE).zip(transmuted_results.iter()) {
-                cache[full_degree - k][i as usize].insert(t.to_bits(), *b);
-            }
-        }
-        return result_vec;
-    }
-}
+//         // cache the results of the first recursion for later backpropogation
+//         if k == full_degree {
+//             let transmuted_results: [f64; SIMD_CHUNK_SIZE] = mem::transmute(result_vec);
+//             for (i, b) in (i_base..i_base + SIMD_CHUNK_SIZE).zip(transmuted_results.iter()) {
+//                 cache[full_degree - k][i as usize].insert(t.to_bits(), *b);
+//             }
+//         }
+//         return result_vec;
+//     }
+// }
 
 /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
 /// These functions need to be outside the impl block because they need to borrow the cache mutably, which would conflict with the borrow of self used to iterate over the coefficients
@@ -1689,6 +1813,19 @@ mod tests {
             let rounded_result = (result_from_caching_function * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
             assert_eq!(rounded_result, expected_results[i], "i = {}", i);
         }
+    }
+
+    #[test]
+    fn test_big_forward() {
+        // primarily for exercising SIMD code
+        let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
+        let control_points = vec![1.0; 8];
+        let mut spline = Edge::new(3, control_points, knots).unwrap();
+        let t = vec![8.95];
+        let expected_result = 0.8571;
+        let result = spline.forward(&t);
+        let rounded_result = (result[0] * 10000.0).round() / 10000.0;
+        assert_eq!(rounded_result, expected_result, "actual != expected");
     }
 
     #[test]
@@ -2171,23 +2308,24 @@ mod tests {
         use super::*;
         use test_log::test;
 
-        #[test]
-        fn test_basis_autovec_i() {
-            let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-            let expected_results = vec![0.0513, 0.5782, 0.3648, 0.0057];
-            let k = 3;
-            let t = 0.95;
-            let result = basis_autovectorize_across_i(&[0, 1, 2, 3], k, t, &knots);
-            let rounded_result: Vec<f64> = result
-                .iter()
-                .map(|r| (r * 10000.0).round() / 10000.0)
-                .collect();
-            assert_eq!(rounded_result, expected_results);
-        }
+        // #[test]
+        // fn test_basis_autovec_i() {
+        //     let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+        //     let expected_results = vec![0.0513, 0.5782, 0.3648, 0.0057];
+        //     let k = 3;
+        //     let t = 0.95;
+        //     let result = basis_autovectorize_across_i(&[0, 1, 2, 3], k, t, &knots);
+        //     let rounded_result: Vec<f64> = result
+        //         .iter()
+        //         .map(|r| (r * 10000.0).round() / 10000.0)
+        //         .collect();
+        //     assert_eq!(rounded_result, expected_results);
+        // }
 
         #[test]
         #[cfg(not(no_simd))]
         fn test_basis_portable_i_k0() {
+            use std::simd::prelude::*;
             let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
             let t = 1.3;
             let expected_results = f64x8::from_array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
@@ -2227,80 +2365,96 @@ mod tests {
             assert_eq!(result.to_array().to_vec(), expected_results);
         }
 
-        #[test]
-        #[cfg(all(
-            target_arch = "x86_64",
-            target_feature = "sse2",
-            target_feature = "avx512f",
-            not(no_simd),
-            not(portable)
-        ))]
-        fn test_basis_x86_i_k0() {
-            use std::{arch::x86_64::*, mem};
-            let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
+        // #[test]
+        // #[cfg(all(
+        //     target_arch = "x86_64",
+        //     target_feature = "sse2",
+        //     target_feature = "avx512f",
+        //     not(no_simd),
+        //     not(portable)
+        // ))]
+        // fn test_forward_x86_k0() {
+        //     let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
+        //     let t = 1.3;
+        //     let control_points = vec![1.0; 4];
+        //     let mut zero_spline = Edge::new(0, control_points, knots).unwrap();
+        //     let result = zero_spline.forward(&vec![t]);
+        // }
 
-            let t = 1.3;
-            let expected_results = vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        // #[test]
+        // #[cfg(all(
+        //     target_arch = "x86_64",
+        //     target_feature = "sse2",
+        //     target_feature = "avx512f",
+        //     not(no_simd),
+        //     not(portable)
+        // ))]
+        // fn test_basis_x86_i_k0() {
+        //     use std::{arch::x86_64::*, mem};
+        //     let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
 
-            let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
-                vec![vec![FxHashMap::default(); knots.len() - 1]; 0];
+        //     let t = 1.3;
+        //     let expected_results = vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
 
-            let result: __m512d = x86_basis(0, 0, t, &knots, &mut cache, 0);
-            let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
+        //     let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
+        //         vec![vec![FxHashMap::default(); knots.len() - 1]; 0];
 
-            assert_eq!(
-                transmuted_result.to_vec(),
-                expected_results,
-                "knot[1] < t < knot[2]"
-            );
+        //     let result: __m512d = x86_basis(0, 0, t, &knots, &mut cache, 0);
+        //     let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
 
-            let t = 3.95;
-            let expected_results = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
-            let result: __m512d = x86_basis(0, 0, t, &knots, &mut cache, 0);
-            let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
-            assert_eq!(
-                transmuted_result.to_vec(),
-                expected_results,
-                "knot[3] < t < knot[4]"
-            );
+        //     assert_eq!(
+        //         transmuted_result.to_vec(),
+        //         expected_results,
+        //         "knot[1] < t < knot[2]"
+        //     );
 
-            let t = 11.5;
-            let expected_results = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-            let result = x86_basis(0, 0, t, &knots, &mut cache, 0);
-            let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
-            assert_eq!(transmuted_result.to_vec(), expected_results, "t > knot[11]");
+        //     let t = 3.95;
+        //     let expected_results = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
+        //     let result: __m512d = x86_basis(0, 0, t, &knots, &mut cache, 0);
+        //     let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
+        //     assert_eq!(
+        //         transmuted_result.to_vec(),
+        //         expected_results,
+        //         "knot[3] < t < knot[4]"
+        //     );
 
-            let t = -0.5;
-            let expected_results = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-            let result = x86_basis(0, 0, t, &knots, &mut cache, 0);
-            let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
-            assert_eq!(transmuted_result.to_vec(), expected_results, "t < knot[0]");
-        }
+        //     let t = 11.5;
+        //     let expected_results = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        //     let result = x86_basis(0, 0, t, &knots, &mut cache, 0);
+        //     let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
+        //     assert_eq!(transmuted_result.to_vec(), expected_results, "t > knot[11]");
 
-        #[test]
-        #[cfg(all(
-            target_arch = "x86_64",
-            target_feature = "sse2",
-            target_feature = "avx512f",
-            not(no_simd),
-            not(portable)
-        ))]
-        fn test_basis_x86_i_k3() {
-            use std::mem;
-            let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-            let k = 3;
-            let t = 9.2;
-            let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
-                vec![vec![FxHashMap::default(); knots.len() - 1 - k]; k];
-            println!("0");
-            let result = x86_basis(0, k, t, &knots, &mut cache, k);
+        //     let t = -0.5;
+        //     let expected_results = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        //     let result = x86_basis(0, 0, t, &knots, &mut cache, 0);
+        //     let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
+        //     assert_eq!(transmuted_result.to_vec(), expected_results, "t < knot[0]");
+        // }
 
-            let expected_results: Vec<f64> = (0..(knots.len() - 1 - k))
-                .map(|i| basis_no_cache(i, k, t, &knots))
-                .collect();
-            let transmuted_results: [f64; 8] = unsafe { mem::transmute(result) };
-            assert_eq!(transmuted_results.to_vec(), expected_results);
-        }
+        // #[test]
+        // #[cfg(all(
+        //     target_arch = "x86_64",
+        //     target_feature = "sse2",
+        //     target_feature = "avx512f",
+        //     not(no_simd),
+        //     not(portable)
+        // ))]
+        // fn test_basis_x86_i_k3() {
+        //     use std::mem;
+        //     let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
+        //     let k = 3;
+        //     let t = 9.2;
+        //     let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
+        //         vec![vec![FxHashMap::default(); knots.len() - 1 - k]; k];
+        //     println!("0");
+        //     let result = x86_basis(0, k, t, &knots, &mut cache, k);
+
+        //     let expected_results: Vec<f64> = (0..(knots.len() - 1 - k))
+        //         .map(|i| basis_no_cache(i, k, t, &knots))
+        //         .collect();
+        //     let transmuted_results: [f64; 8] = unsafe { mem::transmute(result) };
+        //     assert_eq!(transmuted_results.to_vec(), expected_results);
+        // }
     }
 
     mod symbolic_tests {
