@@ -594,90 +594,17 @@ impl Edge {
                 // assert_eq!(activations[0][0].len(), edge_gradients.len());
 
                 // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
-                let mut drts_output_wrt_input = vec![0.0; edge_gradients.len()];
-                let k = *degree;
-                for i in 0..control_points.len() {
-                    // L1 norm of edge = 1/N * Σself.infer(t).abs())
-                    // L1 loss of model = ΣL1 norm of edge ( * L1_LAMBDA)
-                    // ∴ d_model_L1/d_C_i = d_model_L1/d_edge_L1 * d_edge_L1/d_C_i
-                    // d_model_L1/d_edge_L1 = 1
-                    // d_edge_L1/d_C_i = 1/N * ΣB_i(t) * sign(C_i)
-                    trace!("Checking cache line activations[0][{}]", i);
-                    debug_assert!(!activations[0][i].is_empty(), "activations[0][i] is empty");
-                    let basis_activations: Vec<f64> = self
-                        .last_t
-                        .iter()
-                        .map(|t| *activations[0][i].get(&t.to_bits()).unwrap())
-                        .collect();
-                    let d_edge_l1_d_ci = basis_activations.iter().sum::<f64>()
-                        / basis_activations.len() as f64
-                        * control_points[i].signum();
-                    debug_assert!(d_edge_l1_d_ci.is_finite(), "d_edge_l1_d_ci is not finite");
-
-                    // Entropy loss of layer = -Σ (edge_L1/layer_L1 * log(edge_L1/layer_L1))
-                    // ∴ d_layer_entropy/d_C_i = d_layer_entropy/d_edge_L1 * d_edge_L1/d_C_i
-                    // assert_ne!(edge_l1_norm, 0.0, "edge_l1_norm is 0");
-                    // debug_assert_ne!(layer_l1, 0.0, "layer_l1 is 0");
-                    let c = layer_l1 - edge_l1;
-                    debug_assert!(c.is_finite(), "c is not finite");
-                    let d =
-                        (edge_l1 / (layer_l1 + f64::MIN_POSITIVE) + f64::MIN_POSITIVE).ln() + 1.0;
-                    debug_assert!(d.is_finite(), "d is not finite");
-                    let e = layer_l1.powi(2) + f64::MIN_POSITIVE;
-                    debug_assert!(e.is_finite(), "e is not finite");
-                    let d_entropy_d_edge_l1 = -1.0 * c * d / e;
-                    debug_assert!(
-                        d_entropy_d_edge_l1.is_finite(),
-                        "d_entropy_d_edge_l1 is not finite"
-                    );
-
-                    let l1_gradient = d_edge_l1_d_ci;
-                    let entrop_gradient = d_entropy_d_edge_l1 * d_edge_l1_d_ci;
-                    // d_pred_loss/d_C_i = d_pred_loss/d_edge_output * d_edge_output/d_C_i
-                    // d_pred_loss/d_edge_output = 1
-                    // d_edge_output/d_C_i = B_i(t)
-                    let basis_activations = self
-                        .last_t
-                        .iter()
-                        .map(|t| activations[0][i].get(&t.to_bits()).unwrap());
-                    let prediction_gradients = edge_gradients
-                        .iter()
-                        .zip(basis_activations)
-                        .map(|(e, a)| e * a);
-                    accumulated_gradients[i].prediction_gradient +=
-                        prediction_gradients.sum::<f64>();
-                    accumulated_gradients[i].l1_gradient += l1_gradient;
-                    accumulated_gradients[i].entropy_gradient += entrop_gradient;
-
-                    // calculate the derivative of the spline output with respect to the input (as opposed to wrt the control points)
-                    // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
-                    let left_coef = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
-                    let right_coef = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
-                    let recurses = self.last_t.iter().map(|t| {
-                        (
-                            basis_cached(i, k - 1, *t, knots, activations, k),
-                            basis_cached(i + 1, k - 1, *t, &knots, activations, k),
-                        )
-                    });
-
-                    // println!(
-                    //     "i: {} left: {}, right: {}, left_recurse: {}, right_recurse: {}",
-                    //     i, left, right, left_recurse, right_recurse
-                    // );
-                    let basis_derivative =
-                        recurses.map(|(left, right)| left * left_coef - right * right_coef);
-                    drts_output_wrt_input = drts_output_wrt_input
-                        .iter()
-                        .zip(basis_derivative)
-                        .map(|(drt, bd)| drt + bd * control_points[i])
-                        .collect();
-                }
-                // input_gradient = drt_output_wrt_input * error
-                return Ok(drts_output_wrt_input
-                    .iter()
-                    .zip(edge_gradients.iter())
-                    .map(|(drt, g)| drt * g)
-                    .collect());
+                Edge::fallback_backward(
+                    self.last_t.as_slice(),
+                    edge_gradients,
+                    *degree,
+                    control_points,
+                    activations,
+                    layer_l1,
+                    edge_l1,
+                    accumulated_gradients,
+                    knots,
+                )
             }
             EdgeType::Symbolic {
                 a,
@@ -711,6 +638,100 @@ impl Edge {
             EdgeType::Pruned => Ok(vec![0.0; edge_gradients.len()]), // pruned edges always return 0
         }
     }
+
+    fn fallback_backward(
+        last_t: &[f64],
+        edge_gradients: &[f64],
+        k: usize,
+        control_points: &mut Vec<f64>,
+        activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
+        layer_l1: f64,
+        edge_l1: f64,
+        accumulated_gradients: &mut [Gradient],
+        knots: &[f64],
+    ) -> Result<Vec<f64>, EdgeError> {
+        let mut drts_output_wrt_input = vec![0.0; edge_gradients.len()];
+        for i in 0..control_points.len() {
+            // L1 norm of edge = 1/N * Σself.infer(t).abs())
+            // L1 loss of model = ΣL1 norm of edge ( * L1_LAMBDA)
+            // ∴ d_model_L1/d_C_i = d_model_L1/d_edge_L1 * d_edge_L1/d_C_i
+            // d_model_L1/d_edge_L1 = 1
+            // d_edge_L1/d_C_i = 1/N * ΣB_i(t) * sign(C_i)
+            trace!("Checking cache line activations[0][{}]", i);
+            debug_assert!(!activations[0][i].is_empty(), "activations[0][i] is empty");
+            let basis_activations: Vec<f64> = last_t
+                .iter()
+                .map(|t| *activations[0][i].get(&t.to_bits()).unwrap())
+                .collect();
+            let d_edge_l1_d_ci = basis_activations.iter().sum::<f64>()
+                / basis_activations.len() as f64
+                * control_points[i].signum();
+            debug_assert!(d_edge_l1_d_ci.is_finite(), "d_edge_l1_d_ci is not finite");
+
+            // Entropy loss of layer = -Σ (edge_L1/layer_L1 * log(edge_L1/layer_L1))
+            // ∴ d_layer_entropy/d_C_i = d_layer_entropy/d_edge_L1 * d_edge_L1/d_C_i
+            // assert_ne!(edge_l1_norm, 0.0, "edge_l1_norm is 0");
+            // debug_assert_ne!(layer_l1, 0.0, "layer_l1 is 0");
+            let c = layer_l1 - edge_l1;
+            debug_assert!(c.is_finite(), "c is not finite");
+            let d = (edge_l1 / (layer_l1 + f64::MIN_POSITIVE) + f64::MIN_POSITIVE).ln() + 1.0;
+            debug_assert!(d.is_finite(), "d is not finite");
+            let e = layer_l1.powi(2) + f64::MIN_POSITIVE;
+            debug_assert!(e.is_finite(), "e is not finite");
+            let d_entropy_d_edge_l1 = -1.0 * c * d / e;
+            debug_assert!(
+                d_entropy_d_edge_l1.is_finite(),
+                "d_entropy_d_edge_l1 is not finite"
+            );
+
+            let l1_gradient = d_edge_l1_d_ci;
+            let entrop_gradient = d_entropy_d_edge_l1 * d_edge_l1_d_ci;
+            // d_pred_loss/d_C_i = d_pred_loss/d_edge_output * d_edge_output/d_C_i
+            // d_pred_loss/d_edge_output = 1
+            // d_edge_output/d_C_i = B_i(t)
+            let basis_activations = last_t
+                .iter()
+                .map(|t| activations[0][i].get(&t.to_bits()).unwrap());
+            let prediction_gradients = edge_gradients
+                .iter()
+                .zip(basis_activations)
+                .map(|(e, a)| e * a);
+            accumulated_gradients[i].prediction_gradient += prediction_gradients.sum::<f64>();
+            accumulated_gradients[i].l1_gradient += l1_gradient;
+            accumulated_gradients[i].entropy_gradient += entrop_gradient;
+
+            // calculate the derivative of the spline output with respect to the input (as opposed to wrt the control points)
+            // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
+            let left_coef = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
+            let right_coef = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
+            let recurses = last_t.iter().map(|t| {
+                (
+                    basis_cached(i, k - 1, *t, knots, activations, k),
+                    basis_cached(i + 1, k - 1, *t, &knots, activations, k),
+                )
+            });
+
+            // println!(
+            //     "i: {} left: {}, right: {}, left_recurse: {}, right_recurse: {}",
+            //     i, left, right, left_recurse, right_recurse
+            // );
+            let basis_derivative =
+                recurses.map(|(left, right)| left * left_coef - right * right_coef);
+            drts_output_wrt_input = drts_output_wrt_input
+                .iter()
+                .zip(basis_derivative)
+                .map(|(drt, bd)| drt + bd * control_points[i])
+                .collect();
+        }
+        return Ok(drts_output_wrt_input
+            .iter()
+            .zip(edge_gradients.iter())
+            .map(|(drt, g)| drt * g)
+            .collect());
+        // input_gradient = drt_output_wrt_input * error
+    }
+
+    // fn fallback_backward() -> Vec<f64> {}
 
     pub(super) fn update_control_points(
         &mut self,
