@@ -689,9 +689,6 @@ impl Edge {
             // d_pred_loss/d_C_i = d_pred_loss/d_edge_output * d_edge_output/d_C_i
             // d_pred_loss/d_edge_output = 1
             // d_edge_output/d_C_i = B_i(t)
-            let basis_activations = last_t
-                .iter()
-                .map(|t| activations[0][i].get(&t.to_bits()).unwrap());
             let prediction_gradients = edge_gradients
                 .iter()
                 .zip(basis_activations)
