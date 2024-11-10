@@ -1582,14 +1582,14 @@ fn basis_portable_simd_across_i(
     return result_vec;
 }
 
-#[inline]
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "sse2",
-    target_feature = "avx512f",
-    not(portable),
-    not(no_simd)
-))]
+// #[inline]
+// #[cfg(all(
+//     target_arch = "x86_64",
+//     target_feature = "sse2",
+//     target_feature = "avx512f",
+//     not(portable),
+//     not(no_simd)
+// ))]
 /// calculate the basis activation over multiple i values at once, using extended x86 intrinsics. Takes 1 usize i value, and returns 8 64-bit floats as the basis values for the 8 i values starting at i
 // fn x86_basis(
 //     i_base: usize,
