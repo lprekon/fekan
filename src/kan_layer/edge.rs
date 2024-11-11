@@ -577,6 +577,7 @@ impl Edge {
         &mut self,
         edge_gradients: &[f64],
         layer_l1: f64,
+        sibling_l1s: &[f64],
     ) -> Result<Vec<f64>, EdgeError> {
         if self.last_t.is_empty() {
             return Err(EdgeError::BackwardBeforeForward);
@@ -602,6 +603,7 @@ impl Edge {
                     activations,
                     layer_l1,
                     edge_l1,
+                    sibling_l1s,
                     accumulated_gradients,
                     knots,
                 )
@@ -647,80 +649,92 @@ impl Edge {
         activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
         layer_l1: f64,
         edge_l1: f64,
+        sibling_l1s: &[f64],
         accumulated_gradients: &mut [Gradient],
         knots: &[f64],
     ) -> Result<Vec<f64>, EdgeError> {
-        let mut drts_output_wrt_input = vec![0.0; edge_gradients.len()];
+        trace!(
+            "Starting edge backward pass with fallback method, with argument gradients: {:?}",
+            edge_gradients
+        );
+        let mut dout_din = vec![0.0; edge_gradients.len()];
+        let reconstitued_forward_passes: Vec<f64> = last_t
+            .iter()
+            .map(|t| {
+                let mut sum = 0.0;
+                for (idx, coef) in control_points.iter().enumerate() {
+                    let basis_activation = basis_cached(idx, k, *t, knots, activations, k);
+                    sum += coef * basis_activation;
+                }
+                sum
+            })
+            .collect(); // I hope this is a quick process
+        trace!(
+            "Reconstituted forward passes: {:?}",
+            reconstitued_forward_passes
+        );
+        let dentropy_dl1 = (sibling_l1s
+            .iter()
+            .map(|s| s * ((s / layer_l1).ln() + 1.0))
+            .sum::<f64>()
+            - (layer_l1 - edge_l1) * ((edge_l1 / layer_l1).ln() + 1.0))
+            / layer_l1.powi(2);
+        trace!("dentropy_dl1: {}", dentropy_dl1);
         for i in 0..control_points.len() {
-            // L1 norm of edge = 1/N * Σself.infer(t).abs())
-            // L1 loss of model = ΣL1 norm of edge ( * L1_LAMBDA)
-            // ∴ d_model_L1/d_C_i = d_model_L1/d_edge_L1 * d_edge_L1/d_C_i
-            // d_model_L1/d_edge_L1 = 1
-            // d_edge_L1/d_C_i = 1/N * ΣB_i(t) * sign(C_i)
-            trace!("Checking cache line activations[0][{}]", i);
-            debug_assert!(!activations[0][i].is_empty(), "activations[0][i] is empty");
             let basis_activations: Vec<f64> = last_t
                 .iter()
-                .map(|t| *activations[0][i].get(&t.to_bits()).unwrap())
+                .map(|t| {
+                    activations[0][i]
+                        .get(&(t.to_bits()))
+                        .expect("basis activation should be cached")
+                })
+                .copied()
                 .collect();
-            let d_edge_l1_d_ci = basis_activations.iter().sum::<f64>()
-                / basis_activations.len() as f64
-                * control_points[i].signum();
-            debug_assert!(d_edge_l1_d_ci.is_finite(), "d_edge_l1_d_ci is not finite");
-
-            // Entropy loss of layer = -Σ (edge_L1/layer_L1 * log(edge_L1/layer_L1))
-            // ∴ d_layer_entropy/d_C_i = d_layer_entropy/d_edge_L1 * d_edge_L1/d_C_i
-            // assert_ne!(edge_l1_norm, 0.0, "edge_l1_norm is 0");
-            // debug_assert_ne!(layer_l1, 0.0, "layer_l1 is 0");
-            let c = layer_l1 - edge_l1;
-            debug_assert!(c.is_finite(), "c is not finite");
-            let d = (edge_l1 / (layer_l1 + f64::MIN_POSITIVE) + f64::MIN_POSITIVE).ln() + 1.0;
-            debug_assert!(d.is_finite(), "d is not finite");
-            let e = layer_l1.powi(2) + f64::MIN_POSITIVE;
-            debug_assert!(e.is_finite(), "e is not finite");
-            let d_entropy_d_edge_l1 = -1.0 * c * d / e;
-            debug_assert!(
-                d_entropy_d_edge_l1.is_finite(),
-                "d_entropy_d_edge_l1 is not finite"
-            );
-
-            let l1_gradient = d_edge_l1_d_ci;
-            let entrop_gradient = d_entropy_d_edge_l1 * d_edge_l1_d_ci;
-            // d_pred_loss/d_C_i = d_pred_loss/d_edge_output * d_edge_output/d_C_i
-            // d_pred_loss/d_edge_output = 1
-            // d_edge_output/d_C_i = B_i(t)
-            let prediction_gradients = edge_gradients
+            // first, the prediction gradient for this control point
+            let dout_dcoef: f64 = basis_activations
                 .iter()
-                .zip(basis_activations)
-                .map(|(e, a)| e * a);
-            accumulated_gradients[i].prediction_gradient += prediction_gradients.sum::<f64>();
-            accumulated_gradients[i].l1_gradient += l1_gradient;
-            accumulated_gradients[i].entropy_gradient += entrop_gradient;
+                .zip(edge_gradients.iter())
+                .map(|(a, g)| a * g)
+                .sum();
+            accumulated_gradients[i].prediction_gradient += dout_dcoef;
 
-            // calculate the derivative of the spline output with respect to the input (as opposed to wrt the control points)
-            // dB_ik(t) = (k-1)/(t_i+k-1 - t_i) * B_i(k-1)(t) - (k-1)/(t_i+k - t_i+1) * B_i+1(k-1)(t)
-            let left_coef = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
-            let right_coef = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
-            let recurses = last_t.iter().map(|t| {
-                (
-                    basis_cached(i, k - 1, *t, knots, activations, k),
-                    basis_cached(i + 1, k - 1, *t, &knots, activations, k),
-                )
-            });
-
-            // println!(
-            //     "i: {} left: {}, right: {}, left_recurse: {}, right_recurse: {}",
-            //     i, left, right, left_recurse, right_recurse
-            // );
-            let basis_derivative =
-                recurses.map(|(left, right)| left * left_coef - right * right_coef);
-            drts_output_wrt_input = drts_output_wrt_input
+            // second, the L1 gradient for this control point
+            let dl1_dcoef = last_t
                 .iter()
-                .zip(basis_derivative)
-                .map(|(drt, bd)| drt + bd * control_points[i])
+                .zip(reconstitued_forward_passes.iter())
+                .map(|(t, o)| {
+                    activations[0][i]
+                        .get(&(t.to_bits()))
+                        .expect("basis activation should be cached")
+                        * o.signum()
+                })
+                .sum::<f64>()
+                / last_t.len() as f64;
+            accumulated_gradients[i].l1_gradient += dl1_dcoef;
+
+            // third, the entropy gradient for this control point
+
+            accumulated_gradients[i].entropy_gradient += dl1_dcoef * dentropy_dl1;
+
+            // last, this control point's part of the input gradient
+            let dbasis_i_dt: Vec<f64> = last_t
+                .iter()
+                .map(|t| {
+                    let left_coefficient: f64 = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
+                    let left_val = basis_cached(i, k - 1, *t, knots, activations, k);
+                    let right_coefficient: f64 = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
+                    let right_val = basis_cached(i + 1, k - 1, *t, knots, activations, k);
+                    left_coefficient * left_val - right_coefficient * right_val
+                })
                 .collect();
+            trace!("control point {i}\nbasis activations: {basis_activations:?}\ndout_dcoef: {dout_dcoef}\ndl1_dcoef: {dl1_dcoef}\ndentropy_dcoef: {}\ndbasis_i_dt: {dbasis_i_dt:?}", dl1_dcoef * dentropy_dl1);
+            dout_din
+                .iter_mut()
+                .zip(dbasis_i_dt)
+                .for_each(|(d, b)| *d += control_points[i] * b);
+            trace!("updated dout_din: {:?}", dout_din);
         }
-        return Ok(drts_output_wrt_input
+        return Ok(dout_din
             .iter()
             .zip(edge_gradients.iter())
             .map(|(drt, g)| drt * g)
@@ -1773,6 +1787,9 @@ mod tests {
 
     use super::*;
 
+    const DUMMY_LAYER_L1: f64 = 1.0;
+    const DUMMY_SIBLING_L1S: [f64; 8] = [1.0; 8];
+
     #[test]
     fn test_new_spline_with_too_few_knots() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143];
@@ -1897,7 +1914,9 @@ mod tests {
         let _result = spline.forward(&t);
         trace!("post forward {:#?}", spline);
         let error = vec![-0.6];
-        let input_gradient = spline.backward(&error, 1.0).unwrap();
+        let input_gradient = spline
+            .backward(&error, DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+            .unwrap();
         trace!("post backward {:#?}", spline);
         let expected_spline_drt_wrt_input = 1.2290;
         let expedted_control_point_gradients = vec![-0.0308, -0.3469, -0.2189, -0.0034];
@@ -1910,12 +1929,13 @@ mod tests {
         };
         assert_eq!(
             rounded_control_point_gradients, expedted_control_point_gradients,
-            "control point gradients"
+            "actual control point gradients != expected control point gradients"
         );
         let rounded_input_gradient = (input_gradient[0] * 10000.0).round() / 10000.0;
         assert_eq!(
             rounded_input_gradient,
-            expected_spline_drt_wrt_input * error[0]
+            expected_spline_drt_wrt_input * error[0],
+            "actual input gradient != expected input gradient"
         );
     }
 
@@ -1924,24 +1944,28 @@ mod tests {
         let k = 3;
         let coef_size = 4;
         let knot_size = coef_size + k + 1;
-        let mut knots = vec![0.0; knot_size];
-        knots[0] = -1.0;
-        for i in 1..knots.len() {
-            knots[i] = -1.0 + (i as f64 / (knot_size - 1) as f64 * 2.0);
-        }
+        let knots = linspace(-1.0, 1.0, knot_size);
         let mut spline1 = Edge::new(k, vec![1.0; coef_size], knots.clone()).unwrap();
         println!("setup: {:#?}", spline1);
 
         let activation = spline1.forward(&vec![0.0]);
         println!("forward: {:#?}", spline1);
         let rounded_activation = (activation[0] * 10000.0).round() / 10000.0;
-        assert_eq!(rounded_activation, 1.0);
+        assert_eq!(
+            rounded_activation, 1.0,
+            "actual activation != expected activation"
+        );
 
-        let input_gradient = spline1.backward(&vec![0.5], 1.0).unwrap();
+        let input_gradient = spline1
+            .backward(&vec![0.5], DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+            .unwrap();
         println!("backward: {:#?}", spline1);
         let expected_input_gradient = 0.0;
         let rounded_input_gradient = (input_gradient[0] * 10000.0).round() / 10000.0;
-        assert_eq!(rounded_input_gradient, expected_input_gradient);
+        assert_eq!(
+            rounded_input_gradient, expected_input_gradient,
+            "actual input gradient != expected input gradient"
+        );
     }
 
     #[test]
@@ -1950,7 +1974,7 @@ mod tests {
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
         let mut spline = Edge::new(3, control_points, knots).unwrap();
         let error = vec![-0.6];
-        let result = spline.backward(&error, 1.0);
+        let result = spline.backward(&error, DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S);
         assert!(result.is_err());
     }
 
@@ -1961,7 +1985,7 @@ mod tests {
         let mut spline = Edge::new(3, control_points, knots).unwrap();
         let _ = spline.infer(&vec![0.95]);
         let error = vec![-0.6];
-        let result = spline.backward(&error, 1.0);
+        let result = spline.backward(&error, DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S);
         assert!(result.is_err());
     }
 
@@ -2492,7 +2516,7 @@ mod tests {
                 last_t: vec![],
                 l1_norm: None,
             };
-            let result = edge.backward(&vec![0.5], 1.0);
+            let result = edge.backward(&vec![0.5], 1.0, &[1.0; 4]);
             assert!(result.is_err());
         }
 
@@ -2511,7 +2535,9 @@ mod tests {
             };
             let result = edge.forward(&vec![0.5]);
             assert_eq!(result[0], 21.0, "forward");
-            let backward = edge.backward(&vec![-0.5], 1.0).unwrap();
+            let backward = edge
+                .backward(&vec![-0.5], DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+                .unwrap();
             assert_eq!(backward[0], -4.0, "backward");
         }
 
@@ -2530,7 +2556,9 @@ mod tests {
             };
             let result = edge.forward(&vec![2.0]);
             assert_eq!(82.0, result[0], "forward");
-            let gradient = edge.backward(&vec![0.7], 1.0).unwrap();
+            let gradient = edge
+                .backward(&vec![0.7], DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+                .unwrap();
             let expected_gradient = 31.5; // (d/dx c(ax + b)^2 + d) * gradient
             assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
         }
@@ -2551,7 +2579,9 @@ mod tests {
             let result = edge.forward(&vec![2.0]);
             let expected_result = 3.0 * ((1.5 * 2.0 + 2.0) as f64).powf(3.0) + 7.0;
             assert_almost_eq!(result[0], expected_result, 1e-6);
-            let gradient = edge.backward(&vec![0.7], 1.0).unwrap();
+            let gradient = edge
+                .backward(&vec![0.7], DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+                .unwrap();
             let expected_gradient = 236.25; // (d/dx c(ax + b)^3 + d) * gradient
             assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
         }
@@ -2572,7 +2602,9 @@ mod tests {
             let result = edge.forward(&vec![2.0]);
             let expected_result = 1882.0; // 3.0 * ((1.5 * 2.0 + 2.0) as f64).powf(4.0) + 7.0;
             assert_almost_eq!(result[0], expected_result, 1e-6);
-            let gradient = edge.backward(&vec![0.7], 1.0).unwrap();
+            let gradient = edge
+                .backward(&vec![0.7], DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+                .unwrap();
             let expected_gradient = 1575.0; // (d/dx c(ax + b)^3 + d) * gradient
             assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
         }
@@ -2593,7 +2625,9 @@ mod tests {
             let result = edge.forward(&vec![0.5]);
             let expected_result = 478.8291015625; //3.0 * ((1.5 * 0.5 + 2.0) as f64).powf(5.0) + 7.0;
             assert_almost_eq!(result[0], expected_result, 1e-6);
-            let gradient = edge.backward(&vec![0.7], 1.0).unwrap();
+            let gradient = edge
+                .backward(&vec![0.7], DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+                .unwrap();
             let expected_gradient = 900.7646484375; // (d/dx c(ax + b)^3 + d) * gradient
             assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
         }

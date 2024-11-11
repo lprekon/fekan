@@ -665,12 +665,18 @@ impl KanLayer {
             }
         }
         let mut backpropped_gradients = vec![vec![0.0; self.input_dimension]; num_gradients];
+        let mut edge_l1s: VecDeque<f64> = self
+            .splines
+            .iter()
+            .map(|s| s.l1_norm().expect("edge should have an L1"))
+            .collect();
         for edge_index in 0..self.splines.len() {
             trace!("Backpropping gradients for edge {}", edge_index);
             let in_node_idx = edge_index / self.output_dimension;
             let out_node_idx = edge_index % self.output_dimension;
+            let sibling_l1s: &[f64] = &edge_l1s.as_slices().0[1..];
             let sample_wise_outputs = self.splines[edge_index]
-                .backward(&transposed_gradients[out_node_idx], layer_l1)
+                .backward(&transposed_gradients[out_node_idx], layer_l1, sibling_l1s)
                 .map_err(|e| LayerError::backward_before_forward(Some(e), edge_index))?; // TODO incorporate sparsity losses
             trace!(
                 "Backpropped gradients for edge {}: {:?}",
@@ -680,6 +686,10 @@ impl KanLayer {
             for sample_idx in 0..num_gradients {
                 backpropped_gradients[sample_idx][in_node_idx] += sample_wise_outputs[sample_idx];
             }
+
+            // rotate the sibling L1s so that the next edge gets the correct values
+            edge_l1s.rotate_left(1);
+            edge_l1s.make_contiguous(); // necessary for .as_slices() above to work properly
         }
         trace!("Backpropped gradients: {:?}", backpropped_gradients);
         self.layer_l1 = None; // The L1 should be re-set after the next forward pass, and backward should not be called before forward, so this serves as a (redundant) check
@@ -725,12 +735,18 @@ impl KanLayer {
         let backprop_result = thread::scope(|s| {
             let edges_per_thread = (self.splines.len() as f64 / num_threads as f64).ceil() as usize;
             let output_dimension = self.output_dimension;
+            let all_edge_l1s = self
+                .splines
+                .iter()
+                .map(|s| s.l1_norm().expect("edge should have an L1"))
+                .collect::<Vec<f64>>();
             let handles: Vec<ScopedJoinHandle<Result<Vec<Edge>, LayerError>>> = (0..num_threads)
                 .map(|thread_idx| {
                     let edges_for_thread: Vec<Edge> = self
                         .splines
                         .drain(0..edges_per_thread.min(self.splines.len()))
                         .collect();
+                    let edge_l1s = all_edge_l1s.clone();
                     let transposed_gradients = &transposed_gradients;
                     let threaded_gradients = Arc::clone(&backpropped_gradients);
                     let thread_result = s.spawn(move || {
@@ -738,10 +754,20 @@ impl KanLayer {
                         for edge_index in 0..thread_edges.len() {
                             let this_edge: &mut Edge = &mut thread_edges[edge_index];
                             let true_edge_index = thread_idx * edges_per_thread + edge_index;
+                            let sibling_l1s: Vec<f64> = edge_l1s
+                                .iter()
+                                .enumerate()
+                                .filter(|(idx, l1)| *idx != true_edge_index)
+                                .map(|(idx, l1)| *l1)
+                                .collect();
                             let in_node_idx = true_edge_index / output_dimension;
                             let out_node_idx = true_edge_index % output_dimension;
                             let sample_wise_outputs = this_edge
-                                .backward(&transposed_gradients[out_node_idx], layer_l1)
+                                .backward(
+                                    &transposed_gradients[out_node_idx],
+                                    layer_l1,
+                                    &sibling_l1s,
+                                )
                                 .map_err(|e| {
                                     LayerError::backward_before_forward(Some(e), true_edge_index)
                                 })?;
