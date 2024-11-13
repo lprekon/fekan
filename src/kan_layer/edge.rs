@@ -707,15 +707,10 @@ impl Edge {
 
             if layer_l1 != 0.0 {
                 // second, the L1 gradient for this control point
-                let dedge_l1_dcoef = last_t
+                let dedge_l1_dcoef = basis_activations
                     .iter()
                     .zip(reconstitued_forward_passes.iter())
-                    .map(|(t, o)| {
-                        activations[0][i]
-                            .get(&(t.to_bits()))
-                            .expect("basis activation should be cached")
-                            * o.signum()
-                    })
+                    .map(|(a, o)| a * o.signum())
                     .sum::<f64>()
                     / last_t.len() as f64;
                 accumulated_gradients[i].l1_gradient += dedge_l1_dcoef;
