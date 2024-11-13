@@ -582,6 +582,11 @@ impl Edge {
         if self.last_t.is_empty() {
             return Err(EdgeError::BackwardBeforeForward);
         }
+        debug_assert_eq!(
+            self.last_t.len(),
+            edge_gradients.len(),
+            "last_t and edge_gradients have different lengths"
+        );
         let edge_l1 = self.l1_norm.expect("edge_l1 is None");
         assert_eq!(layer_l1.signum(), 1.0);
         match &mut self.kind {
@@ -791,6 +796,11 @@ impl Edge {
                 for i in 0..gradients.len() {
                     gradients[i] = Gradient::default();
                 }
+                self.last_t.clear();
+                debug_assert!(
+                    self.last_t.is_empty(),
+                    "last_t is not empty after zeroing gradients"
+                );
             }
             _ => (), // zeroing gradients on a non-spline edge is a no-op
         }

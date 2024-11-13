@@ -456,6 +456,7 @@ pub fn preset_knot_ranges(model: &mut Kan, preset_data: &[Sample]) -> Result<(),
             debug!("Layer {} input ranges: {:#?}", set_layer + 1, output_ranges);
         }
         model.clear_samples();
+        model.zero_gradients();
     }
     info!("Presetting complete");
     Ok(())
