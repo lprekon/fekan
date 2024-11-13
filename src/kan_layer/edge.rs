@@ -649,7 +649,7 @@ impl Edge {
         activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
         layer_l1: f64,
         edge_l1: f64,
-        sibling_l1s: &[f64],
+        sibling_edge_l1s: &[f64],
         accumulated_gradients: &mut [Gradient],
         knots: &[f64],
     ) -> Result<Vec<f64>, EdgeError> {
@@ -673,13 +673,20 @@ impl Edge {
             "Reconstituted forward passes: {:?}",
             reconstitued_forward_passes
         );
-        let dentropy_dl1 = (sibling_l1s
+
+        let dlayer_entropy_dedge_l1 = (sibling_edge_l1s
             .iter()
-            .map(|s| s * ((s / layer_l1).ln() + 1.0))
+            .map(|s| {
+                if *s == 0.0 {
+                    0.0
+                } else {
+                    s * ((s / layer_l1).ln() + 1.0)
+                }
+            })
             .sum::<f64>()
             - (layer_l1 - edge_l1) * ((edge_l1 / layer_l1).ln() + 1.0))
-            / layer_l1.powi(2);
-        trace!("dentropy_dl1: {}", dentropy_dl1);
+            / layer_l1.abs().max(f64::MIN_POSITIVE).powi(2);
+        trace!("dentropy_dl1: {}", dlayer_entropy_dedge_l1);
         for i in 0..control_points.len() {
             let basis_activations: Vec<f64> = last_t
                 .iter()
@@ -698,23 +705,30 @@ impl Edge {
                 .sum();
             accumulated_gradients[i].prediction_gradient += dout_dcoef;
 
-            // second, the L1 gradient for this control point
-            let dl1_dcoef = last_t
-                .iter()
-                .zip(reconstitued_forward_passes.iter())
-                .map(|(t, o)| {
-                    activations[0][i]
-                        .get(&(t.to_bits()))
-                        .expect("basis activation should be cached")
-                        * o.signum()
-                })
-                .sum::<f64>()
-                / last_t.len() as f64;
-            accumulated_gradients[i].l1_gradient += dl1_dcoef;
+            if layer_l1 != 0.0 {
+                // second, the L1 gradient for this control point
+                let dedge_l1_dcoef = last_t
+                    .iter()
+                    .zip(reconstitued_forward_passes.iter())
+                    .map(|(t, o)| {
+                        activations[0][i]
+                            .get(&(t.to_bits()))
+                            .expect("basis activation should be cached")
+                            * o.signum()
+                    })
+                    .sum::<f64>()
+                    / last_t.len() as f64;
+                accumulated_gradients[i].l1_gradient += dedge_l1_dcoef;
+                accumulated_gradients[i].entropy_gradient += if dedge_l1_dcoef == 0.0 {
+                    0.0
+                } else {
+                    dedge_l1_dcoef * dlayer_entropy_dedge_l1
+                };
 
-            // third, the entropy gradient for this control point
-
-            accumulated_gradients[i].entropy_gradient += dl1_dcoef * dentropy_dl1;
+                // third, the entropy gradient for this control point
+            } else {
+                trace!("layer_l1 is 0, skipping L1 and entropy gradients");
+            }
 
             // last, this control point's part of the input gradient
             let dbasis_i_dt: Vec<f64> = last_t
@@ -727,13 +741,14 @@ impl Edge {
                     left_coefficient * left_val - right_coefficient * right_val
                 })
                 .collect();
-            trace!("control point {i}\nbasis activations: {basis_activations:?}\ndout_dcoef: {dout_dcoef}\ndl1_dcoef: {dl1_dcoef}\ndentropy_dcoef: {}\ndbasis_i_dt: {dbasis_i_dt:?}", dl1_dcoef * dentropy_dl1);
+            trace!("control point {i}\nbasis activations: {basis_activations:?}\ndout_dcoef: {dout_dcoef}\ndbasis_i_dt: {dbasis_i_dt:?}");
             dout_din
                 .iter_mut()
                 .zip(dbasis_i_dt)
                 .for_each(|(d, b)| *d += control_points[i] * b);
             trace!("updated dout_din: {:?}", dout_din);
         }
+        trace!("accumulated gradients: {:?}", accumulated_gradients);
         return Ok(dout_din
             .iter()
             .zip(edge_gradients.iter())
@@ -1575,7 +1590,7 @@ fn basis_portable_simd_across_i(
         let left_mask = knots_i.simd_le(t_splat);
         let right_mask = t_splat.simd_lt(knots_i_1);
         let full_mask = left_mask & right_mask;
-        trace!("k: {k}, t:{t}\ni_base: {i_base:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nleft_mask: {left_mask:?}\nright_mask: {right_mask:?}\nfull_mask: {full_mask:?}\n");
+        // trace!("k: {k}, t:{t}\ni_base: {i_base:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nleft_mask: {left_mask:?}\nright_mask: {right_mask:?}\nfull_mask: {full_mask:?}\n");
         return full_mask.select(f64x8::splat(1.0), f64x8::splat(0.0));
     }
     let knots_i_k = Simd::from_slice(&knots[i_base + k..i_base + SIMD_CHUNK_SIZE + k]);
@@ -1585,7 +1600,7 @@ fn basis_portable_simd_across_i(
     let left_vals = basis_portable_simd_across_i(i_base, k - 1, t, knots, cache, full_degree);
     let right_vals = basis_portable_simd_across_i(i_base + 1, k - 1, t, knots, cache, full_degree);
     let result_vec = left_coefficients * left_vals + right_coefficients * right_vals;
-    trace!("k: {k}, t: {t}\ni_base: {i_base:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nknots_i_plus_k_plus_1: {knots_i_k_1:?}\nleft_coefficients: {left_coefficients:?}\nleft_vals: {left_vals:?}\nright_coefficients: {right_coefficients:?}\nright_vals: {right_vals:?}\nresult: {result_vec:?}\n");
+    // trace!("k: {k}, t: {t}\ni_base: {i_base:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nknots_i_plus_k_plus_1: {knots_i_k_1:?}\nleft_coefficients: {left_coefficients:?}\nleft_vals: {left_vals:?}\nright_coefficients: {right_coefficients:?}\nright_vals: {right_vals:?}\nresult: {result_vec:?}\n");
     // In this version of basis, we're just computing everything (for now). We only store the results on the cache for the first recursion, because the backpropagation will need them.
     // if k == full_degree {
     let transmuted_results = result_vec.to_array();

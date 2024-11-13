@@ -757,8 +757,8 @@ impl KanLayer {
                             let sibling_l1s: Vec<f64> = edge_l1s
                                 .iter()
                                 .enumerate()
-                                .filter(|(idx, l1)| *idx != true_edge_index)
-                                .map(|(idx, l1)| *l1)
+                                .filter(|(idx, _l1)| *idx != true_edge_index)
+                                .map(|(_idx, l1)| *l1)
                                 .collect();
                             let in_node_idx = true_edge_index / output_dimension;
                             let out_node_idx = true_edge_index % output_dimension;
