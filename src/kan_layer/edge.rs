@@ -370,7 +370,7 @@ impl Edge {
         for t in inputs.iter() {
             trace!("Starting forward pass for t={}", t);
             let activations_size = knots.len() - 1;
-            let mut activations: Vec<f64> = Vec::with_capacity(activations_size);
+            let mut basis_activations: Vec<f64> = Vec::with_capacity(activations_size);
             // start with k=0
             let t_splat = unsafe { _mm512_set1_pd(*t) };
             // slide the window over SIMD_CHUNK_SIZE points at a time
@@ -396,14 +396,14 @@ impl Edge {
                     unsafe { _mm512_mask_blend_pd(mask, _mm512_set1_pd(0.0), _mm512_set1_pd(1.0)) };
 
                 trace!("i: {}, activation_vec: {:?}", i, activation_vec);
-                activations.extend_from_slice(unsafe {
+                basis_activations.extend_from_slice(unsafe {
                     &mem::transmute::<__m512d, [f64; 8]>(activation_vec)
                 }); // use slice extension since this is the first pass through, so the vector knows how many values it's supposed to hold, and later indexing wont fail
                     // unsafe {
                     //     _mm512_store_pd(&mut activations[i], activation_vec);
                     // }
             }
-            trace!("Activations after SIMD step: {:?}", activations);
+            trace!("Activations after SIMD step: {:?}", basis_activations);
             // finish up for any remaining points
             for i in (activations_size - (activations_size % SIMD_CHUNK_SIZE))..activations_size {
                 let activation = if knots[i] <= *t && *t < knots[i + 1] {
@@ -419,10 +419,10 @@ impl Edge {
                     knots[i + 1],
                     activation
                 );
-                activations.push(activation);
+                basis_activations.push(activation);
             }
 
-            trace!("Activations after scalar step: {:?}", activations);
+            trace!("Activations after scalar step: {:?}", basis_activations);
             // now that we have the k=0 activations, we can calculate the rest
             for k in 1..=degree {
                 let mut num_simd_steps = 0;
@@ -434,8 +434,8 @@ impl Edge {
                     num_simd_steps += 1;
                     let i = i_chunk[0];
                     // have to trust the compiler to order operations in a way that minimizes register pressure
-                    let left_vals = unsafe { _mm512_loadu_pd(&activations[i]) };
-                    let right_vals = unsafe { _mm512_loadu_pd(&activations[i + 1]) };
+                    let left_vals = unsafe { _mm512_loadu_pd(&basis_activations[i]) };
+                    let right_vals = unsafe { _mm512_loadu_pd(&basis_activations[i + 1]) };
                     let knots_i = unsafe { _mm512_loadu_pd(&knots[i]) };
                     let knots_i1 = unsafe { _mm512_loadu_pd(&knots[i + 1]) };
                     let knots_ik = unsafe { _mm512_loadu_pd(&knots[i + k]) };
@@ -471,35 +471,42 @@ impl Edge {
                         new_activations
                     );
                     unsafe {
-                        _mm512_storeu_pd(&mut activations[i], new_activations); // now that activations has been initialized above, we can write directly
+                        _mm512_storeu_pd(&mut basis_activations[i], new_activations);
+                        // now that activations has been initialized above, we can write directly
                     }
-                    trace!("updated activations: {:?}", activations);
+                    trace!("updated activations: {:?}", basis_activations);
                 }
                 // finish up for any remaining points
                 for i in num_simd_steps * SIMD_CHUNK_SIZE..activations_size - k {
                     trace!("Scalar tesp for i={}, k={}, t={}", i, k, t);
-                    let left_val = activations[i];
-                    let right_val = activations[i + 1];
+                    let left_val = basis_activations[i];
+                    let right_val = basis_activations[i + 1];
                     let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
                     let right_coefficient =
                         (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
                     let new_activation =
                         left_val * left_coefficient + right_val * right_coefficient;
-                    activations[i] = new_activation;
+                    basis_activations[i] = new_activation;
                     trace!(
                         "new activation: {}\nupdated activations: {:?}",
                         new_activation,
-                        activations
+                        basis_activations
                     );
                 }
+                if k == degree - 1 {
+                    // we need to cache these activations for the backward pass
+                    for i in 0..control_points.len() + 1 {
+                        cache[1][i].insert(t.to_bits(), basis_activations[i]);
+                    }
+                }
             }
-            // have to cache basis activationsfor backprop
+            // have to cache basis activations for backprop
             for i in 0..control_points.len() {
-                cache[0][i].insert(t.to_bits(), activations[i]);
+                cache[0][i].insert(t.to_bits(), basis_activations[i]);
             }
             let output = control_points
                 .iter()
-                .zip(activations.iter())
+                .zip(basis_activations.iter())
                 .map(|(c, a)| {
                     trace!("multiplying control point {} by activation {}", c, a);
                     c * a
@@ -598,9 +605,31 @@ impl Edge {
                 gradients: accumulated_gradients,
             } => {
                 // assert_eq!(activations[0][0].len(), edge_gradients.len());
+                #[cfg(all(
+                    target_arch = "x86_64",
+                    target_feature = "sse2",
+                    target_feature = "avx512f",
+                    not(portable),
+                    not(no_simd)
+                ))]
+                {
+                    return Edge::x86_backward(
+                        self.last_t.as_slice(),
+                        edge_gradients,
+                        *degree,
+                        control_points,
+                        activations,
+                        layer_l1,
+                        edge_l1,
+                        sibling_l1s,
+                        accumulated_gradients,
+                        knots,
+                    );
+                }
 
                 // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
-                Edge::fallback_backward(
+                #[allow(unreachable_code)]
+                return Edge::fallback_backward(
                     self.last_t.as_slice(),
                     edge_gradients,
                     *degree,
@@ -611,7 +640,7 @@ impl Edge {
                     sibling_l1s,
                     accumulated_gradients,
                     knots,
-                )
+                );
             }
             EdgeType::Symbolic {
                 a,
@@ -650,7 +679,7 @@ impl Edge {
         last_t: &[f64],
         edge_gradients: &[f64],
         k: usize,
-        control_points: &mut Vec<f64>,
+        control_points: &[f64],
         activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
         layer_l1: f64,
         edge_l1: f64,
@@ -668,7 +697,7 @@ impl Edge {
             .map(|t| {
                 let mut sum = 0.0;
                 for (idx, coef) in control_points.iter().enumerate() {
-                    let basis_activation = basis_cached(idx, k, *t, knots, activations, k);
+                    let basis_activation = basis_cached(idx, k, *t, knots, activations, k); // this line is probably unnecessarily slow - we could grab the cached value directly, but calling a recursive (and thus un-inlinable) function to do so means a lot more function pro/epilogues then would be necessary
                     sum += coef * basis_activation;
                 }
                 sum
@@ -757,7 +786,172 @@ impl Edge {
         // input_gradient = drt_output_wrt_input * error
     }
 
-    // fn fallback_backward() -> Vec<f64> {}
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "sse2",
+        target_feature = "avx512f",
+        not(portable),
+        not(no_simd)
+    ))]
+    fn x86_backward(
+        last_t: &[f64],
+        edge_gradients: &[f64],
+        k: usize,
+        control_points: &[f64],
+        activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
+        layer_l1: f64,
+        edge_l1: f64,
+        sibling_edge_l1s: &[f64],
+        accumulated_gradients: &mut [Gradient],
+        knots: &[f64],
+    ) -> Result<Vec<f64>, EdgeError> {
+        use std::{arch::x86_64::*, mem};
+        trace!("Starting x86 backward pass");
+        let mut backpropped_errors = vec![0.0; edge_gradients.len()];
+
+        let forward_pass_signs = last_t
+            .iter()
+            .map(|t| {
+                let mut sum = 0.0;
+                for (idx, coef) in control_points.iter().enumerate() {
+                    let basis_activation = activations[0][idx]
+                        .get(&(t.to_bits()))
+                        .expect("basis activation should be cached at k");
+                    sum += coef * basis_activation;
+                }
+                sum.signum()
+            })
+            .collect::<Vec<f64>>();
+
+        // doing logarithms in SIMD is hard, so we'll do the entropy gradient in a scalar loop for now
+        let mut dlayer_entropy_dedge_l1 = sibling_edge_l1s
+            .iter()
+            .map(|s| {
+                if *s == 0.0 {
+                    0.0
+                } else {
+                    s * ((s / layer_l1).ln() + 1.0)
+                }
+            })
+            .sum::<f64>();
+        dlayer_entropy_dedge_l1 -= if layer_l1 == 0.0 {
+            0.0
+        } else {
+            (layer_l1 - edge_l1) * ((edge_l1 / layer_l1).ln() + 1.0)
+        };
+        dlayer_entropy_dedge_l1 /= layer_l1.abs().max(f64::MIN_POSITIVE).powi(2);
+
+        // first, let's worry about the prediction gradient
+        // I think doing prediction gradient by control point makes more sense, because then I can fold all the SIMD values into a single update, isntead of having a vec of dloss_dcoef values where each lane needs to go in a different accumulator
+        // since I'm accumulating basis activations by control point, it makes sense to continue on and do L1 and entropy gradients by control point as well
+        // and the l1 calculation can go in the same loop
+        for i in 0..control_points.len() {
+            let basis_activations = last_t
+                .iter()
+                .map(|t| {
+                    activations[0][i]
+                        .get(&(t.to_bits()))
+                        .expect("basis activation should be cached at k")
+                })
+                .copied()
+                .collect::<Vec<f64>>();
+            // SIMD step
+            for t_idx_chunk in (0..last_t.len())
+                .collect::<Vec<usize>>()
+                .chunks_exact(SIMD_CHUNK_SIZE)
+            {
+                let starting_index = t_idx_chunk[0];
+                let activation_vec = unsafe { _mm512_loadu_pd(&basis_activations[starting_index]) };
+                let dloss_doutput_vec = unsafe { _mm512_loadu_pd(&edge_gradients[starting_index]) };
+                let output_sign_vec =
+                    unsafe { _mm512_loadu_pd(&forward_pass_signs[starting_index]) };
+
+                let dloss_dcoef_vec = unsafe { _mm512_mul_pd(activation_vec, dloss_doutput_vec) };
+                let dloss_dcoef_partial_sums = unsafe { _mm512_reduce_add_pd(dloss_dcoef_vec) };
+                accumulated_gradients[i].prediction_gradient += dloss_dcoef_partial_sums;
+
+                let dedge_l1_dcoef_vec = unsafe { _mm512_mul_pd(activation_vec, output_sign_vec) };
+                let dedge_l1_dcoef_partial_sums =
+                    unsafe { _mm512_reduce_add_pd(dedge_l1_dcoef_vec) };
+                accumulated_gradients[i].l1_gradient += dedge_l1_dcoef_partial_sums;
+            }
+            // scalar step
+            for t_idx in (last_t.len() - (last_t.len() % SIMD_CHUNK_SIZE))..last_t.len() {
+                accumulated_gradients[i].prediction_gradient +=
+                    basis_activations[t_idx] * edge_gradients[t_idx];
+                accumulated_gradients[i].l1_gradient +=
+                    basis_activations[t_idx] * forward_pass_signs[t_idx]
+            }
+            accumulated_gradients[i].l1_gradient /= last_t.len() as f64; // final divide. Divides are slow, so do it once. Maybe this should be moved to a SIMD operation that slides across control points. TODO try that
+
+            // now that the L1 gradient is calculated, we can calculate the entropy gradient
+            accumulated_gradients[i].entropy_gradient +=
+                accumulated_gradients[i].l1_gradient * dlayer_entropy_dedge_l1;
+
+            // last step is to calculate this control points contribution to the input gradient
+            // we'll calculate our coefficients - which are the same for all t - and then do our SIMD sliding over t.
+            // it's a little awkward, so it may be worth exploring a separate loop to iterate over t and then do SIMD sliding over i
+            let left_coefficient = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
+            let right_coefficient = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
+            let left_coef_vec = unsafe { _mm512_set1_pd(left_coefficient) };
+            let right_coef_vec = unsafe { _mm512_set1_pd(right_coefficient) };
+            let mut t_counter = 0;
+            // SIMD step
+            while t_counter + SIMD_CHUNK_SIZE <= last_t.len() {
+                // hey, we'll actually use the entire chunk for once!
+                // I'm going to just grab the activations from the cache, since they're already there, and save myself the function call. It's not quite as pretty to look at, but it's not the ugliest in the world and it should be faster
+                let t_chunk = &last_t[t_counter..t_counter + SIMD_CHUNK_SIZE];
+                let left_vals: Vec<f64> = t_chunk
+                    .iter()
+                    .map(|t| {
+                        activations[1][i]
+                            .get(&(t.to_bits()))
+                            .expect("basis activation should be cached at k-1")
+                    })
+                    .copied()
+                    .collect();
+                let right_vals: Vec<f64> = t_chunk
+                    .iter()
+                    .map(|t| {
+                        activations[1][i + 1]
+                            .get(&(t.to_bits()))
+                            .expect("basis activation should be cached at k-1")
+                    })
+                    .copied()
+                    .collect();
+                debug_assert_eq!(left_vals.len(), SIMD_CHUNK_SIZE);
+
+                let mut left_vals_vec = unsafe { _mm512_loadu_pd(left_vals.as_ptr()) };
+                let mut right_vals_vec = unsafe { _mm512_loadu_pd(right_vals.as_ptr()) };
+                left_vals_vec = unsafe { _mm512_mul_pd(left_vals_vec, left_coef_vec) };
+                right_vals_vec = unsafe { _mm512_mul_pd(right_vals_vec, right_coef_vec) };
+                let dbasis_dt_vec = unsafe { _mm512_sub_pd(left_vals_vec, right_vals_vec) };
+                let control_point_splat = unsafe { _mm512_set1_pd(control_points[i]) };
+                let doutput_dt_vec = unsafe { _mm512_mul_pd(dbasis_dt_vec, control_point_splat) };
+                let gradient_ve = unsafe { _mm512_loadu_pd(&backpropped_errors[t_counter]) };
+                let new_gradient_vec = unsafe { _mm512_add_pd(gradient_ve, doutput_dt_vec) };
+                unsafe {
+                    _mm512_storeu_pd(&mut backpropped_errors[t_counter], new_gradient_vec);
+                    // I hope this works
+                }
+
+                t_counter += SIMD_CHUNK_SIZE;
+            }
+            // and now the rest
+            for t_idx in t_counter..last_t.len() {
+                let left_val = activations[1][i]
+                    .get(&(last_t[t_idx].to_bits()))
+                    .expect("basis activation should be cached");
+                let right_val = activations[1][i + 1]
+                    .get(&(last_t[t_idx].to_bits()))
+                    .expect("basis activation should be cached");
+                let dbasis_dt = left_coefficient * left_val - right_coefficient * right_val;
+                backpropped_errors[t_idx] += control_points[i] * dbasis_dt;
+            }
+        }
+
+        return Ok(backpropped_errors);
+    }
 
     pub(super) fn update_control_points(
         &mut self,
