@@ -45,6 +45,7 @@ fn big_layer_big_spline() -> KanLayer {
 
 const BATCH_SIZE: usize = 4;
 
+/// returns a BATCH_SIZE x INPUT_DIMENSION_BIG matrix of random numbers
 fn generate_batch_inputs() -> Vec<Vec<f64>> {
     let mut batch_inputs = vec![vec![0.0; INPUT_DIMENSION_BIG]; BATCH_SIZE];
     for i in 0..BATCH_SIZE {
@@ -97,9 +98,13 @@ mod no_threading {
         let mut layer = big_layer_big_spline();
         let batch_inputs = generate_batch_inputs();
         let _ = layer.forward(batch_inputs);
-        let error = vec![(0..OUTPUT_DIMENSION_BIG)
+        let error_line: Vec<f64> = (0..OUTPUT_DIMENSION_BIG)
             .map(|_| thread_rng().gen())
-            .collect()];
+            .collect();
+        let mut error = Vec::with_capacity(BATCH_SIZE);
+        for _ in 0..BATCH_SIZE {
+            error.push(error_line.clone());
+        }
         let _ = layer.backward(&error);
         b.iter(|| layer.update(0.1, 0.75, 0.25));
     }
@@ -208,9 +213,13 @@ mod multithreading {
         let mut layer = big_layer_big_spline();
         let batch_inputs = generate_batch_inputs();
         let _ = layer.forward(batch_inputs);
-        let error = vec![(0..OUTPUT_DIMENSION_BIG)
+        let error_line: Vec<f64> = (0..OUTPUT_DIMENSION_BIG)
             .map(|_| thread_rng().gen())
-            .collect()];
+            .collect();
+        let mut error = Vec::with_capacity(BATCH_SIZE);
+        for _ in 0..BATCH_SIZE {
+            error.push(error_line.clone());
+        }
         let _ = layer.backward(&error);
         b.iter(|| layer.update_multithreaded(0.1, 0.75, 0.25, 1));
     }
@@ -220,9 +229,13 @@ mod multithreading {
         let mut layer = big_layer_big_spline();
         let batch_inputs = generate_batch_inputs();
         let _ = layer.forward(batch_inputs);
-        let error = vec![(0..OUTPUT_DIMENSION_BIG)
+        let error_line: Vec<f64> = (0..OUTPUT_DIMENSION_BIG)
             .map(|_| thread_rng().gen())
-            .collect()];
+            .collect();
+        let mut error = Vec::with_capacity(BATCH_SIZE);
+        for _ in 0..BATCH_SIZE {
+            error.push(error_line.clone());
+        }
         let _ = layer.backward(&error);
         b.iter(|| layer.update_multithreaded(0.1, 0.75, 0.25, 8));
     }

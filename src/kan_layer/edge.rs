@@ -874,15 +874,11 @@ impl Edge {
                 .copied()
                 .collect::<Vec<f64>>();
             // SIMD step
-            for t_idx_chunk in (0..last_t.len())
-                .collect::<Vec<usize>>()
-                .chunks_exact(SIMD_CHUNK_SIZE)
-            {
-                let starting_index = t_idx_chunk[0];
-                let activation_vec = unsafe { _mm512_loadu_pd(&basis_activations[starting_index]) };
-                let dloss_doutput_vec = unsafe { _mm512_loadu_pd(&dloss_dout[starting_index]) };
-                let output_sign_vec =
-                    unsafe { _mm512_loadu_pd(&forward_pass_signs[starting_index]) };
+            let mut t_idx = 0;
+            while t_idx + SIMD_CHUNK_SIZE < last_t.len() {
+                let activation_vec = unsafe { _mm512_loadu_pd(&basis_activations[t_idx]) };
+                let dloss_doutput_vec = unsafe { _mm512_loadu_pd(&dloss_dout[t_idx]) };
+                let output_sign_vec = unsafe { _mm512_loadu_pd(&forward_pass_signs[t_idx]) };
 
                 let dloss_dcoef_vec = unsafe { _mm512_mul_pd(activation_vec, dloss_doutput_vec) };
                 let dloss_dcoef_partial_sums = unsafe { _mm512_reduce_add_pd(dloss_dcoef_vec) };
@@ -892,13 +888,20 @@ impl Edge {
                 let dedge_l1_dcoef_partial_sums =
                     unsafe { _mm512_reduce_add_pd(dedge_l1_dcoef_vec) };
                 accumulated_gradients[i].l1_gradient += dedge_l1_dcoef_partial_sums;
+
+                t_idx += SIMD_CHUNK_SIZE;
             }
             // scalar step
-            for t_idx in (last_t.len() - (last_t.len() % SIMD_CHUNK_SIZE))..last_t.len() {
+            while t_idx < last_t.len() {
+                let this_gradient = &mut accumulated_gradients[i];
+                let this_activation = basis_activations[t_idx];
+                let this_dloss_dout = dloss_dout[t_idx];
                 accumulated_gradients[i].prediction_gradient +=
                     basis_activations[t_idx] * dloss_dout[t_idx];
                 accumulated_gradients[i].l1_gradient +=
-                    basis_activations[t_idx] * forward_pass_signs[t_idx]
+                    basis_activations[t_idx] * forward_pass_signs[t_idx];
+
+                t_idx += 1;
             }
 
             // numerical stability step
