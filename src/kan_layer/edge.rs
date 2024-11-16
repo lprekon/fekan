@@ -824,22 +824,39 @@ impl Edge {
             .collect::<Vec<f64>>();
 
         // doing logarithms in SIMD is hard, so we'll do the entropy gradient in a scalar loop for now
+        debug_assert!(!(layer_l1 == 0.0 && sibling_edge_l1s.iter().any(|s| *s != 0.0)));
         let mut dlayer_entropy_dedge_l1 = sibling_edge_l1s
             .iter()
             .map(|s| {
-                if *s == 0.0 {
+                let val = if *s == 0.0 {
                     0.0
                 } else {
                     s * ((s / layer_l1).ln() + 1.0)
-                }
+                };
+                trace!("sibling edge L1: {}\nval: {}", s, val);
+                val
             })
             .sum::<f64>();
-        dlayer_entropy_dedge_l1 -= if layer_l1 == 0.0 {
+        trace!(
+            "dlayer_entropy_dedge_l1 stage 1: {}",
+            dlayer_entropy_dedge_l1
+        );
+        debug_assert!(!(layer_l1 == 0.0 && edge_l1 != 0.0));
+        dlayer_entropy_dedge_l1 -= if edge_l1 == 0.0 {
             0.0
         } else {
             (layer_l1 - edge_l1) * ((edge_l1 / layer_l1).ln() + 1.0)
         };
+        trace!(
+            "dlayer_entropy_dedge_l1 stage 2: {}",
+            dlayer_entropy_dedge_l1
+        );
+        trace!("layer_l1: {}\nedge_l1: {}", layer_l1, edge_l1);
         dlayer_entropy_dedge_l1 /= layer_l1.abs().max(f64::MIN_POSITIVE).powi(2);
+        trace!(
+            "dlayer_entropy_dedge_l1 stage 3: {}",
+            dlayer_entropy_dedge_l1
+        );
 
         // first, let's worry about the prediction gradient
         // I think doing prediction gradient by control point makes more sense, because then I can fold all the SIMD values into a single update, isntead of having a vec of dloss_dcoef values where each lane needs to go in a different accumulator
@@ -883,11 +900,21 @@ impl Edge {
                 accumulated_gradients[i].l1_gradient +=
                     basis_activations[t_idx] * forward_pass_signs[t_idx]
             }
-            accumulated_gradients[i].l1_gradient /= last_t.len() as f64; // final divide. Divides are slow, so do it once. Maybe this should be moved to a SIMD operation that slides across control points. TODO try that
 
-            // now that the L1 gradient is calculated, we can calculate the entropy gradient
-            accumulated_gradients[i].entropy_gradient +=
-                accumulated_gradients[i].l1_gradient * dlayer_entropy_dedge_l1;
+            // numerical stability step
+            // if every edge in the layer only output 0 this batch, then the entropy gradient calculation will have gone wonky.
+            // but, in that case, this edge must have also only output 0, in which case the entropy and L1 gradients should be 0
+            // so, if edge_l1 is zero, clamp the entropy and L1 gradients to zero and ignore whatever (possible NaN) values we calculated earlier
+            if edge_l1 == 0.0 {
+                accumulated_gradients[i].l1_gradient = 0.0;
+                accumulated_gradients[i].entropy_gradient = 0.0;
+            } else {
+                accumulated_gradients[i].l1_gradient /= last_t.len() as f64; // final divide. Divides are slow, so do it once. Maybe this should be moved to a SIMD operation that slides across control points. TODO try that
+
+                // now that the L1 gradient is calculated, we can calculate the entropy gradient
+                accumulated_gradients[i].entropy_gradient +=
+                    accumulated_gradients[i].l1_gradient * dlayer_entropy_dedge_l1;
+            }
 
             // last step is to calculate this control points contribution to the input gradient
             // we'll calculate our coefficients - which are the same for all t - and then do our SIMD sliding over t.
