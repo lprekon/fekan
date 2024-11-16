@@ -795,7 +795,7 @@ impl Edge {
     ))]
     fn x86_backward(
         last_t: &[f64],
-        edge_gradients: &[f64],
+        dloss_dout: &[f64],
         k: usize,
         control_points: &[f64],
         activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
@@ -805,9 +805,9 @@ impl Edge {
         accumulated_gradients: &mut [Gradient],
         knots: &[f64],
     ) -> Result<Vec<f64>, EdgeError> {
-        use std::{arch::x86_64::*, mem};
+        use std::arch::x86_64::*;
         trace!("Starting x86 backward pass");
-        let mut backpropped_errors = vec![0.0; edge_gradients.len()];
+        let mut dout_din = vec![0.0; dloss_dout.len()];
 
         let forward_pass_signs = last_t
             .iter()
@@ -846,6 +846,7 @@ impl Edge {
         // since I'm accumulating basis activations by control point, it makes sense to continue on and do L1 and entropy gradients by control point as well
         // and the l1 calculation can go in the same loop
         for i in 0..control_points.len() {
+            trace!("Working on control point {}", i);
             let basis_activations = last_t
                 .iter()
                 .map(|t| {
@@ -862,7 +863,7 @@ impl Edge {
             {
                 let starting_index = t_idx_chunk[0];
                 let activation_vec = unsafe { _mm512_loadu_pd(&basis_activations[starting_index]) };
-                let dloss_doutput_vec = unsafe { _mm512_loadu_pd(&edge_gradients[starting_index]) };
+                let dloss_doutput_vec = unsafe { _mm512_loadu_pd(&dloss_dout[starting_index]) };
                 let output_sign_vec =
                     unsafe { _mm512_loadu_pd(&forward_pass_signs[starting_index]) };
 
@@ -878,7 +879,7 @@ impl Edge {
             // scalar step
             for t_idx in (last_t.len() - (last_t.len() % SIMD_CHUNK_SIZE))..last_t.len() {
                 accumulated_gradients[i].prediction_gradient +=
-                    basis_activations[t_idx] * edge_gradients[t_idx];
+                    basis_activations[t_idx] * dloss_dout[t_idx];
                 accumulated_gradients[i].l1_gradient +=
                     basis_activations[t_idx] * forward_pass_signs[t_idx]
             }
@@ -893,6 +894,11 @@ impl Edge {
             // it's a little awkward, so it may be worth exploring a separate loop to iterate over t and then do SIMD sliding over i
             let left_coefficient = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
             let right_coefficient = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
+            trace!(
+                "left coefficient: {}\nright coefficient: {}",
+                left_coefficient,
+                right_coefficient
+            );
             let left_coef_vec = unsafe { _mm512_set1_pd(left_coefficient) };
             let right_coef_vec = unsafe { _mm512_set1_pd(right_coefficient) };
             let mut t_counter = 0;
@@ -928,15 +934,17 @@ impl Edge {
                 let dbasis_dt_vec = unsafe { _mm512_sub_pd(left_vals_vec, right_vals_vec) };
                 let control_point_splat = unsafe { _mm512_set1_pd(control_points[i]) };
                 let doutput_dt_vec = unsafe { _mm512_mul_pd(dbasis_dt_vec, control_point_splat) };
-                let gradient_ve = unsafe { _mm512_loadu_pd(&backpropped_errors[t_counter]) };
+                let gradient_ve = unsafe { _mm512_loadu_pd(&dout_din[t_counter]) };
                 let new_gradient_vec = unsafe { _mm512_add_pd(gradient_ve, doutput_dt_vec) };
                 unsafe {
-                    _mm512_storeu_pd(&mut backpropped_errors[t_counter], new_gradient_vec);
+                    _mm512_storeu_pd(&mut dout_din[t_counter], new_gradient_vec);
                     // I hope this works
                 }
+                trace!("backpropped errors after a SIMD step: {:?}", dout_din);
 
                 t_counter += SIMD_CHUNK_SIZE;
             }
+            trace!("finished SIMD steps");
             // and now the rest
             for t_idx in t_counter..last_t.len() {
                 let left_val = activations[1][i]
@@ -946,11 +954,50 @@ impl Edge {
                     .get(&(last_t[t_idx].to_bits()))
                     .expect("basis activation should be cached");
                 let dbasis_dt = left_coefficient * left_val - right_coefficient * right_val;
-                backpropped_errors[t_idx] += control_points[i] * dbasis_dt;
+
+                trace!(
+                    "left val: {}\nright val: {}\nleft coef: {}\nright coef: {}\ndbasis_dt: {}\ncontrol point: {}",
+                    left_val,
+                    right_val,
+                    left_coefficient,
+                    right_coefficient,
+                    dbasis_dt,
+                    control_points[i]
+                );
+                dout_din[t_idx] += control_points[i] * dbasis_dt;
             }
+            trace!(
+                "backpropped errors after finishing scalar step: {:?}",
+                dout_din
+            );
         }
 
-        return Ok(backpropped_errors);
+        // I don't know if it's faster to multiply in the output gradients to dout_din as we go, or to do it all at the end. I think it's cleaner at the end, so that's what I'm going to do
+        let mut t_idx = 0;
+        /* just renaming the variable, since the value we're now calculating is changing.
+        We were calculating the derivative of the output wrt the input,
+        and now we'll combine that with the derivative of the loss wrt the output that
+        was passed in to get the derivative of the loss wrt the input.
+        But since there's no need to create a new variable and waste time allocating additional memory,
+        I'm just renaming the variable to reflect that its purpose is changing. */
+        let mut dloss_din = dout_din;
+        // firs the SIMD step
+        while t_idx + SIMD_CHUNK_SIZE < dloss_din.len() {
+            let dout_din = unsafe { _mm512_loadu_pd(&dloss_din[t_idx]) };
+            let dloss_dout_vec = unsafe { _mm512_loadu_pd(&dloss_dout[t_idx]) };
+            let dloss_din_vec = unsafe { _mm512_mul_pd(dout_din, dloss_dout_vec) };
+            unsafe {
+                _mm512_storeu_pd(&mut dloss_din[t_idx], dloss_din_vec);
+            }
+
+            t_idx += SIMD_CHUNK_SIZE;
+        }
+        // and now the scalar step
+        for t_idx in t_idx..dloss_din.len() {
+            dloss_din[t_idx] *= dloss_dout[t_idx];
+        }
+
+        return Ok(dloss_din);
     }
 
     pub(super) fn update_control_points(
@@ -2120,7 +2167,7 @@ mod tests {
 
     #[test]
     // backward can't be run without forward, so we include forward in the name to make it obvious that if forward fails, backward will also fail
-    fn test_forward_then_backward() {
+    fn test_forward_then_backward_1() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
         let mut spline = Edge::new(3, control_points, knots).unwrap();
