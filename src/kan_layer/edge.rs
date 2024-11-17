@@ -361,6 +361,8 @@ impl Edge {
         cache: &mut [Vec<FxHashMap<u64, f64>>],
     ) -> Vec<f64> {
         use std::{arch::x86_64::*, mem};
+
+        use log::log_enabled;
         trace!(
             "Starting x86 forward pass with\ncontrol_points: {control_points:?}\nknots: {knots:?}"
         );
@@ -451,7 +453,8 @@ impl Edge {
                     let new_activations =
                         unsafe { _mm512_add_pd(left_activations, right_activations) };
                     // trace out all the above values on separate lines
-                    trace!(
+                    if log_enabled!(log::Level::Trace) {
+                        trace!(
                         "i: {}\nleft_vals: {:?}\nright_vals: {:?}\nknots_i: {:?}\nknots_i1: {:?}\nknots_ik: {:?}\nknots_i1k: {:?}\nleft_numerator: {:?}\nleft_denominator: {:?}\nleft_coef: {:?}\nright_numerator: {:?}\nright_denominator: {:?}\nright_coef: {:?}\nleft_activations: {:?}\nright_activations: {:?}\nnew_activations: {:?}",
                         i,
                         left_vals,
@@ -470,6 +473,7 @@ impl Edge {
                         right_activations,
                         new_activations
                     );
+                    }
                     unsafe {
                         _mm512_storeu_pd(&mut basis_activations[i], new_activations);
                         // now that activations has been initialized above, we can write directly
