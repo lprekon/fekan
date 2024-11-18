@@ -2278,7 +2278,6 @@ mod tests {
         const NUM_COEFS: usize = 11;
         const DEGREE: usize = 3;
         let knots = linspace(0.0, 14.0, NUM_COEFS + DEGREE + 1);
-        println!("{:?}", knots);
         let control_points = vec![5.0; NUM_COEFS];
         let mut spline = Edge::new(3, control_points, knots).unwrap();
         let t_batch = [9.4; BATCH_SIZE];
@@ -2335,6 +2334,40 @@ mod tests {
             .collect();
         assert_eq!(
             rounded_l1_gradients, expected_l1_gradients,
+            "actual != expected"
+        );
+    }
+
+    #[test]
+    fn test_entropy_gradient_1() {
+        const BATCH_SIZE: usize = 10;
+        const NUM_COEFS: usize = 11;
+        const DEGREE: usize = 3;
+        const ROUNDING: f64 = 100000.0;
+        let knots = linspace(0.0, 14.0, NUM_COEFS + DEGREE + 1);
+        let control_points = vec![5.0; NUM_COEFS];
+        let mut spline = Edge::new(3, control_points, knots).unwrap();
+        let t_batch = [9.4; BATCH_SIZE];
+        let _ = spline.forward(&t_batch);
+        assert_almost_eq!(spline.l1_norm.unwrap(), 5.0, 1e-8);
+        let error_batch = [1.0; BATCH_SIZE];
+        let _ = spline.backward(&error_batch, 7.0, &[1.0, 1.0]); // entropy gradient *does* care about siblings
+        let actual_entropy_gradients = match spline.kind {
+            EdgeType::Spline { gradients, .. } => gradients
+                .iter()
+                .map(|g| g.entropy_gradient)
+                .collect::<Vec<f64>>(),
+            _ => unreachable!(),
+        };
+        let rounded_entropy_gradients: Vec<f64> = actual_entropy_gradients
+            .iter()
+            .map(|g| (g * ROUNDING).round() / ROUNDING)
+            .collect();
+        let expected_entropy_gradients: Vec<f64> = vec![
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.00236, -0.03539, -0.02724, -0.0007, 0.0,
+        ];
+        assert_eq!(
+            rounded_entropy_gradients, expected_entropy_gradients,
             "actual != expected"
         );
     }
