@@ -49,6 +49,8 @@ enum EdgeType {
         // the following two fields weren't being serialized because their values represented operating state, not identity. However, they need to be initialized to an appropriate size when deserializing, and manually implementing serde::Deserialize is more trouble than I want right now, so I'm just going to serialize them.
         /// dim0: degree (idx 0 = self.degree, idx 1 = self.degree - 1, etc.), dim1: control point index, dim2: t value
         activations: Vec<Vec<FxHashMap<u64, f64>>>,
+        /// tracks the sign of the forward pass for each input in last_t. Used when calculating the L1 gradient in the backward pass
+        forward_signs: Vec<i16>, // could be 8-bit, but this makes the x86 SIMD code easier
         /// accumulated gradients for each control point
         gradients: Vec<Gradient>,
     },
@@ -219,6 +221,7 @@ impl Edge {
                 knots,
                 activations: activations_cache,
                 gradients: vec![Gradient::default(); size],
+                forward_signs: vec![],
             },
             last_t: vec![],
             l1_norm: None,
@@ -236,6 +239,7 @@ impl Edge {
                 control_points,
                 knots,
                 activations,
+                forward_signs,
                 ..
             } => {
                 #[cfg(all(
@@ -253,6 +257,7 @@ impl Edge {
                         *degree,
                         knots,
                         activations,
+                        forward_signs,
                     );
                 }
 
@@ -266,6 +271,7 @@ impl Edge {
                         *degree,
                         knots,
                         activations,
+                        forward_signs,
                     );
                 }
 
@@ -278,6 +284,7 @@ impl Edge {
                         *degree,
                         knots,
                         activations,
+                        forward_signs,
                     );
                 }
             }
@@ -297,6 +304,7 @@ impl Edge {
         degree: usize,
         knots: &[f64],
         activations: &mut [Vec<FxHashMap<u64, f64>>],
+        forward_pass_signs: &mut Vec<i16>,
     ) -> Vec<f64> {
         let mut outputs = Vec::with_capacity(inputs.len());
         for t in inputs.iter() {
@@ -307,6 +315,7 @@ impl Edge {
                 activations[0][idx].insert(t.to_bits(), basis_activation);
             }
             outputs.push(sum);
+            forward_pass_signs.push(sum.signum() as i16);
         }
         *l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
         outputs
@@ -320,6 +329,7 @@ impl Edge {
         degree: usize,
         knots: &[f64],
         activations: &mut [Vec<FxHashMap<u64, f64>>],
+        forward_pass_signs: &mut Vec<i16>,
     ) -> Vec<f64> {
         let mut outputs = Vec::with_capacity(inputs.len());
         for t in inputs.iter() {
@@ -340,6 +350,7 @@ impl Edge {
                 sum += *coef * basis_activation;
             }
             outputs.push(sum);
+            forward_pass_signs.push(sum.signum() as i16);
         }
         *l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
         outputs
@@ -359,6 +370,7 @@ impl Edge {
         degree: usize,
         knots: &[f64],
         cache: &mut [Vec<FxHashMap<u64, f64>>],
+        forward_pass_signs: &mut Vec<i16>,
     ) -> Vec<f64> {
         use std::{arch::x86_64::*, mem};
 
@@ -517,6 +529,7 @@ impl Edge {
                 })
                 .sum();
             outputs.push(output);
+            forward_pass_signs.push(output.signum() as i16);
         }
         *l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
         outputs
@@ -607,8 +620,10 @@ impl Edge {
                 knots,
                 activations,
                 gradients: accumulated_gradients,
+                forward_signs,
             } => {
                 // assert_eq!(activations[0][0].len(), edge_gradients.len());
+                debug_assert_eq!(forward_signs.len(), self.last_t.len());
                 #[cfg(all(
                     target_arch = "x86_64",
                     target_feature = "sse2",
@@ -623,6 +638,7 @@ impl Edge {
                         *degree,
                         control_points,
                         activations,
+                        forward_signs,
                         layer_l1,
                         edge_l1,
                         sibling_l1s,
@@ -639,6 +655,7 @@ impl Edge {
                     *degree,
                     control_points,
                     activations,
+                    forward_signs,
                     layer_l1,
                     edge_l1,
                     sibling_l1s,
@@ -685,6 +702,7 @@ impl Edge {
         k: usize,
         control_points: &[f64],
         activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
+        forward_pass_signs: &[i16],
         layer_l1: f64,
         edge_l1: f64,
         sibling_edge_l1s: &[f64],
@@ -696,21 +714,6 @@ impl Edge {
             edge_gradients
         );
         let mut dout_din = vec![0.0; edge_gradients.len()];
-        let reconstitued_forward_passes: Vec<f64> = last_t
-            .iter()
-            .map(|t| {
-                let mut sum = 0.0;
-                for (idx, coef) in control_points.iter().enumerate() {
-                    let basis_activation = basis_cached(idx, k, *t, knots, activations, k); // this line is probably unnecessarily slow - we could grab the cached value directly, but calling a recursive (and thus un-inlinable) function to do so means a lot more function pro/epilogues then would be necessary
-                    sum += coef * basis_activation;
-                }
-                sum
-            })
-            .collect(); // I hope this is a quick process
-        trace!(
-            "Reconstituted forward passes: {:?}",
-            reconstitued_forward_passes
-        );
 
         let dlayer_entropy_dedge_l1 = (sibling_edge_l1s
             .iter()
@@ -747,8 +750,8 @@ impl Edge {
                 // second, the L1 gradient for this control point
                 let dedge_l1_dcoef = basis_activations
                     .iter()
-                    .zip(reconstitued_forward_passes.iter())
-                    .map(|(a, o)| a * o.signum())
+                    .zip(forward_pass_signs.iter())
+                    .map(|(a, o)| *a * (*o as f64))
                     .sum::<f64>()
                     / last_t.len() as f64;
                 accumulated_gradients[i].l1_gradient += dedge_l1_dcoef;
@@ -803,6 +806,7 @@ impl Edge {
         k: usize,
         control_points: &[f64],
         activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
+        forward_pass_signs: &[i16],
         layer_l1: f64,
         edge_l1: f64,
         sibling_edge_l1s: &[f64],
@@ -812,20 +816,6 @@ impl Edge {
         use std::arch::x86_64::*;
         trace!("Starting x86 backward pass");
         let mut dout_din = vec![0.0; dloss_dout.len()];
-
-        let forward_pass_signs = last_t
-            .iter()
-            .map(|t| {
-                let mut sum = 0.0;
-                for (idx, coef) in control_points.iter().enumerate() {
-                    let basis_activation = activations[0][idx]
-                        .get(&(t.to_bits()))
-                        .expect("basis activation should be cached at k");
-                    sum += coef * basis_activation;
-                }
-                sum.signum()
-            })
-            .collect::<Vec<f64>>();
 
         // doing logarithms in SIMD is hard, so we'll do the entropy gradient in a scalar loop for now
         debug_assert!(!(layer_l1 == 0.0 && sibling_edge_l1s.iter().any(|s| *s != 0.0)));
@@ -862,7 +852,7 @@ impl Edge {
             dlayer_entropy_dedge_l1
         );
 
-        // first, let's worry about the prediction gradient
+        // first, let's worry about the prediction gradient (we're actually doing prediction and l1 in the same loop)
         // I think doing prediction gradient by control point makes more sense, because then I can fold all the SIMD values into a single update, isntead of having a vec of dloss_dcoef values where each lane needs to go in a different accumulator
         // since I'm accumulating basis activations by control point, it makes sense to continue on and do L1 and entropy gradients by control point as well
         // and the l1 calculation can go in the same loop
@@ -882,13 +872,22 @@ impl Edge {
             while t_idx + SIMD_CHUNK_SIZE < last_t.len() {
                 let activation_vec = unsafe { _mm512_loadu_pd(&basis_activations[t_idx]) };
                 let dloss_doutput_vec = unsafe { _mm512_loadu_pd(&dloss_dout[t_idx]) };
-                let output_sign_vec = unsafe { _mm512_loadu_pd(&forward_pass_signs[t_idx]) };
+
+                let comparison_splat = unsafe { _mm_set1_epi16(0) };
+                let forward_signs_i16_vec = unsafe { _mm_loadu_epi16(&forward_pass_signs[t_idx]) };
+                let sign_mask = unsafe {
+                    _mm_cmp_epi16_mask(comparison_splat, forward_signs_i16_vec, _MM_CMPINT_LT)
+                }; // positive signs will be '1' in the mask, and negative signs will be '0'
+                let swizzled_sign_vec = unsafe {
+                    _mm512_mask_blend_pd(sign_mask, _mm512_set1_pd(-1.0), _mm512_set1_pd(1.0))
+                }; // swizzle -1.0 and 1.0 based on the sign mask
 
                 let dloss_dcoef_vec = unsafe { _mm512_mul_pd(activation_vec, dloss_doutput_vec) };
                 let dloss_dcoef_partial_sums = unsafe { _mm512_reduce_add_pd(dloss_dcoef_vec) };
                 accumulated_gradients[i].prediction_gradient += dloss_dcoef_partial_sums;
 
-                let dedge_l1_dcoef_vec = unsafe { _mm512_mul_pd(activation_vec, output_sign_vec) };
+                let dedge_l1_dcoef_vec =
+                    unsafe { _mm512_mul_pd(activation_vec, swizzled_sign_vec) };
                 let dedge_l1_dcoef_partial_sums =
                     unsafe { _mm512_reduce_add_pd(dedge_l1_dcoef_vec) };
                 accumulated_gradients[i].l1_gradient += dedge_l1_dcoef_partial_sums;
@@ -897,13 +896,10 @@ impl Edge {
             }
             // scalar step
             while t_idx < last_t.len() {
-                let this_gradient = &mut accumulated_gradients[i];
-                let this_activation = basis_activations[t_idx];
-                let this_dloss_dout = dloss_dout[t_idx];
                 accumulated_gradients[i].prediction_gradient +=
                     basis_activations[t_idx] * dloss_dout[t_idx];
                 accumulated_gradients[i].l1_gradient +=
-                    basis_activations[t_idx] * forward_pass_signs[t_idx];
+                    basis_activations[t_idx] * forward_pass_signs[t_idx] as f64;
 
                 t_idx += 1;
             }
@@ -1047,6 +1043,7 @@ impl Edge {
                 knots: _,
                 activations: _,
                 gradients,
+                forward_signs: _,
             } => {
                 for i in 0..control_points.len() {
                     control_points[i] -= learning_rate
@@ -1067,11 +1064,13 @@ impl Edge {
                 knots: _,
                 activations: _,
                 gradients,
+                forward_signs,
             } => {
                 for i in 0..gradients.len() {
                     gradients[i] = Gradient::default();
                 }
                 self.last_t.clear();
+                forward_signs.clear();
                 debug_assert!(
                     self.last_t.is_empty(),
                     "last_t is not empty after zeroing gradients"
@@ -1091,6 +1090,7 @@ impl Edge {
                 knots,
                 activations: _,
                 gradients: _,
+                forward_signs: _,
             } => knots,
             _ => &[],
         }
@@ -1118,11 +1118,15 @@ impl Edge {
                 knots,
                 activations,
                 gradients: _,
+                forward_signs,
             } => {
                 activations
                     .iter_mut()
                     .for_each(|v| v.iter_mut().for_each(|h| h.clear())); // clear the memoized activations. They're no longer valid, now that the knots are changing
+
                 self.last_t.clear(); // clear the last_t cache, since the activations cache is clear
+                forward_signs.clear(); // clear the forward_signs cache, since last_t is clear
+
                 let knot_count = knots.len();
                 let base_knot_count = knot_count - 2 * (*degree);
                 let mut adaptive_knots: Vec<f64> = Vec::with_capacity(base_knot_count);
@@ -1182,6 +1186,7 @@ impl Edge {
                 knots,
                 activations,
                 gradients,
+                forward_signs: _,
             } => {
                 let degree = *degree;
                 let new_knots = linspace(knots[0], knots[knots.len() - 1], new_knot_length);
@@ -1199,6 +1204,7 @@ impl Edge {
                         knots: knots.clone(),
                         activations: activations.clone(),
                         gradients: gradients.clone(),
+                        forward_signs: vec![],
                     },
                     last_t: vec![],
                     l1_norm: None,
@@ -1533,6 +1539,7 @@ impl Edge {
                 knots,
                 activations: _,
                 gradients: _,
+                forward_signs: _,
             } => control_points.len() + knots.len(),
             EdgeType::Symbolic { .. } => 4, // every symbolic edge has 4 parameters - a, b, c, and d
             EdgeType::Pruned => 0,          // pruned edges have no parameters
@@ -1548,6 +1555,7 @@ impl Edge {
                 knots: _,
                 activations: _,
                 gradients: _,
+                forward_signs: _,
             } => control_points.len(),
             EdgeType::Symbolic { .. } => 0, // symbolic edges have no trainable parameters
             EdgeType::Pruned => 0,          // pruned edges have no parameters
@@ -1602,6 +1610,7 @@ impl Edge {
                             knots,
                             activations: _,
                             gradients: _,
+                            forward_signs: _,
                         } => {
                             // check for mismatched degrees, control points, and knots
                             if degree != expected_degree {
@@ -2264,6 +2273,73 @@ mod tests {
     }
 
     #[test]
+    fn test_l1_gradient_1() {
+        const BATCH_SIZE: usize = 10;
+        const NUM_COEFS: usize = 11;
+        const DEGREE: usize = 3;
+        let knots = linspace(0.0, 14.0, NUM_COEFS + DEGREE + 1);
+        println!("{:?}", knots);
+        let control_points = vec![5.0; NUM_COEFS];
+        let mut spline = Edge::new(3, control_points, knots).unwrap();
+        let t_batch = [9.4; BATCH_SIZE];
+        let _ = spline.forward(&t_batch);
+        assert_almost_eq!(spline.l1_norm.unwrap(), 5.0, 1e-8);
+        let error_batch = [1.0; BATCH_SIZE];
+        let _ = spline.backward(&error_batch, DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S); // L1 gradient doesn't care about siblings
+        let actual_l1_gradients = match spline.kind {
+            EdgeType::Spline { gradients, .. } => gradients
+                .iter()
+                .map(|g| g.l1_gradient)
+                .collect::<Vec<f64>>(),
+            _ => unreachable!(),
+        };
+        let expected_l1_gradients = vec![
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.036, 0.53867, 0.41467, 0.01067, 0.0,
+        ];
+        let rounded_l1_gradients: Vec<f64> = actual_l1_gradients
+            .iter()
+            .map(|g| (g * 100000.0).round() / 100000.0)
+            .collect();
+        assert_eq!(
+            rounded_l1_gradients, expected_l1_gradients,
+            "actual != expected"
+        );
+    }
+
+    #[test]
+    fn test_l1_gradient_2() {
+        const BATCH_SIZE: usize = 10;
+        const NUM_COEFS: usize = 11;
+        const DEGREE: usize = 3;
+        let knots = linspace(0.0, 14.0, NUM_COEFS + DEGREE + 1);
+        let control_points = vec![-3.14; NUM_COEFS];
+        let mut spline = Edge::new(3, control_points, knots).unwrap();
+        let t_batch = [9.4; BATCH_SIZE];
+        let _ = spline.forward(&t_batch);
+        assert_almost_eq!(spline.l1_norm.unwrap(), 3.14, 1e-8);
+        let error_batch = [1.0; BATCH_SIZE];
+        let _ = spline.backward(&error_batch, DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S); // L1 gradient doesn't care about siblings
+        let actual_l1_gradients = match spline.kind {
+            EdgeType::Spline { gradients, .. } => gradients
+                .iter()
+                .map(|g| g.l1_gradient)
+                .collect::<Vec<f64>>(),
+            _ => unreachable!(),
+        };
+        let expected_l1_gradients = vec![
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.036, -0.53867, -0.41467, -0.01067, 0.0,
+        ];
+        let rounded_l1_gradients: Vec<f64> = actual_l1_gradients
+            .iter()
+            .map(|g| (g * 100000.0).round() / 100000.0)
+            .collect();
+        assert_eq!(
+            rounded_l1_gradients, expected_l1_gradients,
+            "actual != expected"
+        );
+    }
+
+    #[test]
     fn test_backward_before_forward() {
         let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
@@ -2645,20 +2721,6 @@ mod tests {
         use super::*;
         use test_log::test;
 
-        // #[test]
-        // fn test_basis_autovec_i() {
-        //     let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-        //     let expected_results = vec![0.0513, 0.5782, 0.3648, 0.0057];
-        //     let k = 3;
-        //     let t = 0.95;
-        //     let result = basis_autovectorize_across_i(&[0, 1, 2, 3], k, t, &knots);
-        //     let rounded_result: Vec<f64> = result
-        //         .iter()
-        //         .map(|r| (r * 10000.0).round() / 10000.0)
-        //         .collect();
-        //     assert_eq!(rounded_result, expected_results);
-        // }
-
         #[test]
         #[cfg(not(no_simd))]
         fn test_basis_portable_i_k0() {
@@ -2701,97 +2763,6 @@ mod tests {
             let result = basis_portable_simd_across_i(0, k, t, &knots, &mut cache, k);
             assert_eq!(result.to_array().to_vec(), expected_results);
         }
-
-        // #[test]
-        // #[cfg(all(
-        //     target_arch = "x86_64",
-        //     target_feature = "sse2",
-        //     target_feature = "avx512f",
-        //     not(no_simd),
-        //     not(portable)
-        // ))]
-        // fn test_forward_x86_k0() {
-        //     let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-        //     let t = 1.3;
-        //     let control_points = vec![1.0; 4];
-        //     let mut zero_spline = Edge::new(0, control_points, knots).unwrap();
-        //     let result = zero_spline.forward(&vec![t]);
-        // }
-
-        // #[test]
-        // #[cfg(all(
-        //     target_arch = "x86_64",
-        //     target_feature = "sse2",
-        //     target_feature = "avx512f",
-        //     not(no_simd),
-        //     not(portable)
-        // ))]
-        // fn test_basis_x86_i_k0() {
-        //     use std::{arch::x86_64::*, mem};
-        //     let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-
-        //     let t = 1.3;
-        //     let expected_results = vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-
-        //     let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
-        //         vec![vec![FxHashMap::default(); knots.len() - 1]; 0];
-
-        //     let result: __m512d = x86_basis(0, 0, t, &knots, &mut cache, 0);
-        //     let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
-
-        //     assert_eq!(
-        //         transmuted_result.to_vec(),
-        //         expected_results,
-        //         "knot[1] < t < knot[2]"
-        //     );
-
-        //     let t = 3.95;
-        //     let expected_results = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
-        //     let result: __m512d = x86_basis(0, 0, t, &knots, &mut cache, 0);
-        //     let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
-        //     assert_eq!(
-        //         transmuted_result.to_vec(),
-        //         expected_results,
-        //         "knot[3] < t < knot[4]"
-        //     );
-
-        //     let t = 11.5;
-        //     let expected_results = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        //     let result = x86_basis(0, 0, t, &knots, &mut cache, 0);
-        //     let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
-        //     assert_eq!(transmuted_result.to_vec(), expected_results, "t > knot[11]");
-
-        //     let t = -0.5;
-        //     let expected_results = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        //     let result = x86_basis(0, 0, t, &knots, &mut cache, 0);
-        //     let transmuted_result: [f64; 8] = unsafe { mem::transmute(result) };
-        //     assert_eq!(transmuted_result.to_vec(), expected_results, "t < knot[0]");
-        // }
-
-        // #[test]
-        // #[cfg(all(
-        //     target_arch = "x86_64",
-        //     target_feature = "sse2",
-        //     target_feature = "avx512f",
-        //     not(no_simd),
-        //     not(portable)
-        // ))]
-        // fn test_basis_x86_i_k3() {
-        //     use std::mem;
-        //     let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-        //     let k = 3;
-        //     let t = 9.2;
-        //     let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
-        //         vec![vec![FxHashMap::default(); knots.len() - 1 - k]; k];
-        //     println!("0");
-        //     let result = x86_basis(0, k, t, &knots, &mut cache, k);
-
-        //     let expected_results: Vec<f64> = (0..(knots.len() - 1 - k))
-        //         .map(|i| basis_no_cache(i, k, t, &knots))
-        //         .collect();
-        //     let transmuted_results: [f64; 8] = unsafe { mem::transmute(result) };
-        //     assert_eq!(transmuted_results.to_vec(), expected_results);
-        // }
     }
 
     mod symbolic_tests {
