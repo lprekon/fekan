@@ -601,7 +601,7 @@ impl Edge {
         &mut self,
         edge_gradients: &[f64],
         layer_l1: f64,
-        sibling_l1s: &[f64],
+        sibling_entropy_terms: &[f64],
     ) -> Result<Vec<f64>, EdgeError> {
         if self.last_t.is_empty() {
             return Err(EdgeError::BackwardBeforeForward);
@@ -641,7 +641,7 @@ impl Edge {
                         forward_signs,
                         layer_l1,
                         edge_l1,
-                        sibling_l1s,
+                        sibling_entropy_terms,
                         accumulated_gradients,
                         knots,
                     );
@@ -658,7 +658,7 @@ impl Edge {
                     forward_signs,
                     layer_l1,
                     edge_l1,
-                    sibling_l1s,
+                    sibling_entropy_terms,
                     accumulated_gradients,
                     knots,
                 );
@@ -705,7 +705,7 @@ impl Edge {
         forward_pass_signs: &[i16],
         layer_l1: f64,
         edge_l1: f64,
-        sibling_edge_l1s: &[f64],
+        sibling_entropy_terms: &[f64],
         accumulated_gradients: &mut [Gradient],
         knots: &[f64],
     ) -> Result<Vec<f64>, EdgeError> {
@@ -715,16 +715,7 @@ impl Edge {
         );
         let mut dout_din = vec![0.0; edge_gradients.len()];
 
-        let dlayer_entropy_dedge_l1 = (sibling_edge_l1s
-            .iter()
-            .map(|s| {
-                if *s == 0.0 {
-                    0.0
-                } else {
-                    s * ((s / layer_l1).ln() + 1.0)
-                }
-            })
-            .sum::<f64>()
+        let dlayer_entropy_dedge_l1 = (sibling_entropy_terms.iter().sum::<f64>()
             - (layer_l1 - edge_l1) * ((edge_l1 / layer_l1).ln() + 1.0))
             / layer_l1.abs().max(f64::MIN_POSITIVE).powi(2);
         trace!("dentropy_dl1: {}", dlayer_entropy_dedge_l1);
@@ -809,7 +800,7 @@ impl Edge {
         forward_pass_signs: &[i16],
         layer_l1: f64,
         edge_l1: f64,
-        sibling_edge_l1s: &[f64],
+        sibling_entropy_terms: &[f64],
         accumulated_gradients: &mut [Gradient],
         knots: &[f64],
     ) -> Result<Vec<f64>, EdgeError> {
@@ -817,25 +808,17 @@ impl Edge {
         trace!("Starting x86 backward pass");
         let mut dout_din = vec![0.0; dloss_dout.len()];
 
-        // doing logarithms in SIMD is hard, so we'll do the entropy gradient in a scalar loop for now
-        debug_assert!(!(layer_l1 == 0.0 && sibling_edge_l1s.iter().any(|s| *s != 0.0)));
-        let mut dlayer_entropy_dedge_l1 = sibling_edge_l1s
-            .iter()
-            .map(|s| {
-                let val = if *s == 0.0 {
-                    0.0
-                } else {
-                    s * ((s / layer_l1).ln() + 1.0)
-                };
-                trace!("sibling edge L1: {}\nval: {}", s, val);
-                val
-            })
-            .sum::<f64>();
+        debug_assert!(!(layer_l1 == 0.0 && sibling_entropy_terms.iter().any(|s| *s != 0.0)));
+        let mut dlayer_entropy_dedge_l1 = sibling_entropy_terms.iter().sum::<f64>();
         trace!(
             "dlayer_entropy_dedge_l1 stage 1: {}",
             dlayer_entropy_dedge_l1
         );
         debug_assert!(!(layer_l1 == 0.0 && edge_l1 != 0.0));
+        /*  Since entropy is a function of L1, which can only be positive, entropy doesn't really have a derivative at 0.
+            But that's ok - the whole point is to push uneeded edges toward zero.
+            If the L1 is zero, then the edge is exactly where we want it to be - entropically speaking - and we can just clamp the gradient to zero, since there's no "work" to do
+        */
         dlayer_entropy_dedge_l1 -= if edge_l1 == 0.0 {
             0.0
         } else {
@@ -2351,7 +2334,7 @@ mod tests {
         let _ = spline.forward(&t_batch);
         assert_almost_eq!(spline.l1_norm.unwrap(), 5.0, 1e-8);
         let error_batch = [1.0; BATCH_SIZE];
-        let _ = spline.backward(&error_batch, 7.0, &[1.0, 1.0]); // entropy gradient *does* care about siblings
+        let _ = spline.backward(&error_batch, 7.0, &[-0.9459101490553135; 2]); // entropy gradient *does* care about siblings
         let actual_entropy_gradients = match spline.kind {
             EdgeType::Spline { gradients, .. } => gradients
                 .iter()

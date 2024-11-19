@@ -665,16 +665,23 @@ impl KanLayer {
             }
         }
         let mut backpropped_gradients = vec![vec![0.0; self.input_dimension]; num_gradients];
-        let mut edge_l1s: VecDeque<f64> = self
+        let mut sibling_entropy_terms: VecDeque<f64> = self
             .splines
             .iter()
-            .map(|s| s.l1_norm().expect("edge should have an L1"))
+            .map(|s| {
+                let edge_l1 = s.l1_norm().expect("edge should have an L1");
+                if edge_l1 == 0.0 {
+                    0.0
+                } else {
+                    edge_l1 * ((edge_l1 / layer_l1).ln() + 1.0)
+                }
+            })
             .collect();
         for edge_index in 0..self.splines.len() {
             trace!("Backpropping gradients for edge {}", edge_index);
             let in_node_idx = edge_index / self.output_dimension;
             let out_node_idx = edge_index % self.output_dimension;
-            let sibling_l1s: &[f64] = &edge_l1s.as_slices().0[1..];
+            let sibling_l1s: &[f64] = &sibling_entropy_terms.as_slices().0[1..];
             let sample_wise_outputs = self.splines[edge_index]
                 .backward(&transposed_gradients[out_node_idx], layer_l1, sibling_l1s)
                 .map_err(|e| LayerError::backward_before_forward(Some(e), edge_index))?; // TODO incorporate sparsity losses
@@ -688,8 +695,8 @@ impl KanLayer {
             }
 
             // rotate the sibling L1s so that the next edge gets the correct values
-            edge_l1s.rotate_left(1);
-            edge_l1s.make_contiguous(); // necessary for .as_slices() above to work properly
+            sibling_entropy_terms.rotate_left(1);
+            sibling_entropy_terms.make_contiguous(); // necessary for .as_slices() above to work properly
         }
         trace!("Backpropped gradients: {:?}", backpropped_gradients);
         self.layer_l1 = None; // The L1 should be re-set after the next forward pass, and backward should not be called before forward, so this serves as a (redundant) check
