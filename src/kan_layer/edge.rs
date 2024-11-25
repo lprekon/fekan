@@ -434,10 +434,22 @@ impl Edge {
                 control_points,
                 knots,
                 ..
-            } =>
-            {
+            } => {
+                #[cfg(all(
+                    target_arch = "x86_64",
+                    target_feature = "sse2",
+                    target_feature = "avx512f",
+                    not(portable),
+                    not(no_simd)
+                ))]
+                {
+                    return Edge::x86_infer(inputs, control_points, *degree, knots);
+                }
+
                 #[allow(unreachable_code)]
-                Edge::fallback_infer(inputs, control_points, degree, knots)
+                {
+                    return Edge::fallback_infer(inputs, control_points, *degree, knots);
+                }
             }
             EdgeType::Symbolic {
                 a,
@@ -473,18 +485,65 @@ impl Edge {
 
     fn fallback_infer(
         inputs: &[f64],
-        control_points: &Vec<f64>,
-        degree: &usize,
-        knots: &Vec<f64>,
+        control_points: &[f64],
+        degree: usize,
+        knots: &[f64],
     ) -> Vec<f64> {
         let mut outputs = Vec::with_capacity(inputs.len());
         for t in inputs.iter() {
             let mut sum = 0.0;
             for (idx, coef) in control_points.iter().enumerate() {
-                let basis_activation = basis_no_cache(idx, *degree, *t, &knots);
+                let basis_activation = basis_no_cache(idx, degree, *t, &knots);
                 sum += *coef * basis_activation;
             }
             outputs.push(sum);
+        }
+        outputs
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "sse2",
+        target_feature = "avx512f",
+        not(portable),
+        not(no_simd)
+    ))]
+    fn x86_infer(inputs: &[f64], control_points: &[f64], degree: usize, knots: &[f64]) -> Vec<f64> {
+        use std::arch::x86_64::*;
+        trace!(
+            "Starting x86 inference pass with\ncontrol_points: {control_points:?}\nknots: {knots:?}"
+        );
+        let mut outputs: Vec<f64> = Vec::with_capacity(inputs.len());
+        debug_assert!(control_points.len() + degree + 1 <= knots.len());
+        for t in inputs.iter() {
+            trace!("Starting inference pass for t={}", t);
+            let activations_size = knots.len() - 1;
+            let mut basis_activations: Vec<f64> = Vec::with_capacity(activations_size);
+            // start with k=0
+            let t_splat = unsafe { _mm512_set1_pd(*t) };
+            _x86_k0_activations(activations_size, knots, t_splat, &mut basis_activations, t);
+
+            trace!("Activations after scalar step: {:?}", basis_activations);
+            // now that we have the k=0 activations, we can calculate the rest
+            for k in 1..=degree {
+                _x86_k_gte_1_activations(
+                    k,
+                    activations_size,
+                    &mut basis_activations,
+                    knots,
+                    t_splat,
+                    t,
+                );
+            }
+            let output = control_points
+                .iter()
+                .zip(basis_activations.iter())
+                .map(|(c, a)| {
+                    trace!("multiplying control point {} by activation {}", c, a);
+                    c * a
+                })
+                .sum();
+            outputs.push(output);
         }
         outputs
     }
