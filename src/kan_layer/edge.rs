@@ -955,6 +955,8 @@ impl Edge {
                 trace!("backpropped errors after a SIMD step: {:?}", dout_din);
 
                 t_counter += SIMD_CHUNK_SIZE;
+                left_vals.clear();
+                right_vals.clear();
             }
             trace!("finished SIMD steps");
             // and now the rest
@@ -984,8 +986,6 @@ impl Edge {
             );
 
             basis_activations.clear();
-            left_vals.clear();
-            right_vals.clear();
         }
 
         // I don't know if it's faster to multiply in the output gradients to dout_din as we go, or to do it all at the end. I think it's cleaner at the end, so that's what I'm going to do
