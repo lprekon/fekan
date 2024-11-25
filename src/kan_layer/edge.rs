@@ -1691,6 +1691,13 @@ impl Edge {
     }
 }
 
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    target_feature = "avx512f",
+    not(portable),
+    not(no_simd)
+))]
 #[inline]
 fn _x86_k0_activations(
     activations_size: usize,
@@ -1751,6 +1758,13 @@ fn _x86_k0_activations(
     }
 }
 
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    target_feature = "avx512f",
+    not(portable),
+    not(no_simd)
+))]
 #[inline]
 fn _x86_k_gte_1_activations(
     k: usize,
