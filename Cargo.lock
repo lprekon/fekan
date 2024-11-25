@@ -415,7 +415,7 @@ checksum = "486f806e73c5707928240ddc295403b1b93c96a02038563881c4a2fd84b81ac4"
 
 [[package]]
 name = "fekan"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "apache-avro",
  "bitvec 1.0.1",
