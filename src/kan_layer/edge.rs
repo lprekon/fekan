@@ -12,7 +12,7 @@
 //! "brute force" it with a single massive Edge type that matches on a mode flag every method. At least this way, I get serialization and thread safety for free, and all the case-consciouness is in one place
 //! (besides maybe the aforementioned code that suggests and clamps-to symbolic edges, but that's rather unavoidable, as I said)
 
-use log::{debug, trace};
+use log::{debug, log_enabled, trace};
 use nalgebra::{DMatrix, DVector, SVD};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -372,9 +372,7 @@ impl Edge {
         cache: &mut [Vec<FxHashMap<u64, f64>>],
         forward_pass_signs: &mut Vec<i16>,
     ) -> Vec<f64> {
-        use std::{arch::x86_64::*, mem};
-
-        use log::log_enabled;
+        use std::arch::x86_64::*;
         trace!(
             "Starting x86 forward pass with\ncontrol_points: {control_points:?}\nknots: {knots:?}"
         );
@@ -387,128 +385,19 @@ impl Edge {
             let mut basis_activations: Vec<f64> = Vec::with_capacity(activations_size);
             // start with k=0
             let t_splat = unsafe { _mm512_set1_pd(*t) };
-            // slide the window over SIMD_CHUNK_SIZE points at a time
-            trace!("Starting k=0 activations");
-            for i_chunk in (0..activations_size)
-                .collect::<Vec<usize>>()
-                .chunks_exact(SIMD_CHUNK_SIZE)
-            {
-                let i = i_chunk[0];
-                let knots_i = unsafe { _mm512_loadu_pd(&knots[i]) };
-                let knots_i1 = unsafe { _mm512_loadu_pd(&knots[i + 1]) };
-                let left_mask = unsafe { _mm512_cmp_pd_mask(t_splat, knots_i, _CMP_GE_OQ) };
-                let right_mask = unsafe { _mm512_cmp_pd_mask(t_splat, knots_i1, _CMP_LT_OQ) };
-                trace!(
-                    "knots_i: {:?}\nknots_i1: {:?}\nleft mask {:b}\nright mask: {:b}",
-                    knots_i,
-                    knots_i1,
-                    left_mask,
-                    right_mask
-                );
-                let mask = left_mask & right_mask;
-                let activation_vec =
-                    unsafe { _mm512_mask_blend_pd(mask, _mm512_set1_pd(0.0), _mm512_set1_pd(1.0)) };
-
-                trace!("i: {}, activation_vec: {:?}", i, activation_vec);
-                basis_activations.extend_from_slice(unsafe {
-                    &mem::transmute::<__m512d, [f64; 8]>(activation_vec)
-                }); // use slice extension since this is the first pass through, so the vector knows how many values it's supposed to hold, and later indexing wont fail
-                    // unsafe {
-                    //     _mm512_store_pd(&mut activations[i], activation_vec);
-                    // }
-            }
-            trace!("Activations after SIMD step: {:?}", basis_activations);
-            // finish up for any remaining points
-            for i in (activations_size - (activations_size % SIMD_CHUNK_SIZE))..activations_size {
-                let activation = if knots[i] <= *t && *t < knots[i + 1] {
-                    1.0
-                } else {
-                    0.0
-                };
-                trace!(
-                    "Scalar step for i={}, t={}\nknots[i]: {}\nknots[i+1]: {}\nactivation: {}",
-                    i,
-                    t,
-                    knots[i],
-                    knots[i + 1],
-                    activation
-                );
-                basis_activations.push(activation);
-            }
+            _x86_k0_activations(activations_size, knots, t_splat, &mut basis_activations, t);
 
             trace!("Activations after scalar step: {:?}", basis_activations);
             // now that we have the k=0 activations, we can calculate the rest
             for k in 1..=degree {
-                let mut num_simd_steps = 0;
-                trace!("Starting k={} activations", k);
-                for i_chunk in (0..activations_size - k)
-                    .collect::<Vec<usize>>()
-                    .chunks_exact(SIMD_CHUNK_SIZE)
-                {
-                    num_simd_steps += 1;
-                    let i = i_chunk[0];
-                    // have to trust the compiler to order operations in a way that minimizes register pressure
-                    let left_vals = unsafe { _mm512_loadu_pd(&basis_activations[i]) };
-                    let right_vals = unsafe { _mm512_loadu_pd(&basis_activations[i + 1]) };
-                    let knots_i = unsafe { _mm512_loadu_pd(&knots[i]) };
-                    let knots_i1 = unsafe { _mm512_loadu_pd(&knots[i + 1]) };
-                    let knots_ik = unsafe { _mm512_loadu_pd(&knots[i + k]) };
-                    let knots_i1k = unsafe { _mm512_loadu_pd(&knots[i + 1 + k]) };
-                    let left_numerator = unsafe { _mm512_sub_pd(t_splat, knots_i) };
-                    let left_denominator = unsafe { _mm512_sub_pd(knots_ik, knots_i) };
-                    let left_coef = unsafe { _mm512_div_pd(left_numerator, left_denominator) };
-                    let right_numerator = unsafe { _mm512_sub_pd(knots_i1k, t_splat) };
-                    let right_denominator = unsafe { _mm512_sub_pd(knots_i1k, knots_i1) };
-                    let right_coef = unsafe { _mm512_div_pd(right_numerator, right_denominator) };
-                    let left_activations = unsafe { _mm512_mul_pd(left_vals, left_coef) };
-                    let right_activations = unsafe { _mm512_mul_pd(right_vals, right_coef) };
-                    let new_activations =
-                        unsafe { _mm512_add_pd(left_activations, right_activations) };
-                    // trace out all the above values on separate lines
-                    if log_enabled!(log::Level::Trace) {
-                        trace!(
-                        "i: {}\nleft_vals: {:?}\nright_vals: {:?}\nknots_i: {:?}\nknots_i1: {:?}\nknots_ik: {:?}\nknots_i1k: {:?}\nleft_numerator: {:?}\nleft_denominator: {:?}\nleft_coef: {:?}\nright_numerator: {:?}\nright_denominator: {:?}\nright_coef: {:?}\nleft_activations: {:?}\nright_activations: {:?}\nnew_activations: {:?}",
-                        i,
-                        left_vals,
-                        right_vals,
-                        knots_i,
-                        knots_i1,
-                        knots_ik,
-                        knots_i1k,
-                        left_numerator,
-                        left_denominator,
-                        left_coef,
-                        right_numerator,
-                        right_denominator,
-                        right_coef,
-                        left_activations,
-                        right_activations,
-                        new_activations
-                    );
-                    }
-                    unsafe {
-                        _mm512_storeu_pd(&mut basis_activations[i], new_activations);
-                        // now that activations has been initialized above, we can write directly
-                    }
-                    trace!("updated activations: {:?}", basis_activations);
-                }
-                // finish up for any remaining points
-                for i in num_simd_steps * SIMD_CHUNK_SIZE..activations_size - k {
-                    trace!("Scalar tesp for i={}, k={}, t={}", i, k, t);
-                    let left_val = basis_activations[i];
-                    let right_val = basis_activations[i + 1];
-                    let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
-                    let right_coefficient =
-                        (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
-                    let new_activation =
-                        left_val * left_coefficient + right_val * right_coefficient;
-                    basis_activations[i] = new_activation;
-                    trace!(
-                        "new activation: {}\nupdated activations: {:?}",
-                        new_activation,
-                        basis_activations
-                    );
-                }
+                _x86_k_gte_1_activations(
+                    k,
+                    activations_size,
+                    &mut basis_activations,
+                    knots,
+                    t_splat,
+                    t,
+                );
                 if k == degree - 1 {
                     // we need to cache these activations for the backward pass
                     for i in 0..control_points.len() + 1 {
@@ -539,22 +428,16 @@ impl Edge {
     ///
     /// Does not accumulate the activations of the spline at each interval in the internal `activations` field, or any other internal state
     pub fn infer(&self, inputs: &[f64]) -> Vec<f64> {
-        let mut outputs = Vec::with_capacity(inputs.len());
-        match &self.kind {
+        return match &self.kind {
             EdgeType::Spline {
                 degree,
                 control_points,
                 knots,
                 ..
-            } => {
-                for t in inputs.iter() {
-                    let mut sum = 0.0;
-                    for (idx, coef) in control_points.iter().enumerate() {
-                        let basis_activation = basis_no_cache(idx, *degree, *t, &knots);
-                        sum += *coef * basis_activation;
-                    }
-                    outputs.push(sum);
-                }
+            } =>
+            {
+                #[allow(unreachable_code)]
+                Edge::fallback_infer(inputs, control_points, degree, knots)
             }
             EdgeType::Symbolic {
                 a,
@@ -564,8 +447,9 @@ impl Edge {
                 function,
             } => {
                 let (a, b, c, d) = (*a, *b, *c, *d);
-                for t in inputs {
-                    let value = match function {
+                inputs
+                    .iter()
+                    .map(|t| match function {
                         SymbolicFunction::Linear => c * (a * t + b) + d,
                         SymbolicFunction::Quadratic => c * (a * t + b).powi(2) + d,
                         SymbolicFunction::Cubic => c * (a * t + b).powi(3) + d,
@@ -580,11 +464,27 @@ impl Edge {
                         SymbolicFunction::Log => c * (a * t + b).ln() + d,
                         SymbolicFunction::Exp => c * (a * t + b).exp() + d,
                         SymbolicFunction::Inverse => c / (a * t.max(f64::EPSILON) + b) + d,
-                    };
-                    outputs.push(value);
-                }
+                    })
+                    .collect()
             }
-            EdgeType::Pruned => outputs = vec![0.0; inputs.len()], // pruned edges always return 0
+            EdgeType::Pruned => vec![0.0; inputs.len()], // pruned edges always return 0
+        };
+    }
+
+    fn fallback_infer(
+        inputs: &[f64],
+        control_points: &Vec<f64>,
+        degree: &usize,
+        knots: &Vec<f64>,
+    ) -> Vec<f64> {
+        let mut outputs = Vec::with_capacity(inputs.len());
+        for t in inputs.iter() {
+            let mut sum = 0.0;
+            for (idx, coef) in control_points.iter().enumerate() {
+                let basis_activation = basis_no_cache(idx, *degree, *t, &knots);
+                sum += *coef * basis_activation;
+            }
+            outputs.push(sum);
         }
         outputs
     }
@@ -1729,6 +1629,145 @@ impl Edge {
             }
             _ => (), // symbolic edges don't have activations
         }
+    }
+}
+
+#[inline]
+fn _x86_k0_activations(
+    activations_size: usize,
+    knots: &[f64],
+    t_splat: std::arch::x86_64::__m512d,
+    basis_activations: &mut Vec<f64>,
+    t: &f64,
+) {
+    use std::arch::x86_64::*;
+    use std::mem;
+    // slide the window over SIMD_CHUNK_SIZE points at a time
+    trace!("Starting k=0 activations");
+    for i_chunk in (0..activations_size)
+        .collect::<Vec<usize>>()
+        .chunks_exact(SIMD_CHUNK_SIZE)
+    {
+        let i = i_chunk[0];
+        let knots_i = unsafe { _mm512_loadu_pd(&knots[i]) };
+        let knots_i1 = unsafe { _mm512_loadu_pd(&knots[i + 1]) };
+        let left_mask = unsafe { _mm512_cmp_pd_mask(t_splat, knots_i, _CMP_GE_OQ) };
+        let right_mask = unsafe { _mm512_cmp_pd_mask(t_splat, knots_i1, _CMP_LT_OQ) };
+        trace!(
+            "knots_i: {:?}\nknots_i1: {:?}\nleft mask {:b}\nright mask: {:b}",
+            knots_i,
+            knots_i1,
+            left_mask,
+            right_mask
+        );
+        let mask = left_mask & right_mask;
+        let activation_vec =
+            unsafe { _mm512_mask_blend_pd(mask, _mm512_set1_pd(0.0), _mm512_set1_pd(1.0)) };
+
+        trace!("i: {}, activation_vec: {:?}", i, activation_vec);
+        basis_activations
+            .extend_from_slice(unsafe { &mem::transmute::<__m512d, [f64; 8]>(activation_vec) });
+        // use slice extension since this is the first pass through, so the vector knows how many values it's supposed to hold, and later indexing wont fail
+        // unsafe {
+        //     _mm512_store_pd(&mut activations[i], activation_vec);
+        // }
+    }
+    trace!("Activations after SIMD step: {:?}", basis_activations);
+    // finish up for any remaining points
+    for i in (activations_size - (activations_size % SIMD_CHUNK_SIZE))..activations_size {
+        let activation = if knots[i] <= *t && *t < knots[i + 1] {
+            1.0
+        } else {
+            0.0
+        };
+        trace!(
+            "Scalar step for i={}, t={}\nknots[i]: {}\nknots[i+1]: {}\nactivation: {}",
+            i,
+            t,
+            knots[i],
+            knots[i + 1],
+            activation
+        );
+        basis_activations.push(activation);
+    }
+}
+
+#[inline]
+fn _x86_k_gte_1_activations(
+    k: usize,
+    activations_size: usize,
+    basis_activations: &mut Vec<f64>,
+    knots: &[f64],
+    t_splat: std::arch::x86_64::__m512d,
+    t: &f64,
+) {
+    use std::arch::x86_64::*;
+    let mut num_simd_steps = 0;
+    trace!("Starting k={} activations", k);
+    for i_chunk in (0..activations_size - k)
+        .collect::<Vec<usize>>()
+        .chunks_exact(SIMD_CHUNK_SIZE)
+    {
+        num_simd_steps += 1;
+        let i = i_chunk[0];
+        // have to trust the compiler to order operations in a way that minimizes register pressure
+        let left_vals = unsafe { _mm512_loadu_pd(&basis_activations[i]) };
+        let right_vals = unsafe { _mm512_loadu_pd(&basis_activations[i + 1]) };
+        let knots_i = unsafe { _mm512_loadu_pd(&knots[i]) };
+        let knots_i1 = unsafe { _mm512_loadu_pd(&knots[i + 1]) };
+        let knots_ik = unsafe { _mm512_loadu_pd(&knots[i + k]) };
+        let knots_i1k = unsafe { _mm512_loadu_pd(&knots[i + 1 + k]) };
+        let left_numerator = unsafe { _mm512_sub_pd(t_splat, knots_i) };
+        let left_denominator = unsafe { _mm512_sub_pd(knots_ik, knots_i) };
+        let left_coef = unsafe { _mm512_div_pd(left_numerator, left_denominator) };
+        let right_numerator = unsafe { _mm512_sub_pd(knots_i1k, t_splat) };
+        let right_denominator = unsafe { _mm512_sub_pd(knots_i1k, knots_i1) };
+        let right_coef = unsafe { _mm512_div_pd(right_numerator, right_denominator) };
+        let left_activations = unsafe { _mm512_mul_pd(left_vals, left_coef) };
+        let right_activations = unsafe { _mm512_mul_pd(right_vals, right_coef) };
+        let new_activations = unsafe { _mm512_add_pd(left_activations, right_activations) };
+        // trace out all the above values on separate lines
+        if log_enabled!(log::Level::Trace) {
+            trace!(
+            "i: {}\nleft_vals: {:?}\nright_vals: {:?}\nknots_i: {:?}\nknots_i1: {:?}\nknots_ik: {:?}\nknots_i1k: {:?}\nleft_numerator: {:?}\nleft_denominator: {:?}\nleft_coef: {:?}\nright_numerator: {:?}\nright_denominator: {:?}\nright_coef: {:?}\nleft_activations: {:?}\nright_activations: {:?}\nnew_activations: {:?}",
+            i,
+            left_vals,
+            right_vals,
+            knots_i,
+            knots_i1,
+            knots_ik,
+            knots_i1k,
+            left_numerator,
+            left_denominator,
+            left_coef,
+            right_numerator,
+            right_denominator,
+            right_coef,
+            left_activations,
+            right_activations,
+            new_activations
+        );
+        }
+        unsafe {
+            _mm512_storeu_pd(&mut basis_activations[i], new_activations);
+            // now that activations has been initialized above, we can write directly
+        }
+        trace!("updated activations: {:?}", basis_activations);
+    }
+    // finish up for any remaining points
+    for i in num_simd_steps * SIMD_CHUNK_SIZE..activations_size - k {
+        trace!("Scalar tesp for i={}, k={}, t={}", i, k, t);
+        let left_val = basis_activations[i];
+        let right_val = basis_activations[i + 1];
+        let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
+        let right_coefficient = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
+        let new_activation = left_val * left_coefficient + right_val * right_coefficient;
+        basis_activations[i] = new_activation;
+        trace!(
+            "new activation: {}\nupdated activations: {:?}",
+            new_activation,
+            basis_activations
+        );
     }
 }
 
