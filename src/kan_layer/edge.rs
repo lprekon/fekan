@@ -839,17 +839,19 @@ impl Edge {
         // I think doing prediction gradient by control point makes more sense, because then I can fold all the SIMD values into a single update, isntead of having a vec of dloss_dcoef values where each lane needs to go in a different accumulator
         // since I'm accumulating basis activations by control point, it makes sense to continue on and do L1 and entropy gradients by control point as well
         // and the l1 calculation can go in the same loop
+
+        let mut basis_activations: Vec<f64> = Vec::with_capacity(last_t.len());
+        let mut left_vals: Vec<f64> = Vec::with_capacity(SIMD_CHUNK_SIZE);
+        let mut right_vals: Vec<f64> = Vec::with_capacity(SIMD_CHUNK_SIZE);
+
         for i in 0..control_points.len() {
             trace!("Working on control point {}", i);
-            let basis_activations = last_t
-                .iter()
-                .map(|t| {
-                    activations[0][i]
-                        .get(&(t.to_bits()))
-                        .expect("basis activation should be cached at k")
-                })
-                .copied()
-                .collect::<Vec<f64>>();
+            for t in last_t {
+                let act = activations[0][i]
+                    .get(&t.to_bits())
+                    .expect("basis activation should be cached");
+                basis_activations.push(*act);
+            }
             // SIMD step
             let mut t_idx = 0;
             while t_idx + SIMD_CHUNK_SIZE < last_t.len() {
@@ -920,24 +922,21 @@ impl Edge {
                 // hey, we'll actually use the entire chunk for once!
                 // I'm going to just grab the activations from the cache, since they're already there, and save myself the function call. It's not quite as pretty to look at, but it's not the ugliest in the world and it should be faster
                 let t_chunk = &last_t[t_counter..t_counter + SIMD_CHUNK_SIZE];
-                let left_vals: Vec<f64> = t_chunk
-                    .iter()
-                    .map(|t| {
+
+                for t in t_chunk {
+                    left_vals.push(
                         activations[1][i]
                             .get(&(t.to_bits()))
                             .expect("basis activation should be cached at k-1")
-                    })
-                    .copied()
-                    .collect();
-                let right_vals: Vec<f64> = t_chunk
-                    .iter()
-                    .map(|t| {
+                            .to_owned(),
+                    );
+                    right_vals.push(
                         activations[1][i + 1]
                             .get(&(t.to_bits()))
                             .expect("basis activation should be cached at k-1")
-                    })
-                    .copied()
-                    .collect();
+                            .to_owned(),
+                    );
+                }
                 debug_assert_eq!(left_vals.len(), SIMD_CHUNK_SIZE);
 
                 let mut left_vals_vec = unsafe { _mm512_loadu_pd(left_vals.as_ptr()) };
@@ -983,6 +982,10 @@ impl Edge {
                 "backpropped errors after finishing scalar step: {:?}",
                 dout_din
             );
+
+            basis_activations.clear();
+            left_vals.clear();
+            right_vals.clear();
         }
 
         // I don't know if it's faster to multiply in the output gradients to dout_din as we go, or to do it all at the end. I think it's cleaner at the end, so that's what I'm going to do
