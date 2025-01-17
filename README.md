@@ -54,12 +54,12 @@ classification
 ```json
 [
   {
-    features: [1.2, 3.14159, -22.0]
-    label: "cat"
+    "features": [1.2, 3.14159, -22.0]
+    "label": "cat"
   }
   {
-    features: [2.89, -0.002, 16.288844]
-    label: "dog"
+    "features": [2.89, -0.002, 16.288844]
+    "label": "dog"
   }
 ]
 ```
@@ -70,12 +70,12 @@ The data for a regression model with a single output would look like:
 ```json
 [
   {
-    features: [1.2, 3.14159, -22.0],
-    labels: [-0.01]
+    "features": [1.2, 3.14159, -22.0],
+    "labels": [-0.01]
   }
   {
-    features: [2.89, -0.002, 16.288844],
-    labels: [100.5]
+    "features": [2.89, -0.002, 16.288844],
+    "labels": [100.5]
   }
 ]
 ```
@@ -84,12 +84,12 @@ And for a model with multiple regression outputs, where every sample includes a 
 ```json
 [
   {
-    features: [1.2, 3.14159, -22.0],
-    labels: [-0.01, 2.2]
+    "features": [1.2, 3.14159, -22.0],
+    "labels": [-0.01, 2.2]
   }
   {
-    features: [2.89, -0.002, 16.288844],
-    labels: [100.5, 22.0]
+    "features": [2.89, -0.002, 16.288844],
+    "labels": [100.5, 22.0]
   }
 ]
 ```
@@ -99,14 +99,14 @@ for a multi-regression model where a sample may only contain valid target values
 ```json
 [
   {
-    features: [1.2, 3.14159, -22.0],
-    labels: [-0.01, 0.0]
-    label_mask: [true, false]
+    "features": [1.2, 3.14159, -22.0],
+    "labels": [-0.01, 0.0]
+    "label_mask": [true, false]
   }
   {
-    features: [2.89, -0.002, 16.288844],
-    labels: [0.0, 22.0]
-    label_mask: [false, true]
+    "features": [2.89, -0.002, 16.288844],
+    "labels": [0.0, 22.0]
+    "label_mask": [false, true]
   }
 ]
 ```
