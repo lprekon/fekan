@@ -65,7 +65,7 @@ classification
 ```
 `fekan` will assign each distinct string found in the `label` field to a different output node, and store the mapping with the model for future use
 
-single regression
+The data for a regression model with a single output would look like:
 
 ```json
 [
@@ -79,7 +79,7 @@ single regression
   }
 ]
 ```
-multi regression
+And for a model with multiple regression outputs, where every sample includes a target for each regression:
 
 ```json
 [
@@ -94,7 +94,7 @@ multi regression
 ]
 ```
 
-multiregression with label masking
+for a multi-regression model where a sample may only contain valid target values for certain outputs:
 
 ```json
 [
@@ -122,9 +122,6 @@ The CLI supports reading data from `.pkl`, `.json`, and ~`.avro`~ files (avro cu
  # Code Example
  Build, train and save a full KAN regression model with a 2-dimensional input, 1 hidden layer with 3 nodes, and 1 output node,
  where each layer uses degree-3 [B-splines](https://en.wikipedia.org/wiki/B-spline) with 10 coefficients (AKA control points):
- ```rust
-Build, train and save a full KAN regression model with a 2-dimensional input, 1 hidden layer with 3 nodes, and 1 output node,
-where each layer uses degree-4 [B-splines](https://en.wikipedia.org/wiki/B-spline) with 5 coefficients (AKA control points):
 ```rust
 use fekan::kan::{Kan, KanOptions, ModelType};
 use fekan::{Sample, training_options::{TrainingOptions, EachEpoch}};
@@ -184,7 +181,7 @@ Load and use a trained classification model
     - [ ] train via methods other than SGD (Adam, LBFGS)
 - Speed
     - [x] support multi-threading
-    - [ ] support SIMD/parallel computation
+    - [x] support SIMD/parallel computation
 
 ## License
 
