@@ -1,8 +1,0 @@
-
-running 70 tests
-iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii
-test result: ok. 0 passed; 0 failed; 70 ignored; 0 measured; 0 filtered out; finished in 0.00s
-
-
-running 17 tests
-test multithreading::bench_eight_threaded_backward                  ... bench:   4,819,195.15 ns/iter (+/- 145,477.83)
