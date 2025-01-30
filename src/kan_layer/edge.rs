@@ -338,26 +338,22 @@ impl Edge {
         assert!(control_points.len() + 1 < knots.len() - 1);
         let mut outputs = Vec::with_capacity(inputs.len());
         let activations_size = knots.len() - 1;
-        let max_i = if activations_size > SIMD_CHUNK_SIZE {
-            activations_size - SIMD_CHUNK_SIZE
-        } else {
-            0
-        };
+        let mut basis_activations: Vec<f64> = vec![0.0; activations_size];
+
         for t in inputs.iter() {
             trace!("Starting forward pass for t={}", t);
-            let mut basis_activations: Vec<f64> = Vec::with_capacity(activations_size); // I know this should be instantiated outside this loop and overwritten, but I'm currently trying to compare the performance of portable SIMD to x86 instrinsics, and the x86 version doesn't do that right now
             let t_splat = Simd::splat(*t);
             // first, deal with k=0
             let mut i = 0;
 
-            while i < max_i {
+            while i + SIMD_CHUNK_SIZE < activations_size {
                 let knots_i: Simd<f64, SIMD_CHUNK_SIZE> = Simd::from_slice(&knots[i..]);
                 let knots_i1: Simd<f64, SIMD_CHUNK_SIZE> = Simd::from_slice(&knots[i + 1..]);
                 let left_mask = t_splat.simd_ge(knots_i);
                 let right_mask = t_splat.simd_lt(knots_i1);
                 let full_mask = left_mask & right_mask;
                 let activation_vec = full_mask.select(Simd::splat(1.0), Simd::splat(0.0));
-                basis_activations.extend_from_slice(activation_vec.as_array());
+                activation_vec.copy_to_slice(&mut basis_activations[i..]);
 
                 i += SIMD_CHUNK_SIZE;
             }
@@ -371,7 +367,7 @@ impl Edge {
                 } else {
                     0.0
                 };
-                basis_activations.push(activation);
+                basis_activations[i] = activation;
                 i += 1;
             }
             trace!(
