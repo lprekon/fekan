@@ -303,19 +303,75 @@ impl Edge {
         control_points: &[f64],
         degree: usize,
         knots: &[f64],
-        activations: &mut [Vec<FxHashMap<u64, f64>>],
+        cache: &mut [Vec<FxHashMap<u64, f64>>],
         forward_pass_signs: &mut Vec<i16>,
     ) -> Vec<f64> {
         let mut outputs = Vec::with_capacity(inputs.len());
+        let activations_size = knots.len() - 1;
+        let mut basis_activations: Vec<f64> = vec![0.0; activations_size];
+
         for t in inputs.iter() {
-            let mut sum = 0.0;
-            for (idx, coef) in control_points.iter().enumerate() {
-                let basis_activation = basis_cached(idx, degree, *t, knots, activations, degree);
-                sum += *coef * basis_activation;
-                activations[0][idx].insert(t.to_bits(), basis_activation);
+            trace!("Starting forward pass for t={}", t);
+            // first, deal with k=0
+            let mut i = 0;
+            while i < activations_size {
+                let activation = if *t >= knots[i] && *t < knots[i + 1] {
+                    1.0
+                } else {
+                    0.0
+                };
+                basis_activations[i] = activation;
+                i += 1;
             }
-            outputs.push(sum);
-            forward_pass_signs.push(sum.signum() as i16);
+            trace!(
+                "Basis Activations after k=0 scalar step: {:?}",
+                basis_activations
+            );
+
+            // now, calculate k=1,2...,degree
+            for k in 1..=degree {
+                let mut i = 0;
+                let max_i_for_k = if activations_size > k {
+                    activations_size - k
+                } else {
+                    0
+                };
+                trace!("max i for k={k}: {max_i_for_k}");
+
+                while i < activations_size - k {
+                    let left_coefficient = (*t - knots[i]) / (knots[i + k] - knots[i]);
+                    let left_val = basis_activations[i] * left_coefficient;
+
+                    let right_coefficient =
+                        (knots[i + k + 1] - *t) / (knots[i + k + 1] - knots[i + 1]);
+                    let right_val = basis_activations[i + 1] * right_coefficient;
+
+                    basis_activations[i] = left_val + right_val;
+
+                    i += 1;
+                }
+                trace!(
+                    "Basis Activations after k={} scalar step: {:?}",
+                    k,
+                    basis_activations
+                );
+
+                if k >= degree - 1 {
+                    // we need to cache these values for backprop
+                    for i in 0..(control_points.len() + (degree - k)) {
+                        let outer_cache_line = &mut cache[degree - k];
+                        let inner_cache_line = &mut outer_cache_line[i];
+                        let activation = basis_activations[i];
+                        inner_cache_line.insert(t.to_bits(), activation);
+                    }
+                }
+            }
+            let spline_activation_for_t = basis_activations
+                .iter()
+                .zip(control_points.iter())
+                .fold(0.0, |acc, (a, c)| acc + a * c);
+            outputs.push(spline_activation_for_t);
+            forward_pass_signs.push(spline_activation_for_t.signum() as i16);
         }
         *l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
         outputs
