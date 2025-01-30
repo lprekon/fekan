@@ -1,0 +1,27 @@
+
+running 68 tests
+iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii
+test result: ok. 0 passed; 0 failed; 68 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 17 tests
+test multithreading::bench_eight_threaded_backward                  ... bench:   4,519,337.40 ns/iter (+/- 184,701.66)
+test multithreading::bench_eight_threaded_forward                   ... bench:   8,688,615.75 ns/iter (+/- 816,794.92)
+test multithreading::bench_eight_threaded_set_knot_length           ... bench:  39,445,446.50 ns/iter (+/- 1,007,135.19)
+test multithreading::bench_eight_threaded_update                    ... bench:     226,821.06 ns/iter (+/- 20,704.33)
+test multithreading::bench_eight_threaded_update_knots_from_samples ... bench:     704,875.34 ns/iter (+/- 37,319.89)
+test multithreading::bench_one_threaded_backward                    ... bench:  23,506,978.00 ns/iter (+/- 796,469.91)
+test multithreading::bench_one_threaded_forward                     ... bench:  26,255,989.00 ns/iter (+/- 1,550,976.89)
+test multithreading::bench_one_threaded_set_knot_length             ... bench:  39,493,061.50 ns/iter (+/- 1,034,792.51)
+test multithreading::bench_one_threaded_update                      ... bench:     373,451.20 ns/iter (+/- 77,371.17)
+test multithreading::bench_one_threaded_update_knots_from_samples   ... bench:   1,975,526.38 ns/iter (+/- 163,064.37)
+test no_threading::bench_backward                                   ... bench:          35.30 ns/iter (+/- 0.92)
+test no_threading::bench_forward                                    ... bench:  24,863,528.20 ns/iter (+/- 1,720,657.79)
+test no_threading::bench_prune                                      ... bench:      54,168.97 ns/iter (+/- 1,262.77)
+test no_threading::bench_set_knot_length                            ... bench:  38,109,467.60 ns/iter (+/- 828,256.82)
+test no_threading::bench_suggest_symbolic                           ... bench: 106,281,110.50 ns/iter (+/- 6,447,301.01)
+test no_threading::bench_update                                     ... bench:     216,418.45 ns/iter (+/- 5,629.32)
+test no_threading::bench_update_knots_from_samples                  ... bench:   1,563,671.75 ns/iter (+/- 52,710.73)
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 17 measured; 0 filtered out; finished in 130.24s
+
