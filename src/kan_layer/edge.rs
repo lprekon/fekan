@@ -328,29 +328,125 @@ impl Edge {
         control_points: &[f64],
         degree: usize,
         knots: &[f64],
-        activations: &mut [Vec<FxHashMap<u64, f64>>],
+        cache: &mut [Vec<FxHashMap<u64, f64>>],
         forward_pass_signs: &mut Vec<i16>,
     ) -> Vec<f64> {
+        trace!(
+            "Starting portable forward pass. \nInputs: {inputs:?}\nKnots: {knots:?}\nControl Points: {control_points:?}",
+        );
+        use std::simd::prelude::*;
+        assert!(control_points.len() + 1 < knots.len() - 1);
         let mut outputs = Vec::with_capacity(inputs.len());
+        let activations_size = knots.len() - 1;
+        let max_i = if activations_size > SIMD_CHUNK_SIZE {
+            activations_size - SIMD_CHUNK_SIZE
+        } else {
+            0
+        };
         for t in inputs.iter() {
-            let mut sum = 0.0;
-            let mut coef_idx = 0;
-            // iterate over the control points in chunks of 4
-            for coef_chunk in control_points.chunks_exact(SIMD_CHUNK_SIZE) {
-                let basis_vec =
-                    basis_portable_simd_across_i(coef_idx, degree, *t, knots, activations, degree);
-                let activations = std::simd::prelude::f64x8::from_slice(coef_chunk) * basis_vec;
-                sum += activations.to_array().iter().sum::<f64>();
-                coef_idx += SIMD_CHUNK_SIZE;
+            trace!("Starting forward pass for t={}", t);
+            let mut basis_activations: Vec<f64> = Vec::with_capacity(activations_size); // I know this should be instantiated outside this loop and overwritten, but I'm currently trying to compare the performance of portable SIMD to x86 instrinsics, and the x86 version doesn't do that right now
+            let t_splat = Simd::splat(*t);
+            // first, deal with k=0
+            let mut i = 0;
+
+            while i < max_i {
+                let knots_i: Simd<f64, SIMD_CHUNK_SIZE> = Simd::from_slice(&knots[i..]);
+                let knots_i1: Simd<f64, SIMD_CHUNK_SIZE> = Simd::from_slice(&knots[i + 1..]);
+                let left_mask = t_splat.simd_ge(knots_i);
+                let right_mask = t_splat.simd_lt(knots_i1);
+                let full_mask = left_mask & right_mask;
+                let activation_vec = full_mask.select(Simd::splat(1.0), Simd::splat(0.0));
+                basis_activations.extend_from_slice(activation_vec.as_array());
+
+                i += SIMD_CHUNK_SIZE;
             }
-            // handle the last chunk, which may not be a full chunk
-            for (idx, coef) in control_points[coef_idx..].iter().enumerate() {
-                let basis_activation =
-                    basis_cached(coef_idx + idx, degree, *t, knots, activations, degree);
-                sum += *coef * basis_activation;
+            trace!(
+                "Basis Activations after k=0 SIMD step: {:?}",
+                basis_activations
+            );
+            while i < activations_size {
+                let activation = if *t >= knots[i] && *t < knots[i + 1] {
+                    1.0
+                } else {
+                    0.0
+                };
+                basis_activations.push(activation);
+                i += 1;
             }
-            outputs.push(sum);
-            forward_pass_signs.push(sum.signum() as i16);
+            trace!(
+                "Basis Activations after k=0 scalar step: {:?}",
+                basis_activations
+            );
+
+            // now, calculate k=1,2...,degree
+            for k in 1..=degree {
+                let mut i = 0;
+                let max_i_for_k = if activations_size > k {
+                    activations_size - k
+                } else {
+                    0
+                };
+                trace!("max i for k={k}: {max_i_for_k}");
+                while i + SIMD_CHUNK_SIZE <= max_i_for_k {
+                    let left_val_vec = Simd::from_slice(&basis_activations[i..]);
+                    let right_val_vec = Simd::from_slice(&basis_activations[i + 1..]);
+                    let knots_i = Simd::from_slice(&knots[i..]);
+                    let knots_i1 = Simd::from_slice(&knots[i + 1..]);
+                    let knots_ik = Simd::from_slice(&knots[i + k..]);
+                    let knots_ik1 = Simd::from_slice(&knots[i + k + 1..]);
+
+                    let left_numerator = t_splat - knots_i;
+                    let left_denominator = knots_ik - knots_i;
+                    let left_coefficient = left_numerator / left_denominator;
+                    let left_activations = left_coefficient * left_val_vec;
+
+                    let right_numerator = knots_ik1 - t_splat;
+                    let right_denominator = knots_ik1 - knots_i1;
+                    let right_coefficient = right_numerator / right_denominator;
+                    let right_activations = right_coefficient * right_val_vec;
+
+                    let new_activations = left_activations + right_activations;
+                    new_activations.copy_to_slice(&mut basis_activations[i..]);
+
+                    i += SIMD_CHUNK_SIZE;
+                }
+                trace!("Basis activations after k={k} SIMD step: {basis_activations:?}");
+
+                while i < activations_size - k {
+                    let left_coefficient = (*t - knots[i]) / (knots[i + k] - knots[i]);
+                    let left_val = basis_activations[i] * left_coefficient;
+
+                    let right_coefficient =
+                        (knots[i + k + 1] - *t) / (knots[i + k + 1] - knots[i + 1]);
+                    let right_val = basis_activations[i + 1] * right_coefficient;
+
+                    basis_activations[i] = left_val + right_val;
+
+                    i += 1;
+                }
+                trace!(
+                    "Basis Activations after k={} scalar step: {:?}",
+                    k,
+                    basis_activations
+                );
+
+                if k >= degree - 1 {
+                    // we need to cache these values for backprop
+                    for i in 0..(control_points.len() + (degree - k)) {
+                        let outer_cache_line = &mut cache[degree - k];
+                        let inner_cache_line = &mut outer_cache_line[i];
+                        let activation = basis_activations[i];
+                        inner_cache_line.insert(t.to_bits(), activation);
+                    }
+                }
+            }
+            let spline_activation_for_t = basis_activations
+                .iter()
+                .zip(control_points.iter())
+                .fold(0.0, |acc, (a, c)| acc + a * c);
+            outputs.push(spline_activation_for_t);
+            forward_pass_signs.push(spline_activation_for_t.signum() as i16);
         }
         *l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
         outputs
