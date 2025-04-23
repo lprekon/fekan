@@ -12,7 +12,7 @@
 //! "brute force" it with a single massive Edge type that matches on a mode flag every method. At least this way, I get serialization and thread safety for free, and all the case-consciouness is in one place
 //! (besides maybe the aforementioned code that suggests and clamps-to symbolic edges, but that's rather unavoidable, as I said)
 
-use log::{debug, log_enabled, trace};
+use log::{debug, trace};
 use nalgebra::{DMatrix, DVector, SVD};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -1922,6 +1922,7 @@ fn _x86_k_gte_1_activations(
     t_splat: std::arch::x86_64::__m512d,
     t: &f64,
 ) {
+    use log::debug::log_enabled;
     use std::arch::x86_64::*;
     let mut num_simd_steps = 0;
     trace!("Starting k={} activations", k);
