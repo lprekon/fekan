@@ -891,6 +891,193 @@ impl Edge {
         // input_gradient = drt_output_wrt_input * error
     }
 
+    #[cfg(not(no_simd))]
+    fn portable_backward(
+        last_t: &[f64],
+        edge_gradients: &[f64],
+        k: usize,
+        control_points: &[f64],
+        activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
+        forward_pass_signs: &[i16],
+        layer_l1: f64,
+        edge_l1: f64,
+        layer_entropy: f64,
+        accumulated_gradients: &mut [Gradient],
+        knots: &[f64],
+    ) -> Result<Vec<f64>, EdgeError> {
+        use core::f64;
+        use std::simd::prelude::*;
+
+        trace!(
+            "Starting edge backward pass with portable method, with argument gradients: {:?}",
+            edge_gradients
+        );
+        let d_layer_entropy_d_edge_l1 = if layer_entropy == 0.0 || edge_l1 == 0.0 {
+            // the point of entropy loss is to train for sparsity.
+            // if the layer entropy is 0, that's "ideal", so there shouldn't be any entropy gradient
+            // if the edge l1 is 0, then this edge is already "ideal" and there shouldn't be any entropy gradient
+            0.0
+        } else {
+            // edge_l1 is non-negative, so if edge_l1 != 0, then layer_l1 != 0
+            (layer_entropy - edge_l1.ln()) / layer_l1
+        };
+        let d_layer_entropy_d_edge_l1_splat: Simd<f64, SIMD_CHUNK_SIZE> =
+            Simd::splat(d_layer_entropy_d_edge_l1);
+        /* we have to calculate 4 things:
+        - d_ploss_d_input, per input
+        - d_ploss_d_cp, per control point
+        - d_lloss_d_cp, per control point
+        - d_eloss_d_cp, per control point
+
+        I think it makes most sense to have two separate sets of loops - one where the outer loop iterates input values and which calculates the input gradient,
+        and one where the outer loop iterates control points and calculates the control point gradients
+        */
+
+        // let's start with the control point gradients
+        // I've confirmed (https://godbolt.org/z/5a6nK749E) that the different ways to create the loop all compile to basically the same thing once optimizations are on
+        for i in 0..control_points.len() {
+            let grad = &mut accumulated_gradients[i];
+            let mut input_idx = 0;
+            // SIMD step
+            while input_idx + SIMD_CHUNK_SIZE < last_t.len() {
+                let t_vec: Simd<f64, SIMD_CHUNK_SIZE> = Simd::from_slice(&last_t[input_idx..]);
+                // prediction gradient
+                let dloss_d_edge_output_vec: Simd<f64, SIMD_CHUNK_SIZE> =
+                    Simd::from_slice(&edge_gradients[input_idx..]);
+                let basis_activations: Vec<f64> = t_vec
+                    .as_array()
+                    .iter()
+                    .map(|t| {
+                        activations[0][i]
+                            .get(&t.to_bits())
+                            .expect("basis activation should be cached")
+                    })
+                    .copied()
+                    .collect();
+                let basis_activations_vec: Simd<f64, SIMD_CHUNK_SIZE> =
+                    Simd::from_slice(&basis_activations);
+                let prediction_gradient_vec: Simd<f64, SIMD_CHUNK_SIZE> =
+                    basis_activations_vec * dloss_d_edge_output_vec;
+                grad.prediction_gradient += prediction_gradient_vec.as_array().iter().sum::<f64>(); // TODO investigate if there's a better way to do this. The compiler does some sort of shuffle sometimes
+
+                // L1 gradient
+                let forward_sign_vec: Simd<f64, SIMD_CHUNK_SIZE> =
+                    Simd::from_slice(&forward_pass_signs[input_idx..]).cast();
+
+                let l1_gradient_vec = basis_activations_vec * forward_sign_vec;
+                grad.l1_gradient += l1_gradient_vec.as_array().iter().sum::<f64>(); // TODO investigate if there's a better way to do this. The compiler does some sort of shuffle sometimes
+
+                // entropy gradient
+                let entropy_gradient_vec = basis_activations_vec * d_layer_entropy_d_edge_l1_splat;
+                grad.entropy_gradient += entropy_gradient_vec.as_array().iter().sum::<f64>(); // TODO investigate if there's a better way to do this. The compiler does some sort of shuffle sometimes
+
+                input_idx += SIMD_CHUNK_SIZE;
+            }
+            //scalar step
+            while input_idx < last_t.len() {
+                let t = last_t[input_idx];
+                let basis_activation = activations[0][i]
+                    .get(&t.to_bits())
+                    .expect("basis activation should be cached");
+                let prediction_gradient = edge_gradients[input_idx] * *basis_activation;
+                grad.prediction_gradient += prediction_gradient;
+
+                let forward_sign = forward_pass_signs[input_idx] as f64;
+                let l1_gradient = *basis_activation * forward_sign;
+                grad.l1_gradient += l1_gradient;
+
+                grad.entropy_gradient += *basis_activation * d_layer_entropy_d_edge_l1;
+
+                input_idx += 1;
+            }
+
+            // the formula for the L1 gradient includes an averaging step, which wasn't included in the above loop
+            grad.l1_gradient /= last_t.len() as f64;
+            // the formula for entropy gradient includes the l1 gradient. The l1 gradient only just got averaged,
+            // meaning all the l1 terms we were adding to the entropy gradient in the above loop weren't divided by the number of inputs like they should have been,
+            // so we have to do it here
+            grad.entropy_gradient /= last_t.len() as f64;
+        }
+
+        // now, the input gradient
+
+        /*  using the formula
+        d_output_d_input    = sum_i[C_i * d/dt[B_i,k(t)]] = sum_i[C_i * (dB_i,k(t)/dt)]
+            where
+        dB_i,k(t)/dt = k / (knots[i+k] - knots[i]) * B_i,k-1(t) - k / (knots[i+k+1] - knots[i+1]) * B_i+1,k-1(t)
+            which is equivalent to
+                            = k * sum_i[(C_i - C_i-1) * B_i,k-1(t) / (knots[i+k]-knots[i])]
+        when we use a modified coefficient vector of [0, C_0, C_1, ..., C_n, 0] (where n is the number of control points), as we do below
+        When pulling coefficients from the modified coefficient vector, we pull the positive coefficient from the 'i+1'th position for the 'i'th basis function,
+        and the negative coefficient from the 'i'th position for the 'i'th basis function.
+
+        This method ensures that the "negative" coefficient for the 0th basis function and the "positive" coefficient for the last basis function are both 0, which is what we want,
+        because those terms don't actually appear in the formula.
+         */
+        let mut modified_coefficient_vector = vec![0.0];
+        modified_coefficient_vector.append(control_points.to_vec().as_mut());
+        modified_coefficient_vector.push(0.0);
+
+        let mut d_ploss_d_input: Vec<f64> = Vec::with_capacity(last_t.len());
+        for input_idx in 0..last_t.len() {
+            let t = last_t[input_idx];
+            let mut i = 0;
+            let mut input_gradient = 0.0;
+            // SIMD step
+            // at degree k-1, we have N+1 basis functions, so we iterate to control_points.len() + 1
+            while i + SIMD_CHUNK_SIZE + 1 < control_points.len() + 1 {
+                let basis_activations = (i..i + SIMD_CHUNK_SIZE)
+                    .map(|j| {
+                        *activations[1][j]
+                            .get(&t.to_bits())
+                            .expect("basis activation should be cached")
+                    })
+                    .collect::<Vec<_>>();
+                let basis_activations_vec: Simd<f64, SIMD_CHUNK_SIZE> =
+                    Simd::from_slice(&basis_activations);
+                let knots_i: Simd<f64, SIMD_CHUNK_SIZE> =
+                    Simd::from_slice(&knots[i..i + SIMD_CHUNK_SIZE]);
+                let knots_i_k: Simd<f64, SIMD_CHUNK_SIZE> =
+                    Simd::from_slice(&knots[i + k - 1..i + k - 1 + SIMD_CHUNK_SIZE]);
+                let divisor_vec = knots_i_k - knots_i;
+                let divided_basis_vec = basis_activations_vec / divisor_vec;
+
+                let subtracted_coefficient_vec: Simd<f64, SIMD_CHUNK_SIZE> =
+                    Simd::from_slice(&modified_coefficient_vector[i..i + SIMD_CHUNK_SIZE]);
+                let added_coefficient_vec: Simd<f64, SIMD_CHUNK_SIZE> =
+                    Simd::from_slice(&modified_coefficient_vector[i + 1..i + SIMD_CHUNK_SIZE + 1]);
+
+                let subtracted_val_vec = divided_basis_vec * subtracted_coefficient_vec;
+                let added_val_vec = divided_basis_vec * added_coefficient_vec;
+
+                input_gradient += (added_val_vec - subtracted_val_vec)
+                    .as_array()
+                    .iter()
+                    .sum::<f64>();
+                i += SIMD_CHUNK_SIZE;
+            }
+            // scalar step
+            // at degree k-1, we have N+1 basis functions, so we iterate to control_points.len() + 1
+            while i < control_points.len() + 1 {
+                let basis_activation = *activations[1][i]
+                    .get(&t.to_bits())
+                    .expect("basis activation should be cached");
+                let divisor = knots[i + k] - knots[i];
+                let divided_basis = basis_activation / divisor;
+                let subtracted_coefficient = modified_coefficient_vector[i];
+                let added_coefficient = modified_coefficient_vector[i + 1];
+                let subtracted_val = divided_basis * subtracted_coefficient;
+                let added_val = divided_basis * added_coefficient;
+                input_gradient += added_val - subtracted_val;
+                i += 1;
+            }
+            d_ploss_d_input.push(input_gradient * edge_gradients[input_idx] * k as f64);
+            // the k is because each term of the sum is multiplied by k, which we've factored out to here
+        }
+
+        return Ok(vec![]);
+    }
+
     #[cfg(all(
         target_arch = "x86_64",
         target_feature = "sse2",
