@@ -649,52 +649,52 @@ impl Edge {
         outputs
     }
 
-    #[cfg(all(
-        target_arch = "x86_64",
-        target_feature = "sse2",
-        target_feature = "avx512f",
-        not(portable),
-        not(no_simd)
-    ))]
-    fn x86_infer(inputs: &[f64], control_points: &[f64], degree: usize, knots: &[f64]) -> Vec<f64> {
-        use std::arch::x86_64::*;
-        trace!(
-            "Starting x86 inference pass with\ncontrol_points: {control_points:?}\nknots: {knots:?}"
-        );
-        let mut outputs: Vec<f64> = Vec::with_capacity(inputs.len());
-        debug_assert!(control_points.len() + degree + 1 <= knots.len());
-        for t in inputs.iter() {
-            trace!("Starting inference pass for t={}", t);
-            let activations_size = knots.len() - 1;
-            let mut basis_activations: Vec<f64> = Vec::with_capacity(activations_size);
-            // start with k=0
-            let t_splat = unsafe { _mm512_set1_pd(*t) };
-            _x86_k0_activations(activations_size, knots, t_splat, &mut basis_activations, t);
+    // #[cfg(all(
+    //     target_arch = "x86_64",
+    //     target_feature = "sse2",
+    //     target_feature = "avx512f",
+    //     not(portable),
+    //     not(no_simd)
+    // ))]
+    // fn x86_infer(inputs: &[f64], control_points: &[f64], degree: usize, knots: &[f64]) -> Vec<f64> {
+    //     use std::arch::x86_64::*;
+    //     trace!(
+    //         "Starting x86 inference pass with\ncontrol_points: {control_points:?}\nknots: {knots:?}"
+    //     );
+    //     let mut outputs: Vec<f64> = Vec::with_capacity(inputs.len());
+    //     debug_assert!(control_points.len() + degree + 1 <= knots.len());
+    //     for t in inputs.iter() {
+    //         trace!("Starting inference pass for t={}", t);
+    //         let activations_size = knots.len() - 1;
+    //         let mut basis_activations: Vec<f64> = Vec::with_capacity(activations_size);
+    //         // start with k=0
+    //         let t_splat = unsafe { _mm512_set1_pd(*t) };
+    //         _x86_k0_activations(activations_size, knots, t_splat, &mut basis_activations, t);
 
-            trace!("Activations after scalar step: {:?}", basis_activations);
-            // now that we have the k=0 activations, we can calculate the rest
-            for k in 1..=degree {
-                _x86_k_gte_1_activations(
-                    k,
-                    activations_size,
-                    &mut basis_activations,
-                    knots,
-                    t_splat,
-                    t,
-                );
-            }
-            let output = control_points
-                .iter()
-                .zip(basis_activations.iter())
-                .map(|(c, a)| {
-                    trace!("multiplying control point {} by activation {}", c, a);
-                    c * a
-                })
-                .sum();
-            outputs.push(output);
-        }
-        outputs
-    }
+    //         trace!("Activations after scalar step: {:?}", basis_activations);
+    //         // now that we have the k=0 activations, we can calculate the rest
+    //         for k in 1..=degree {
+    //             _x86_k_gte_1_activations(
+    //                 k,
+    //                 activations_size,
+    //                 &mut basis_activations,
+    //                 knots,
+    //                 t_splat,
+    //                 t,
+    //             );
+    //         }
+    //         let output = control_points
+    //             .iter()
+    //             .zip(basis_activations.iter())
+    //             .map(|(c, a)| {
+    //                 trace!("multiplying control point {} by activation {}", c, a);
+    //                 c * a
+    //             })
+    //             .sum();
+    //         outputs.push(output);
+    //     }
+    //     outputs
+    // }
 
     /// compute the gradients for each control point  on the spline and accumulate them internally.
     ///
@@ -708,7 +708,8 @@ impl Edge {
         &mut self,
         edge_gradients: &[f64],
         layer_l1: f64,
-        sibling_entropy_terms: &[f64],
+        // sibling_entropy_terms: &[f64],
+        layer_entropy: f64,
     ) -> Result<Vec<f64>, EdgeError> {
         if self.last_t.is_empty() {
             return Err(EdgeError::BackwardBeforeForward);
@@ -730,16 +731,34 @@ impl Edge {
                 forward_signs,
             } => {
                 // assert_eq!(activations[0][0].len(), edge_gradients.len());
-                debug_assert_eq!(forward_signs.len(), self.last_t.len());
-                #[cfg(all(
-                    target_arch = "x86_64",
-                    target_feature = "sse2",
-                    target_feature = "avx512f",
-                    not(portable),
-                    not(no_simd)
-                ))]
+                // debug_assert_eq!(forward_signs.len(), self.last_t.len());
+                // #[cfg(all(
+                //     target_arch = "x86_64",
+                //     target_feature = "sse2",
+                //     target_feature = "avx512f",
+                //     not(portable),
+                //     not(no_simd)
+                // ))]
+                // {
+                //     return Edge::x86_backward(
+                //         self.last_t.as_slice(),
+                //         edge_gradients,
+                //         *degree,
+                //         control_points,
+                //         activations,
+                //         forward_signs,
+                //         layer_l1,
+                //         edge_l1,
+                //         sibling_entropy_terms,
+                //         accumulated_gradients,
+                //         knots,
+                //     );
+                // }
+
+                // #[allow(unreachable_code)]
+                // #[cfg(not(no_simd))]
                 {
-                    return Edge::x86_backward(
+                    return Edge::portable_backward(
                         self.last_t.as_slice(),
                         edge_gradients,
                         *degree,
@@ -748,27 +767,27 @@ impl Edge {
                         forward_signs,
                         layer_l1,
                         edge_l1,
-                        sibling_entropy_terms,
+                        layer_entropy,
                         accumulated_gradients,
                         knots,
                     );
                 }
 
-                // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
-                #[allow(unreachable_code)]
-                return Edge::fallback_backward(
-                    self.last_t.as_slice(),
-                    edge_gradients,
-                    *degree,
-                    control_points,
-                    activations,
-                    forward_signs,
-                    layer_l1,
-                    edge_l1,
-                    sibling_entropy_terms,
-                    accumulated_gradients,
-                    knots,
-                );
+                // // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
+                // #[allow(unreachable_code)]
+                // return Edge::fallback_backward(
+                //     self.last_t.as_slice(),
+                //     edge_gradients,
+                //     *degree,
+                //     control_points,
+                //     activations,
+                //     forward_signs,
+                //     layer_l1,
+                //     edge_l1,
+                //     sibling_entropy_terms,
+                //     accumulated_gradients,
+                //     knots,
+                // );
             }
             EdgeType::Symbolic {
                 a,
@@ -1075,7 +1094,7 @@ impl Edge {
             // the k is because each term of the sum is multiplied by k, which we've factored out to here
         }
 
-        return Ok(vec![]);
+        return Ok(d_ploss_d_input);
     }
 
     #[cfg(all(
@@ -2526,7 +2545,7 @@ mod tests {
     use super::*;
 
     const DUMMY_LAYER_L1: f64 = 1.0;
-    const DUMMY_SIBLING_L1S: [f64; 8] = [1.0; 8];
+    const DUMMY_LAYER_ENTROPY_VALUE: f64 = 0.0;
 
     #[test]
     fn test_new_spline_with_too_few_knots() {
@@ -2653,7 +2672,7 @@ mod tests {
         trace!("post forward {:#?}", spline);
         let error = vec![-0.6];
         let input_gradient = spline
-            .backward(&error, DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+            .backward(&error, DUMMY_LAYER_L1, DUMMY_LAYER_ENTROPY_VALUE)
             .unwrap();
         trace!("post backward {:#?}", spline);
         let expected_spline_drt_wrt_input = 1.2290;
@@ -2695,7 +2714,7 @@ mod tests {
         );
 
         let input_gradient = spline1
-            .backward(&vec![0.5], DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+            .backward(&vec![0.5], DUMMY_LAYER_L1, DUMMY_LAYER_ENTROPY_VALUE)
             .unwrap();
         println!("backward: {:#?}", spline1);
         let expected_input_gradient = 0.0;
@@ -2718,7 +2737,7 @@ mod tests {
         let _ = spline.forward(&t_batch);
         assert_almost_eq!(spline.l1_norm.unwrap(), 5.0, 1e-8);
         let error_batch = [1.0; BATCH_SIZE];
-        let _ = spline.backward(&error_batch, DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S); // L1 gradient doesn't care about siblings
+        let _ = spline.backward(&error_batch, DUMMY_LAYER_L1, DUMMY_LAYER_ENTROPY_VALUE); // L1 gradient doesn't care about siblings
         let actual_l1_gradients = match spline.kind {
             EdgeType::Spline { gradients, .. } => gradients
                 .iter()
@@ -2751,7 +2770,7 @@ mod tests {
         let _ = spline.forward(&t_batch);
         assert_almost_eq!(spline.l1_norm.unwrap(), 3.14, 1e-8);
         let error_batch = [1.0; BATCH_SIZE];
-        let _ = spline.backward(&error_batch, DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S); // L1 gradient doesn't care about siblings
+        let _ = spline.backward(&error_batch, DUMMY_LAYER_L1, DUMMY_LAYER_ENTROPY_VALUE); // L1 gradient doesn't care about siblings
         let actual_l1_gradients = match spline.kind {
             EdgeType::Spline { gradients, .. } => gradients
                 .iter()
@@ -2773,6 +2792,7 @@ mod tests {
     }
 
     #[test]
+    // SHOULD FAIL UNTIL I PROVIDE A REAL ENTROPY VALUE AND CALCULATE EXPECTED ENTROPY GRADIENTS
     fn test_entropy_gradient_1() {
         const BATCH_SIZE: usize = 10;
         const NUM_COEFS: usize = 11;
@@ -2785,7 +2805,7 @@ mod tests {
         let _ = spline.forward(&t_batch);
         assert_almost_eq!(spline.l1_norm.unwrap(), 5.0, 1e-8);
         let error_batch = [1.0; BATCH_SIZE];
-        let _ = spline.backward(&error_batch, 7.0, &[-0.9459101490553135; 2]); // entropy gradient *does* care about siblings
+        let _ = spline.backward(&error_batch, 7.0, 0.0); // entropy gradient *does* care about siblings
         let actual_entropy_gradients = match spline.kind {
             EdgeType::Spline { gradients, .. } => gradients
                 .iter()
@@ -2812,7 +2832,7 @@ mod tests {
         let control_points = vec![0.75, 1.0, 1.6, -1.0];
         let mut spline = Edge::new(3, control_points, knots).unwrap();
         let error = vec![-0.6];
-        let result = spline.backward(&error, DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S);
+        let result = spline.backward(&error, DUMMY_LAYER_L1, DUMMY_LAYER_ENTROPY_VALUE);
         assert!(result.is_err());
     }
 
@@ -2823,7 +2843,7 @@ mod tests {
         let mut spline = Edge::new(3, control_points, knots).unwrap();
         let _ = spline.infer(&vec![0.95]);
         let error = vec![-0.6];
-        let result = spline.backward(&error, DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S);
+        let result = spline.backward(&error, DUMMY_LAYER_L1, DUMMY_LAYER_ENTROPY_VALUE);
         assert!(result.is_err());
     }
 
@@ -3249,7 +3269,7 @@ mod tests {
                 last_t: vec![],
                 l1_norm: None,
             };
-            let result = edge.backward(&vec![0.5], 1.0, &[1.0; 4]);
+            let result = edge.backward(&vec![0.5], 1.0, DUMMY_LAYER_ENTROPY_VALUE);
             assert!(result.is_err());
         }
 
@@ -3269,7 +3289,7 @@ mod tests {
             let result = edge.forward(&vec![0.5]);
             assert_eq!(result[0], 21.0, "forward");
             let backward = edge
-                .backward(&vec![-0.5], DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+                .backward(&vec![-0.5], DUMMY_LAYER_L1, DUMMY_LAYER_ENTROPY_VALUE)
                 .unwrap();
             assert_eq!(backward[0], -4.0, "backward");
         }
@@ -3290,7 +3310,7 @@ mod tests {
             let result = edge.forward(&vec![2.0]);
             assert_eq!(82.0, result[0], "forward");
             let gradient = edge
-                .backward(&vec![0.7], DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+                .backward(&vec![0.7], DUMMY_LAYER_L1, DUMMY_LAYER_ENTROPY_VALUE)
                 .unwrap();
             let expected_gradient = 31.5; // (d/dx c(ax + b)^2 + d) * gradient
             assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
@@ -3313,7 +3333,7 @@ mod tests {
             let expected_result = 3.0 * ((1.5 * 2.0 + 2.0) as f64).powf(3.0) + 7.0;
             assert_almost_eq!(result[0], expected_result, 1e-6);
             let gradient = edge
-                .backward(&vec![0.7], DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+                .backward(&vec![0.7], DUMMY_LAYER_L1, DUMMY_LAYER_ENTROPY_VALUE)
                 .unwrap();
             let expected_gradient = 236.25; // (d/dx c(ax + b)^3 + d) * gradient
             assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
@@ -3336,7 +3356,7 @@ mod tests {
             let expected_result = 1882.0; // 3.0 * ((1.5 * 2.0 + 2.0) as f64).powf(4.0) + 7.0;
             assert_almost_eq!(result[0], expected_result, 1e-6);
             let gradient = edge
-                .backward(&vec![0.7], DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+                .backward(&vec![0.7], DUMMY_LAYER_L1, DUMMY_LAYER_ENTROPY_VALUE)
                 .unwrap();
             let expected_gradient = 1575.0; // (d/dx c(ax + b)^3 + d) * gradient
             assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
@@ -3359,7 +3379,7 @@ mod tests {
             let expected_result = 478.8291015625; //3.0 * ((1.5 * 0.5 + 2.0) as f64).powf(5.0) + 7.0;
             assert_almost_eq!(result[0], expected_result, 1e-6);
             let gradient = edge
-                .backward(&vec![0.7], DUMMY_LAYER_L1, &DUMMY_SIBLING_L1S)
+                .backward(&vec![0.7], DUMMY_LAYER_L1, DUMMY_LAYER_ENTROPY_VALUE)
                 .unwrap();
             let expected_gradient = 900.7646484375; // (d/dx c(ax + b)^3 + d) * gradient
             assert_almost_eq!(gradient[0], expected_gradient, 1e-6);
