@@ -822,93 +822,93 @@ impl Edge {
         }
     }
 
-    fn fallback_backward(
-        last_t: &[f64],
-        edge_gradients: &[f64],
-        k: usize,
-        control_points: &[f64],
-        activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
-        forward_pass_signs: &[i16],
-        layer_l1: f64,
-        edge_l1: f64,
-        sibling_entropy_terms: &[f64],
-        accumulated_gradients: &mut [Gradient],
-        knots: &[f64],
-    ) -> Result<Vec<f64>, EdgeError> {
-        trace!(
-            "Starting edge backward pass with fallback method, with argument gradients: {:?}",
-            edge_gradients
-        );
-        let mut dout_din = vec![0.0; edge_gradients.len()];
+    // fn fallback_backward(
+    //     last_t: &[f64],
+    //     edge_gradients: &[f64],
+    //     k: usize,
+    //     control_points: &[f64],
+    //     activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
+    //     forward_pass_signs: &[i16],
+    //     layer_l1: f64,
+    //     edge_l1: f64,
+    //     sibling_entropy_terms: &[f64],
+    //     accumulated_gradients: &mut [Gradient],
+    //     knots: &[f64],
+    // ) -> Result<Vec<f64>, EdgeError> {
+    //     trace!(
+    //         "Starting edge backward pass with fallback method, with argument gradients: {:?}",
+    //         edge_gradients
+    //     );
+    //     let mut dout_din = vec![0.0; edge_gradients.len()];
 
-        let dlayer_entropy_dedge_l1 = (sibling_entropy_terms.iter().sum::<f64>()
-            - (layer_l1 - edge_l1) * ((edge_l1 / layer_l1).ln() + 1.0))
-            / layer_l1.abs().max(f64::MIN_POSITIVE).powi(2);
-        trace!("dentropy_dl1: {}", dlayer_entropy_dedge_l1);
-        for i in 0..control_points.len() {
-            let basis_activations: Vec<f64> = last_t
-                .iter()
-                .map(|t| {
-                    activations[0][i]
-                        .get(&(t.to_bits()))
-                        .expect("basis activation should be cached")
-                })
-                .copied()
-                .collect();
-            // first, the prediction gradient for this control point
-            let dout_dcoef: f64 = basis_activations
-                .iter()
-                .zip(edge_gradients.iter())
-                .map(|(a, g)| a * g)
-                .sum();
-            accumulated_gradients[i].prediction_gradient += dout_dcoef;
+    //     let dlayer_entropy_dedge_l1 = (sibling_entropy_terms.iter().sum::<f64>()
+    //         - (layer_l1 - edge_l1) * ((edge_l1 / layer_l1).ln() + 1.0))
+    //         / layer_l1.abs().max(f64::MIN_POSITIVE).powi(2);
+    //     trace!("dentropy_dl1: {}", dlayer_entropy_dedge_l1);
+    //     for i in 0..control_points.len() {
+    //         let basis_activations: Vec<f64> = last_t
+    //             .iter()
+    //             .map(|t| {
+    //                 activations[0][i]
+    //                     .get(&(t.to_bits()))
+    //                     .expect("basis activation should be cached")
+    //             })
+    //             .copied()
+    //             .collect();
+    //         // first, the prediction gradient for this control point
+    //         let dout_dcoef: f64 = basis_activations
+    //             .iter()
+    //             .zip(edge_gradients.iter())
+    //             .map(|(a, g)| a * g)
+    //             .sum();
+    //         accumulated_gradients[i].prediction_gradient += dout_dcoef;
 
-            if layer_l1 != 0.0 {
-                // second, the L1 gradient for this control point
-                let dedge_l1_dcoef = basis_activations
-                    .iter()
-                    .zip(forward_pass_signs.iter())
-                    .map(|(a, o)| *a * (*o as f64))
-                    .sum::<f64>()
-                    / last_t.len() as f64;
-                accumulated_gradients[i].l1_gradient += dedge_l1_dcoef;
-                accumulated_gradients[i].entropy_gradient += if dedge_l1_dcoef == 0.0 {
-                    0.0
-                } else {
-                    dedge_l1_dcoef * dlayer_entropy_dedge_l1
-                };
+    //         if layer_l1 != 0.0 {
+    //             // second, the L1 gradient for this control point
+    //             let dedge_l1_dcoef = basis_activations
+    //                 .iter()
+    //                 .zip(forward_pass_signs.iter())
+    //                 .map(|(a, o)| *a * (*o as f64))
+    //                 .sum::<f64>()
+    //                 / last_t.len() as f64;
+    //             accumulated_gradients[i].l1_gradient += dedge_l1_dcoef;
+    //             accumulated_gradients[i].entropy_gradient += if dedge_l1_dcoef == 0.0 {
+    //                 0.0
+    //             } else {
+    //                 dedge_l1_dcoef * dlayer_entropy_dedge_l1
+    //             };
 
-                // third, the entropy gradient for this control point
-            } else {
-                trace!("layer_l1 is 0, skipping L1 and entropy gradients");
-            }
+    //             // third, the entropy gradient for this control point
+    //         } else {
+    //             trace!("layer_l1 is 0, skipping L1 and entropy gradients");
+    //         }
 
-            // last, this control point's part of the input gradient
-            let dbasis_i_dt: Vec<f64> = last_t
-                .iter()
-                .map(|t| {
-                    let left_coefficient: f64 = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
-                    let left_val = basis_cached(i, k - 1, *t, knots, activations, k);
-                    let right_coefficient: f64 = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
-                    let right_val = basis_cached(i + 1, k - 1, *t, knots, activations, k);
-                    left_coefficient * left_val - right_coefficient * right_val
-                })
-                .collect();
-            trace!("control point {i}\nbasis activations: {basis_activations:?}\ndout_dcoef: {dout_dcoef}\ndbasis_i_dt: {dbasis_i_dt:?}");
-            dout_din
-                .iter_mut()
-                .zip(dbasis_i_dt)
-                .for_each(|(d, b)| *d += control_points[i] * b);
-            trace!("updated dout_din: {:?}", dout_din);
-        }
-        trace!("accumulated gradients: {:?}", accumulated_gradients);
-        return Ok(dout_din
-            .iter()
-            .zip(edge_gradients.iter())
-            .map(|(drt, g)| drt * g)
-            .collect());
-        // input_gradient = drt_output_wrt_input * error
-    }
+    //         // last, this control point's part of the input gradient
+    //         let dbasis_i_dt: Vec<f64> = last_t
+    //             .iter()
+    //             .map(|t| {
+    //                 let left_coefficient: f64 = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
+    //                 let left_val = basis_cached(i, k - 1, *t, knots, activations, k);
+    //                 let right_coefficient: f64 = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
+    //                 let right_val = basis_cached(i + 1, k - 1, *t, knots, activations, k);
+    //                 left_coefficient * left_val - right_coefficient * right_val
+    //             })
+    //             .collect();
+    //         trace!("control point {i}\nbasis activations: {basis_activations:?}\ndout_dcoef: {dout_dcoef}\ndbasis_i_dt: {dbasis_i_dt:?}");
+    //         dout_din
+    //             .iter_mut()
+    //             .zip(dbasis_i_dt)
+    //             .for_each(|(d, b)| *d += control_points[i] * b);
+    //         trace!("updated dout_din: {:?}", dout_din);
+    //     }
+    //     trace!("accumulated gradients: {:?}", accumulated_gradients);
+    //     return Ok(dout_din
+    //         .iter()
+    //         .zip(edge_gradients.iter())
+    //         .map(|(drt, g)| drt * g)
+    //         .collect());
+    //     // input_gradient = drt_output_wrt_input * error
+    // }
 
     #[cfg(not(no_simd))]
     fn portable_backward(
@@ -938,7 +938,7 @@ impl Edge {
             0.0
         } else {
             // edge_l1 is non-negative, so if edge_l1 != 0, then layer_l1 != 0
-            (layer_entropy - edge_l1.ln()) / layer_l1
+            -(layer_entropy + edge_l1.ln()) / layer_l1
         };
         let d_layer_entropy_d_edge_l1_splat: Simd<f64, SIMD_CHUNK_SIZE> =
             Simd::splat(d_layer_entropy_d_edge_l1);
@@ -987,7 +987,7 @@ impl Edge {
                 grad.l1_gradient += l1_gradient_vec.as_array().iter().sum::<f64>(); // TODO investigate if there's a better way to do this. The compiler does some sort of shuffle sometimes
 
                 // entropy gradient
-                let entropy_gradient_vec = basis_activations_vec * d_layer_entropy_d_edge_l1_splat;
+                let entropy_gradient_vec = l1_gradient_vec * d_layer_entropy_d_edge_l1_splat;
                 grad.entropy_gradient += entropy_gradient_vec.as_array().iter().sum::<f64>(); // TODO investigate if there's a better way to do this. The compiler does some sort of shuffle sometimes
 
                 input_idx += SIMD_CHUNK_SIZE;
@@ -2235,40 +2235,40 @@ fn _x86_k_gte_1_activations(
 /// Only the initial call and the first recursion are cached. Any further recursions are not cached, and basis_no_cache is called instead.
 ///
 /// These functions need to be outside the impl block because they need to borrow the cache mutably, which would conflict with the borrow of self used to iterate over the coefficients
-fn basis_cached(
-    i: usize,
-    k: usize,
-    t: f64,
-    knots: &[f64],
-    cache: &mut [Vec<FxHashMap<u64, f64>>],
-    degree: usize,
-) -> f64 {
-    if k == 0 {
-        if knots[i] <= t && t < knots[i + 1] {
-            return 1.0;
-        } else {
-            return 0.0;
-        }
-    }
-    // only cache the resuts of the initial call and the first recursion
-    if k > degree - 2 {
-        if let Some(cached_result) = cache[degree - k][i].get(&t.to_bits()) {
-            return *cached_result;
-        }
-        let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
-        let right_coefficient = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
-        let left_val = basis_cached(i, k - 1, t, knots, cache, degree);
-        let right_val = basis_cached(i + 1, k - 1, t, knots, cache, degree);
-        let result = left_coefficient * left_val + right_coefficient * right_val;
-        cache[degree - k][i].insert(t.to_bits(), result);
-        return result;
-    }
-    let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
-    let right_coefficient = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
-    let result = left_coefficient * basis_no_cache(i, k - 1, t, knots)
-        + right_coefficient * basis_no_cache(i + 1, k - 1, t, knots);
-    return result;
-}
+// fn basis_cached(
+//     i: usize,
+//     k: usize,
+//     t: f64,
+//     knots: &[f64],
+//     cache: &mut [Vec<FxHashMap<u64, f64>>],
+//     degree: usize,
+// ) -> f64 {
+//     if k == 0 {
+//         if knots[i] <= t && t < knots[i + 1] {
+//             return 1.0;
+//         } else {
+//             return 0.0;
+//         }
+//     }
+//     // only cache the resuts of the initial call and the first recursion
+//     if k > degree - 2 {
+//         if let Some(cached_result) = cache[degree - k][i].get(&t.to_bits()) {
+//             return *cached_result;
+//         }
+//         let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
+//         let right_coefficient = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
+//         let left_val = basis_cached(i, k - 1, t, knots, cache, degree);
+//         let right_val = basis_cached(i + 1, k - 1, t, knots, cache, degree);
+//         let result = left_coefficient * left_val + right_coefficient * right_val;
+//         cache[degree - k][i].insert(t.to_bits(), result);
+//         return result;
+//     }
+//     let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
+//     let right_coefficient = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
+//     let result = left_coefficient * basis_no_cache(i, k - 1, t, knots)
+//         + right_coefficient * basis_no_cache(i + 1, k - 1, t, knots);
+//     return result;
+// }
 
 /// calculate the basis activation over all i values at once - testing compiler autovectorization
 // fn basis_autovectorize_across_i(i_vec: &[usize], k: usize, t: f64, knots: &[f64]) -> Vec<f64> {
@@ -2555,57 +2555,57 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_basis_cached() {
-        let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-        let expected_results = vec![0.0513, 0.5782, 0.3648, 0.0057];
-        let k = 3;
-        let t = 0.95;
-        for i in 0..4 {
-            let result_from_caching_function = basis_cached(
-                i,
-                k,
-                t,
-                &knots,
-                &mut vec![vec![FxHashMap::default(); knots.len() - 1]; k],
-                k,
-            );
-            let result_from_non_caching_function = basis_no_cache(i, k, t, &knots);
-            assert_eq!(
-                result_from_caching_function, result_from_non_caching_function,
-                "idx {}, caching and non-caching functions should return the same result",
-                i
-            );
-            let rounded_result = (result_from_caching_function * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
-            assert_eq!(rounded_result, expected_results[i], "i = {}", i);
-        }
-    }
+    // #[test]
+    // fn test_basis_cached() {
+    //     let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
+    //     let expected_results = vec![0.0513, 0.5782, 0.3648, 0.0057];
+    //     let k = 3;
+    //     let t = 0.95;
+    //     for i in 0..4 {
+    //         let result_from_caching_function = basis_cached(
+    //             i,
+    //             k,
+    //             t,
+    //             &knots,
+    //             &mut vec![vec![FxHashMap::default(); knots.len() - 1]; k],
+    //             k,
+    //         );
+    //         let result_from_non_caching_function = basis_no_cache(i, k, t, &knots);
+    //         assert_eq!(
+    //             result_from_caching_function, result_from_non_caching_function,
+    //             "idx {}, caching and non-caching functions should return the same result",
+    //             i
+    //         );
+    //         let rounded_result = (result_from_caching_function * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
+    //         assert_eq!(rounded_result, expected_results[i], "i = {}", i);
+    //     }
+    // }
 
-    #[test]
-    fn test_b_2() {
-        let knots = vec![-1.0, -0.7143, -0.4286, -0.1429, 0.1429, 0.4286, 0.7143, 1.0];
-        let expected_results = vec![0.0208, 0.4792, 0.4792, 0.0208];
-        let k = 3;
-        let t = 0.0;
-        for i in 0..4 {
-            let result_from_caching_function = basis_cached(
-                i,
-                k,
-                t,
-                &knots,
-                &mut vec![vec![FxHashMap::default(); knots.len() - 1]; k],
-                k,
-            );
-            let result_from_non_caching_function = basis_no_cache(i, k, t, &knots);
-            assert_eq!(
-                result_from_caching_function, result_from_non_caching_function,
-                "idx {}, caching and non-caching functions should return the same result",
-                i
-            );
-            let rounded_result = (result_from_caching_function * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
-            assert_eq!(rounded_result, expected_results[i], "i = {}", i);
-        }
-    }
+    // #[test]
+    // fn test_b_2() {
+    //     let knots = vec![-1.0, -0.7143, -0.4286, -0.1429, 0.1429, 0.4286, 0.7143, 1.0];
+    //     let expected_results = vec![0.0208, 0.4792, 0.4792, 0.0208];
+    //     let k = 3;
+    //     let t = 0.0;
+    //     for i in 0..4 {
+    //         let result_from_caching_function = basis_cached(
+    //             i,
+    //             k,
+    //             t,
+    //             &knots,
+    //             &mut vec![vec![FxHashMap::default(); knots.len() - 1]; k],
+    //             k,
+    //         );
+    //         let result_from_non_caching_function = basis_no_cache(i, k, t, &knots);
+    //         assert_eq!(
+    //             result_from_caching_function, result_from_non_caching_function,
+    //             "idx {}, caching and non-caching functions should return the same result",
+    //             i
+    //         );
+    //         let rounded_result = (result_from_caching_function * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
+    //         assert_eq!(rounded_result, expected_results[i], "i = {}", i);
+    //     }
+    // }
 
     #[test]
     fn test_big_forward() {
@@ -2726,35 +2726,66 @@ mod tests {
     }
 
     #[test]
-    fn test_l1_gradient_1() {
+    // proper calculation of entropy gradients depends on proper calculation of L1 gradients, so we test them together
+    fn test_sparsity_gradients_1() {
+        // setup
+
+        // define and create the spline
         const BATCH_SIZE: usize = 10;
         const NUM_COEFS: usize = 11;
         const DEGREE: usize = 3;
         let knots = linspace(0.0, 14.0, NUM_COEFS + DEGREE + 1);
         let control_points = vec![5.0; NUM_COEFS];
         let mut spline = Edge::new(3, control_points, knots).unwrap();
-        let t_batch = [9.4; BATCH_SIZE];
-        let _ = spline.forward(&t_batch);
-        assert_almost_eq!(spline.l1_norm.unwrap(), 5.0, 1e-8);
-        let error_batch = [1.0; BATCH_SIZE];
-        let _ = spline.backward(&error_batch, DUMMY_LAYER_L1, DUMMY_LAYER_ENTROPY_VALUE); // L1 gradient doesn't care about siblings
-        let actual_l1_gradients = match spline.kind {
-            EdgeType::Spline { gradients, .. } => gradients
-                .iter()
-                .map(|g| g.l1_gradient)
-                .collect::<Vec<f64>>(),
-            _ => unreachable!(),
-        };
+
+        // define our test inputs and expected outputs
+        let t_batch = [9.4; BATCH_SIZE]; // test inputs
+        let expected_edge_l1: f64 = 5.0; // expected edge L1
         let expected_l1_gradients = vec![
             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.036, 0.53867, 0.41467, 0.01067, 0.0,
-        ];
+        ]; // the L1 gradient in this case is just the basis function value at the input t
+        const ERROR_BATCH: [f64; BATCH_SIZE] = [1.0; BATCH_SIZE]; // the prediction gradients we'll pass to backward()
+        const LAYER_L1: f64 = 10.0; // we'll say the layer L1 is 10.0, twice the edge L1
+        const LAYER_ENTROPY: f64 = 0.693147; // we'll say the layer entropy is 0.693147, which means the layer has 1 other edge with the same L1 as this edge
+        let d_layer_entropy_d_edge_l1 = -(LAYER_ENTROPY + expected_edge_l1.ln()) / LAYER_L1; // this is the derivative of the layer entropy with respect to the edge L1, which we need to calculate the expected entropy gradients
+        println!("d_layer_entropy_d_edge_l1: {}", d_layer_entropy_d_edge_l1);
+        let expected_entropy_gradients = expected_l1_gradients
+            .iter()
+            .map(|g| (g * d_layer_entropy_d_edge_l1 * 100000.0).round() / 100000.0)
+            .collect::<Vec<f64>>(); // the expected entropy gradients are just the L1 gradients multiplied by the derivative of the layer entropy with respect to the edge L1. dS/dCi = dS/dL1 * dL1/dCi
+
+        // run the forward pass and check the L1 norm
+        let _ = spline.forward(&t_batch);
+        assert_almost_eq!(spline.l1_norm.unwrap(), expected_edge_l1, 1e-8);
+
+        // run the backward pass and check the L1 and entropy gradients
+        let _ = spline.backward(&ERROR_BATCH, LAYER_L1, LAYER_ENTROPY); // L1 gradient doesn't care about siblings
+
+        let (actual_l1_gradients, actual_entropy_gradients): (Vec<f64>, Vec<f64>) =
+            match &spline.kind {
+                EdgeType::Spline { gradients, .. } => gradients
+                    .iter()
+                    .map(|g| (g.l1_gradient, g.entropy_gradient))
+                    .collect(),
+                _ => unreachable!(),
+            };
+
         let rounded_l1_gradients: Vec<f64> = actual_l1_gradients
             .iter()
             .map(|g| (g * 100000.0).round() / 100000.0)
             .collect();
         assert_eq!(
             rounded_l1_gradients, expected_l1_gradients,
-            "actual != expected"
+            "actual L1 gradients != expected L1 gradients"
+        );
+
+        let rounded_entropy_gradients: Vec<f64> = actual_entropy_gradients
+            .iter()
+            .map(|g| (g * 100000.0).round() / 100000.0)
+            .collect();
+        assert_eq!(
+            rounded_entropy_gradients, expected_entropy_gradients,
+            "actual entropy gradients != expected entropy gradients"
         );
     }
 
@@ -2787,41 +2818,6 @@ mod tests {
             .collect();
         assert_eq!(
             rounded_l1_gradients, expected_l1_gradients,
-            "actual != expected"
-        );
-    }
-
-    #[test]
-    // SHOULD FAIL UNTIL I PROVIDE A REAL ENTROPY VALUE AND CALCULATE EXPECTED ENTROPY GRADIENTS
-    fn test_entropy_gradient_1() {
-        const BATCH_SIZE: usize = 10;
-        const NUM_COEFS: usize = 11;
-        const DEGREE: usize = 3;
-        const ROUNDING: f64 = 100000.0;
-        let knots = linspace(0.0, 14.0, NUM_COEFS + DEGREE + 1);
-        let control_points = vec![5.0; NUM_COEFS];
-        let mut spline = Edge::new(3, control_points, knots).unwrap();
-        let t_batch = [9.4; BATCH_SIZE];
-        let _ = spline.forward(&t_batch);
-        assert_almost_eq!(spline.l1_norm.unwrap(), 5.0, 1e-8);
-        let error_batch = [1.0; BATCH_SIZE];
-        let _ = spline.backward(&error_batch, 7.0, 0.0); // entropy gradient *does* care about siblings
-        let actual_entropy_gradients = match spline.kind {
-            EdgeType::Spline { gradients, .. } => gradients
-                .iter()
-                .map(|g| g.entropy_gradient)
-                .collect::<Vec<f64>>(),
-            _ => unreachable!(),
-        };
-        let rounded_entropy_gradients: Vec<f64> = actual_entropy_gradients
-            .iter()
-            .map(|g| (g * ROUNDING).round() / ROUNDING)
-            .collect();
-        let expected_entropy_gradients: Vec<f64> = vec![
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.00236, -0.03539, -0.02724, -0.0007, 0.0,
-        ];
-        assert_eq!(
-            rounded_entropy_gradients, expected_entropy_gradients,
             "actual != expected"
         );
     }
