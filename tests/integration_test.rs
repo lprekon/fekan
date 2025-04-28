@@ -497,7 +497,7 @@ mod regression {
         fn true_function(x: f64) -> Vec<f64> {
             vec![(x.powi(2)).sin(), x.exp()]
         }
-        let input_range = 0.0..2.5;
+        let input_range = 0.0..6.0;
         let rng = &mut thread_rng();
         let training_data: Vec<Sample> = (0..1000)
             .map(|_| {
@@ -511,14 +511,14 @@ mod regression {
                     labels[1] = 0.0;
                     label_mask[1] = false;
                 }
-                Sample::new_multiregression_sample(vec![x], labels, vec![true, false])
+                Sample::new_multiregression_sample(vec![x], labels, label_mask)
             })
             .collect();
         let validation_data: Vec<Sample> = (0..100)
             .map(|_| {
                 let x = rng.gen_range(input_range.clone());
                 let labels = true_function(x);
-                Sample::new_multiregression_sample(vec![x], labels, vec![true, false])
+                Sample::new_multiregression_sample(vec![x], labels, vec![true, true])
             })
             .collect();
         let mut untrained_model = Kan::new(&KanOptions {
