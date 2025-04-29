@@ -243,7 +243,7 @@ impl Edge {
                 activations,
                 forward_signs,
                 ..
-            } => Edge::portable_forward(
+            } => Edge::spline_forward(
                 &mut self.l1_norm,
                 inputs,
                 control_points,
@@ -261,7 +261,7 @@ impl Edge {
         }
     }
 
-    fn portable_forward(
+    fn spline_forward(
         l1_norm: &mut Option<f64>,
         inputs: &[f64],
         control_points: &[f64],
@@ -273,7 +273,6 @@ impl Edge {
         trace!(
             "Starting portable forward pass. \nInputs: {inputs:?}\nKnots: {knots:?}\nControl Points: {control_points:?}",
         );
-        use std::simd::prelude::*;
         assert!(control_points.len() + 1 < knots.len() - 1);
         let mut outputs = Vec::with_capacity(inputs.len());
         let activations_size = knots.len() - 1;
@@ -281,90 +280,11 @@ impl Edge {
 
         for t in inputs.iter() {
             trace!("Starting forward pass for t={}", t);
-            let t_splat = Simd::splat(*t);
-            // first, deal with k=0
-            let mut i = 0;
-
-            while i + SIMD_CHUNK_SIZE < activations_size {
-                let knots_i: Simd<f64, SIMD_CHUNK_SIZE> = Simd::from_slice(&knots[i..]);
-                let knots_i1: Simd<f64, SIMD_CHUNK_SIZE> = Simd::from_slice(&knots[i + 1..]);
-                let left_mask = t_splat.simd_ge(knots_i);
-                let right_mask = t_splat.simd_lt(knots_i1);
-                let full_mask = left_mask & right_mask;
-                let activation_vec = full_mask.select(Simd::splat(1.0), Simd::splat(0.0));
-                activation_vec.copy_to_slice(&mut basis_activations[i..]);
-
-                i += SIMD_CHUNK_SIZE;
-            }
-            trace!(
-                "Basis Activations after k=0 SIMD step: {:?}",
-                basis_activations
-            );
-            while i < activations_size {
-                let activation = if *t >= knots[i] && *t < knots[i + 1] {
-                    1.0
-                } else {
-                    0.0
-                };
-                basis_activations[i] = activation;
-                i += 1;
-            }
-            trace!(
-                "Basis Activations after k=0 scalar step: {:?}",
-                basis_activations
-            );
+            k0_activations(knots, activations_size, &mut basis_activations, t);
 
             // now, calculate k=1,2...,degree
             for k in 1..=degree {
-                let mut i = 0;
-                let max_i_for_k = if activations_size > k {
-                    activations_size - k
-                } else {
-                    0
-                };
-                trace!("max i for k={k}: {max_i_for_k}");
-                while i + SIMD_CHUNK_SIZE <= max_i_for_k {
-                    let left_val_vec = Simd::from_slice(&basis_activations[i..]);
-                    let right_val_vec = Simd::from_slice(&basis_activations[i + 1..]);
-                    let knots_i = Simd::from_slice(&knots[i..]);
-                    let knots_i1 = Simd::from_slice(&knots[i + 1..]);
-                    let knots_ik = Simd::from_slice(&knots[i + k..]);
-                    let knots_ik1 = Simd::from_slice(&knots[i + k + 1..]);
-
-                    let left_numerator = t_splat - knots_i;
-                    let left_denominator = knots_ik - knots_i;
-                    let left_coefficient = left_numerator / left_denominator;
-                    let left_activations = left_coefficient * left_val_vec;
-
-                    let right_numerator = knots_ik1 - t_splat;
-                    let right_denominator = knots_ik1 - knots_i1;
-                    let right_coefficient = right_numerator / right_denominator;
-                    let right_activations = right_coefficient * right_val_vec;
-
-                    let new_activations = left_activations + right_activations;
-                    new_activations.copy_to_slice(&mut basis_activations[i..]);
-
-                    i += SIMD_CHUNK_SIZE;
-                }
-                trace!("Basis activations after k={k} SIMD step: {basis_activations:?}");
-
-                while i < activations_size - k {
-                    let left_coefficient = (*t - knots[i]) / (knots[i + k] - knots[i]);
-                    let left_val = basis_activations[i] * left_coefficient;
-
-                    let right_coefficient =
-                        (knots[i + k + 1] - *t) / (knots[i + k + 1] - knots[i + 1]);
-                    let right_val = basis_activations[i + 1] * right_coefficient;
-
-                    basis_activations[i] = left_val + right_val;
-
-                    i += 1;
-                }
-                trace!(
-                    "Basis Activations after k={} scalar step: {:?}",
-                    k,
-                    basis_activations
-                );
+                k_gte_1_activations(knots, activations_size, &mut basis_activations, t, k);
 
                 if k >= degree - 1 {
                     // we need to cache these values for backprop
@@ -397,7 +317,7 @@ impl Edge {
                 control_points,
                 knots,
                 ..
-            } => Edge::fallback_infer(inputs, control_points, *degree, knots),
+            } => Edge::spline_infer(inputs, control_points, *degree, knots),
 
             EdgeType::Symbolic {
                 a,
@@ -431,20 +351,33 @@ impl Edge {
         };
     }
 
-    fn fallback_infer(
+    fn spline_infer(
         inputs: &[f64],
         control_points: &[f64],
         degree: usize,
         knots: &[f64],
     ) -> Vec<f64> {
+        trace!(
+            "Starting inference pass. \nInputs: {inputs:?}\nKnots: {knots:?}\nControl Points: {control_points:?}",
+        );
+        assert!(control_points.len() + 1 < knots.len() - 1);
         let mut outputs = Vec::with_capacity(inputs.len());
+        let activations_size = knots.len() - 1;
+        let mut basis_activations: Vec<f64> = vec![0.0; activations_size];
+
         for t in inputs.iter() {
-            let mut sum = 0.0;
-            for (idx, coef) in control_points.iter().enumerate() {
-                let basis_activation = basis_no_cache(idx, degree, *t, &knots);
-                sum += *coef * basis_activation;
+            trace!("Starting forward pass for t={}", t);
+            k0_activations(knots, activations_size, &mut basis_activations, t);
+
+            // now, calculate k=1,2...,degree
+            for k in 1..=degree {
+                k_gte_1_activations(knots, activations_size, &mut basis_activations, t, k);
             }
-            outputs.push(sum);
+            let spline_activation_for_t = basis_activations
+                .iter()
+                .zip(control_points.iter())
+                .fold(0.0, |acc, (a, c)| acc + a * c);
+            outputs.push(spline_activation_for_t);
         }
         outputs
     }
@@ -1429,6 +1362,111 @@ impl Edge {
             _ => (), // symbolic edges don't have activations
         }
     }
+}
+
+// calculates the basis activations for some k >= 1, assuming the activations for k-1 are already in basis_activations. New activations are written into basis_activations, overwritting the old data
+#[inline]
+fn k_gte_1_activations(
+    knots: &[f64],
+    activations_size: usize,
+    basis_activations: &mut Vec<f64>,
+    t: &f64,
+    k: usize,
+) {
+    use std::simd::prelude::*;
+    let t_splat: Simd<f64, SIMD_CHUNK_SIZE> = Simd::splat(*t);
+    let mut i = 0;
+    let max_i_for_k = if activations_size > k {
+        activations_size - k
+    } else {
+        0
+    };
+    trace!("max i for k={k}: {max_i_for_k}");
+    while i + SIMD_CHUNK_SIZE <= max_i_for_k {
+        let left_val_vec = Simd::from_slice(&basis_activations[i..]);
+        let right_val_vec = Simd::from_slice(&basis_activations[i + 1..]);
+        let knots_i = Simd::from_slice(&knots[i..]);
+        let knots_i1 = Simd::from_slice(&knots[i + 1..]);
+        let knots_ik = Simd::from_slice(&knots[i + k..]);
+        let knots_ik1 = Simd::from_slice(&knots[i + k + 1..]);
+
+        let left_numerator = t_splat - knots_i;
+        let left_denominator = knots_ik - knots_i;
+        let left_coefficient = left_numerator / left_denominator;
+        let left_activations = left_coefficient * left_val_vec;
+
+        let right_numerator = knots_ik1 - t_splat;
+        let right_denominator = knots_ik1 - knots_i1;
+        let right_coefficient = right_numerator / right_denominator;
+        let right_activations = right_coefficient * right_val_vec;
+
+        let new_activations = left_activations + right_activations;
+        new_activations.copy_to_slice(&mut basis_activations[i..]);
+
+        i += SIMD_CHUNK_SIZE;
+    }
+    trace!("Basis activations after k={k} SIMD step: {basis_activations:?}");
+
+    while i < activations_size - k {
+        let left_coefficient = (*t - knots[i]) / (knots[i + k] - knots[i]);
+        let left_val = basis_activations[i] * left_coefficient;
+
+        let right_coefficient = (knots[i + k + 1] - *t) / (knots[i + k + 1] - knots[i + 1]);
+        let right_val = basis_activations[i + 1] * right_coefficient;
+
+        basis_activations[i] = left_val + right_val;
+
+        i += 1;
+    }
+    trace!(
+        "Basis Activations after k={} scalar step: {:?}",
+        k,
+        basis_activations
+    );
+}
+
+#[inline]
+/// calculates the k=0 activations for the given knots and t value, and writes them into the passed basis_activations vector
+fn k0_activations(
+    knots: &[f64],
+    activations_size: usize,
+    basis_activations: &mut Vec<f64>,
+    t: &f64,
+) {
+    use std::simd::prelude::*;
+    let t_splat = Simd::splat(*t);
+    // first, deal with k=0
+    let mut i = 0;
+
+    while i + SIMD_CHUNK_SIZE < activations_size {
+        let knots_i: Simd<f64, SIMD_CHUNK_SIZE> = Simd::from_slice(&knots[i..]);
+        let knots_i1: Simd<f64, SIMD_CHUNK_SIZE> = Simd::from_slice(&knots[i + 1..]);
+        let left_mask = t_splat.simd_ge(knots_i);
+        let right_mask = t_splat.simd_lt(knots_i1);
+        let full_mask = left_mask & right_mask;
+        let activation_vec = full_mask.select(Simd::splat(1.0), Simd::splat(0.0));
+        activation_vec.copy_to_slice(&mut basis_activations[i..]);
+
+        i += SIMD_CHUNK_SIZE;
+    }
+    trace!(
+        "Basis Activations after k=0 SIMD step: {:?}",
+        basis_activations
+    );
+    while i < activations_size {
+        let activation = if *t >= knots[i] && *t < knots[i + 1] {
+            1.0
+        } else {
+            0.0
+        };
+        basis_activations[i] = activation;
+        i += 1;
+    }
+
+    trace!(
+        "Basis Activations after k=0 scalar step: {:?}",
+        basis_activations
+    );
 }
 
 /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
