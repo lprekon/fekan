@@ -50,7 +50,7 @@ enum EdgeType {
         /// dim0: degree (idx 0 = self.degree, idx 1 = self.degree - 1, etc.), dim1: control point index, dim2: t value
         activations: Vec<Vec<FxHashMap<u64, f64>>>,
         /// tracks the sign of the forward pass for each input in last_t. Used when calculating the L1 gradient in the backward pass
-        forward_signs: Vec<i16>, // could be 8-bit, but this makes the x86 SIMD code easier
+        forward_signs: Vec<i8>,
         /// accumulated gradients for each control point
         gradients: Vec<Gradient>,
     },
@@ -187,6 +187,8 @@ enum SymbolicFunction {
     // InverseCubeSqrt,
 }
 
+const SIMD_CHUNK_SIZE: usize = 8; // controls the size of the SIMD window for forward and backward pass calculations
+
 impl Edge {
     /// construct a new spline from the given degree, control points, and knots
     ///
@@ -241,143 +243,24 @@ impl Edge {
                 activations,
                 forward_signs,
                 ..
-            } => {
-                // #[cfg(all(
-                //     target_arch = "x86_64",
-                //     target_feature = "sse2",
-                //     target_feature = "avx512f",
-                //     not(portable),
-                //     not(no_simd)
-                // ))]
-                // {
-                //     return Edge::x86_forward(
-                //         &mut self.l1_norm,
-                //         inputs,
-                //         control_points,
-                //         *degree,
-                //         knots,
-                //         activations,
-                //         forward_signs,
-                //     );
-                // }
-
-                // #[allow(unreachable_code)]
-                // #[cfg(not(no_simd))]
-                {
-                    return Edge::portable_forward(
-                        &mut self.l1_norm,
-                        inputs,
-                        control_points,
-                        *degree,
-                        knots,
-                        activations,
-                        forward_signs,
-                    );
-                }
-
-                #[allow(unreachable_code)]
-                {
-                    return Edge::fallback_forward(
-                        &mut self.l1_norm,
-                        inputs,
-                        control_points,
-                        *degree,
-                        knots,
-                        activations,
-                        forward_signs,
-                    );
-                }
-            }
+            } => Edge::portable_forward(
+                &mut self.l1_norm,
+                inputs,
+                control_points,
+                *degree,
+                knots,
+                activations,
+                forward_signs,
+            ),
             _ => {
                 let outputs = self.infer(inputs); // symbolic edges don't cache activations, so they have the same forward and infer implementations
                 self.l1_norm =
-                    Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
-                return outputs;
+                    Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64); // L1 norm is usually calculated in forward(), but since we're not caching activations we're skipping forward(), so we have to do it here
+                outputs
             }
-        };
-    }
-
-    fn fallback_forward(
-        l1_norm: &mut Option<f64>,
-        inputs: &[f64],
-        control_points: &[f64],
-        degree: usize,
-        knots: &[f64],
-        cache: &mut [Vec<FxHashMap<u64, f64>>],
-        forward_pass_signs: &mut Vec<i16>,
-    ) -> Vec<f64> {
-        let mut outputs = Vec::with_capacity(inputs.len());
-        let activations_size = knots.len() - 1;
-        let mut basis_activations: Vec<f64> = vec![0.0; activations_size];
-
-        for t in inputs.iter() {
-            trace!("Starting forward pass for t={}", t);
-            // first, deal with k=0
-            let mut i = 0;
-            while i < activations_size {
-                let activation = if *t >= knots[i] && *t < knots[i + 1] {
-                    1.0
-                } else {
-                    0.0
-                };
-                basis_activations[i] = activation;
-                i += 1;
-            }
-            trace!(
-                "Basis Activations after k=0 scalar step: {:?}",
-                basis_activations
-            );
-
-            // now, calculate k=1,2...,degree
-            for k in 1..=degree {
-                let mut i = 0;
-                let max_i_for_k = if activations_size > k {
-                    activations_size - k
-                } else {
-                    0
-                };
-                trace!("max i for k={k}: {max_i_for_k}");
-
-                while i < activations_size - k {
-                    let left_coefficient = (*t - knots[i]) / (knots[i + k] - knots[i]);
-                    let left_val = basis_activations[i] * left_coefficient;
-
-                    let right_coefficient =
-                        (knots[i + k + 1] - *t) / (knots[i + k + 1] - knots[i + 1]);
-                    let right_val = basis_activations[i + 1] * right_coefficient;
-
-                    basis_activations[i] = left_val + right_val;
-
-                    i += 1;
-                }
-                trace!(
-                    "Basis Activations after k={} scalar step: {:?}",
-                    k,
-                    basis_activations
-                );
-
-                if k >= degree - 1 {
-                    // we need to cache these values for backprop
-                    for i in 0..(control_points.len() + (degree - k)) {
-                        let outer_cache_line = &mut cache[degree - k];
-                        let inner_cache_line = &mut outer_cache_line[i];
-                        let activation = basis_activations[i];
-                        inner_cache_line.insert(t.to_bits(), activation);
-                    }
-                }
-            }
-            let spline_activation_for_t = basis_activations
-                .iter()
-                .zip(control_points.iter())
-                .fold(0.0, |acc, (a, c)| acc + a * c);
-            outputs.push(spline_activation_for_t);
-            forward_pass_signs.push(spline_activation_for_t.signum() as i16);
         }
-        *l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
-        outputs
     }
 
-    #[cfg(not(no_simd))]
     fn portable_forward(
         l1_norm: &mut Option<f64>,
         inputs: &[f64],
@@ -385,7 +268,7 @@ impl Edge {
         degree: usize,
         knots: &[f64],
         cache: &mut [Vec<FxHashMap<u64, f64>>],
-        forward_pass_signs: &mut Vec<i16>,
+        forward_pass_signs: &mut Vec<i8>,
     ) -> Vec<f64> {
         trace!(
             "Starting portable forward pass. \nInputs: {inputs:?}\nKnots: {knots:?}\nControl Points: {control_points:?}",
@@ -498,79 +381,11 @@ impl Edge {
                 .zip(control_points.iter())
                 .fold(0.0, |acc, (a, c)| acc + a * c);
             outputs.push(spline_activation_for_t);
-            forward_pass_signs.push(spline_activation_for_t.signum() as i16);
+            forward_pass_signs.push(spline_activation_for_t.signum() as i8);
         }
         *l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
         outputs
     }
-
-    // #[cfg(all(
-    //     target_arch = "x86_64",
-    //     target_feature = "sse2",
-    //     target_feature = "avx512f",
-    //     not(portable),
-    //     not(no_simd)
-    // ))]
-    // fn x86_forward(
-    //     l1_norm: &mut Option<f64>,
-    //     inputs: &[f64],
-    //     control_points: &[f64],
-    //     degree: usize,
-    //     knots: &[f64],
-    //     cache: &mut [Vec<FxHashMap<u64, f64>>],
-    //     forward_pass_signs: &mut Vec<i16>,
-    // ) -> Vec<f64> {
-    //     use std::arch::x86_64::*;
-    //     trace!(
-    //         "Starting x86 forward pass with\ncontrol_points: {control_points:?}\nknots: {knots:?}"
-    //     );
-
-    //     let mut outputs: Vec<f64> = Vec::with_capacity(inputs.len());
-    //     debug_assert!(control_points.len() + degree + 1 <= knots.len());
-    //     for t in inputs.iter() {
-    //         trace!("Starting forward pass for t={}", t);
-    //         let activations_size = knots.len() - 1;
-    //         let mut basis_activations: Vec<f64> = Vec::with_capacity(activations_size);
-    //         // start with k=0
-    //         let t_splat = unsafe { _mm512_set1_pd(*t) };
-    //         _x86_k0_activations(activations_size, knots, t_splat, &mut basis_activations, t);
-
-    //         trace!("Activations after scalar step: {:?}", basis_activations);
-    //         // now that we have the k=0 activations, we can calculate the rest
-    //         for k in 1..=degree {
-    //             _x86_k_gte_1_activations(
-    //                 k,
-    //                 activations_size,
-    //                 &mut basis_activations,
-    //                 knots,
-    //                 t_splat,
-    //                 t,
-    //             );
-    //             if k == degree - 1 {
-    //                 // we need to cache these activations for the backward pass
-    //                 for i in 0..control_points.len() + 1 {
-    //                     cache[1][i].insert(t.to_bits(), basis_activations[i]);
-    //                 }
-    //             }
-    //         }
-    //         // have to cache basis activations for backprop
-    //         for i in 0..control_points.len() {
-    //             cache[0][i].insert(t.to_bits(), basis_activations[i]);
-    //         }
-    //         let output = control_points
-    //             .iter()
-    //             .zip(basis_activations.iter())
-    //             .map(|(c, a)| {
-    //                 trace!("multiplying control point {} by activation {}", c, a);
-    //                 c * a
-    //             })
-    //             .sum();
-    //         outputs.push(output);
-    //         forward_pass_signs.push(output.signum() as i16);
-    //     }
-    //     *l1_norm = Some(outputs.iter().map(|o| o.abs()).sum::<f64>() / outputs.len() as f64);
-    //     outputs
-    // }
 
     /// comput the point on the spline at given parameter `t`
     ///
@@ -582,23 +397,8 @@ impl Edge {
                 control_points,
                 knots,
                 ..
-            } => {
-                // #[cfg(all(
-                //     target_arch = "x86_64",
-                //     target_feature = "sse2",
-                //     target_feature = "avx512f",
-                //     not(portable),
-                //     not(no_simd)
-                // ))]
-                // {
-                //     return Edge::x86_infer(inputs, control_points, *degree, knots);
-                // }
+            } => Edge::fallback_infer(inputs, control_points, *degree, knots),
 
-                #[allow(unreachable_code)]
-                {
-                    return Edge::fallback_infer(inputs, control_points, *degree, knots);
-                }
-            }
             EdgeType::Symbolic {
                 a,
                 b,
@@ -649,53 +449,6 @@ impl Edge {
         outputs
     }
 
-    // #[cfg(all(
-    //     target_arch = "x86_64",
-    //     target_feature = "sse2",
-    //     target_feature = "avx512f",
-    //     not(portable),
-    //     not(no_simd)
-    // ))]
-    // fn x86_infer(inputs: &[f64], control_points: &[f64], degree: usize, knots: &[f64]) -> Vec<f64> {
-    //     use std::arch::x86_64::*;
-    //     trace!(
-    //         "Starting x86 inference pass with\ncontrol_points: {control_points:?}\nknots: {knots:?}"
-    //     );
-    //     let mut outputs: Vec<f64> = Vec::with_capacity(inputs.len());
-    //     debug_assert!(control_points.len() + degree + 1 <= knots.len());
-    //     for t in inputs.iter() {
-    //         trace!("Starting inference pass for t={}", t);
-    //         let activations_size = knots.len() - 1;
-    //         let mut basis_activations: Vec<f64> = Vec::with_capacity(activations_size);
-    //         // start with k=0
-    //         let t_splat = unsafe { _mm512_set1_pd(*t) };
-    //         _x86_k0_activations(activations_size, knots, t_splat, &mut basis_activations, t);
-
-    //         trace!("Activations after scalar step: {:?}", basis_activations);
-    //         // now that we have the k=0 activations, we can calculate the rest
-    //         for k in 1..=degree {
-    //             _x86_k_gte_1_activations(
-    //                 k,
-    //                 activations_size,
-    //                 &mut basis_activations,
-    //                 knots,
-    //                 t_splat,
-    //                 t,
-    //             );
-    //         }
-    //         let output = control_points
-    //             .iter()
-    //             .zip(basis_activations.iter())
-    //             .map(|(c, a)| {
-    //                 trace!("multiplying control point {} by activation {}", c, a);
-    //                 c * a
-    //             })
-    //             .sum();
-    //         outputs.push(output);
-    //     }
-    //     outputs
-    // }
-
     /// compute the gradients for each control point  on the spline and accumulate them internally.
     ///
     /// returns the gradient of the input used in the forward pass,to be accumulated by the caller and passed back to the pervious layer as its error
@@ -729,66 +482,20 @@ impl Edge {
                 activations,
                 gradients: accumulated_gradients,
                 forward_signs,
-            } => {
-                // assert_eq!(activations[0][0].len(), edge_gradients.len());
-                // debug_assert_eq!(forward_signs.len(), self.last_t.len());
-                // #[cfg(all(
-                //     target_arch = "x86_64",
-                //     target_feature = "sse2",
-                //     target_feature = "avx512f",
-                //     not(portable),
-                //     not(no_simd)
-                // ))]
-                // {
-                //     return Edge::x86_backward(
-                //         self.last_t.as_slice(),
-                //         edge_gradients,
-                //         *degree,
-                //         control_points,
-                //         activations,
-                //         forward_signs,
-                //         layer_l1,
-                //         edge_l1,
-                //         sibling_entropy_terms,
-                //         accumulated_gradients,
-                //         knots,
-                //     );
-                // }
+            } => Edge::portable_backward(
+                self.last_t.as_slice(),
+                edge_gradients,
+                *degree,
+                control_points,
+                activations,
+                forward_signs,
+                layer_l1,
+                edge_l1,
+                layer_entropy,
+                accumulated_gradients,
+                knots,
+            ),
 
-                // #[allow(unreachable_code)]
-                // #[cfg(not(no_simd))]
-                {
-                    return Edge::portable_backward(
-                        self.last_t.as_slice(),
-                        edge_gradients,
-                        *degree,
-                        control_points,
-                        activations,
-                        forward_signs,
-                        layer_l1,
-                        edge_l1,
-                        layer_entropy,
-                        accumulated_gradients,
-                        knots,
-                    );
-                }
-
-                // // drt_output_wrt_input = sum_i(dB_ik(t) * C_i)
-                // #[allow(unreachable_code)]
-                // return Edge::fallback_backward(
-                //     self.last_t.as_slice(),
-                //     edge_gradients,
-                //     *degree,
-                //     control_points,
-                //     activations,
-                //     forward_signs,
-                //     layer_l1,
-                //     edge_l1,
-                //     sibling_entropy_terms,
-                //     accumulated_gradients,
-                //     knots,
-                // );
-            }
             EdgeType::Symbolic {
                 a,
                 b,
@@ -822,102 +529,13 @@ impl Edge {
         }
     }
 
-    // fn fallback_backward(
-    //     last_t: &[f64],
-    //     edge_gradients: &[f64],
-    //     k: usize,
-    //     control_points: &[f64],
-    //     activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
-    //     forward_pass_signs: &[i16],
-    //     layer_l1: f64,
-    //     edge_l1: f64,
-    //     sibling_entropy_terms: &[f64],
-    //     accumulated_gradients: &mut [Gradient],
-    //     knots: &[f64],
-    // ) -> Result<Vec<f64>, EdgeError> {
-    //     trace!(
-    //         "Starting edge backward pass with fallback method, with argument gradients: {:?}",
-    //         edge_gradients
-    //     );
-    //     let mut dout_din = vec![0.0; edge_gradients.len()];
-
-    //     let dlayer_entropy_dedge_l1 = (sibling_entropy_terms.iter().sum::<f64>()
-    //         - (layer_l1 - edge_l1) * ((edge_l1 / layer_l1).ln() + 1.0))
-    //         / layer_l1.abs().max(f64::MIN_POSITIVE).powi(2);
-    //     trace!("dentropy_dl1: {}", dlayer_entropy_dedge_l1);
-    //     for i in 0..control_points.len() {
-    //         let basis_activations: Vec<f64> = last_t
-    //             .iter()
-    //             .map(|t| {
-    //                 activations[0][i]
-    //                     .get(&(t.to_bits()))
-    //                     .expect("basis activation should be cached")
-    //             })
-    //             .copied()
-    //             .collect();
-    //         // first, the prediction gradient for this control point
-    //         let dout_dcoef: f64 = basis_activations
-    //             .iter()
-    //             .zip(edge_gradients.iter())
-    //             .map(|(a, g)| a * g)
-    //             .sum();
-    //         accumulated_gradients[i].prediction_gradient += dout_dcoef;
-
-    //         if layer_l1 != 0.0 {
-    //             // second, the L1 gradient for this control point
-    //             let dedge_l1_dcoef = basis_activations
-    //                 .iter()
-    //                 .zip(forward_pass_signs.iter())
-    //                 .map(|(a, o)| *a * (*o as f64))
-    //                 .sum::<f64>()
-    //                 / last_t.len() as f64;
-    //             accumulated_gradients[i].l1_gradient += dedge_l1_dcoef;
-    //             accumulated_gradients[i].entropy_gradient += if dedge_l1_dcoef == 0.0 {
-    //                 0.0
-    //             } else {
-    //                 dedge_l1_dcoef * dlayer_entropy_dedge_l1
-    //             };
-
-    //             // third, the entropy gradient for this control point
-    //         } else {
-    //             trace!("layer_l1 is 0, skipping L1 and entropy gradients");
-    //         }
-
-    //         // last, this control point's part of the input gradient
-    //         let dbasis_i_dt: Vec<f64> = last_t
-    //             .iter()
-    //             .map(|t| {
-    //                 let left_coefficient: f64 = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
-    //                 let left_val = basis_cached(i, k - 1, *t, knots, activations, k);
-    //                 let right_coefficient: f64 = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
-    //                 let right_val = basis_cached(i + 1, k - 1, *t, knots, activations, k);
-    //                 left_coefficient * left_val - right_coefficient * right_val
-    //             })
-    //             .collect();
-    //         trace!("control point {i}\nbasis activations: {basis_activations:?}\ndout_dcoef: {dout_dcoef}\ndbasis_i_dt: {dbasis_i_dt:?}");
-    //         dout_din
-    //             .iter_mut()
-    //             .zip(dbasis_i_dt)
-    //             .for_each(|(d, b)| *d += control_points[i] * b);
-    //         trace!("updated dout_din: {:?}", dout_din);
-    //     }
-    //     trace!("accumulated gradients: {:?}", accumulated_gradients);
-    //     return Ok(dout_din
-    //         .iter()
-    //         .zip(edge_gradients.iter())
-    //         .map(|(drt, g)| drt * g)
-    //         .collect());
-    //     // input_gradient = drt_output_wrt_input * error
-    // }
-
-    #[cfg(not(no_simd))]
     fn portable_backward(
         last_t: &[f64],
         edge_gradients: &[f64],
         k: usize,
         control_points: &[f64],
         activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
-        forward_pass_signs: &[i16],
+        forward_pass_signs: &[i8],
         layer_l1: f64,
         edge_l1: f64,
         layer_entropy: f64,
@@ -1095,238 +713,6 @@ impl Edge {
         }
 
         return Ok(d_ploss_d_input);
-    }
-
-    #[cfg(all(
-        target_arch = "x86_64",
-        target_feature = "sse2",
-        target_feature = "avx512f",
-        not(portable),
-        not(no_simd)
-    ))]
-    fn x86_backward(
-        last_t: &[f64],
-        dloss_dout: &[f64],
-        k: usize,
-        control_points: &[f64],
-        activations: &mut Vec<Vec<std::collections::HashMap<u64, f64, rustc_hash::FxBuildHasher>>>,
-        forward_pass_signs: &[i16],
-        layer_l1: f64,
-        edge_l1: f64,
-        sibling_entropy_terms: &[f64],
-        accumulated_gradients: &mut [Gradient],
-        knots: &[f64],
-    ) -> Result<Vec<f64>, EdgeError> {
-        use std::arch::x86_64::*;
-        trace!("Starting x86 backward pass");
-        let mut dout_din = vec![0.0; dloss_dout.len()];
-
-        debug_assert!(!(layer_l1 == 0.0 && sibling_entropy_terms.iter().any(|s| *s != 0.0)));
-        let mut dlayer_entropy_dedge_l1 = sibling_entropy_terms.iter().sum::<f64>();
-        trace!(
-            "dlayer_entropy_dedge_l1 stage 1: {}",
-            dlayer_entropy_dedge_l1
-        );
-        debug_assert!(!(layer_l1 == 0.0 && edge_l1 != 0.0));
-        /*  Since entropy is a function of L1, which can only be positive, entropy doesn't really have a derivative at 0.
-            But that's ok - the whole point is to push uneeded edges toward zero.
-            If the L1 is zero, then the edge is exactly where we want it to be - entropically speaking - and we can just clamp the gradient to zero, since there's no "work" to do
-        */
-        dlayer_entropy_dedge_l1 -= if edge_l1 == 0.0 {
-            0.0
-        } else {
-            (layer_l1 - edge_l1) * ((edge_l1 / layer_l1).ln() + 1.0)
-        };
-        trace!(
-            "dlayer_entropy_dedge_l1 stage 2: {}",
-            dlayer_entropy_dedge_l1
-        );
-        trace!("layer_l1: {}\nedge_l1: {}", layer_l1, edge_l1);
-        dlayer_entropy_dedge_l1 /= layer_l1.abs().max(f64::MIN_POSITIVE).powi(2);
-        trace!(
-            "dlayer_entropy_dedge_l1 stage 3: {}",
-            dlayer_entropy_dedge_l1
-        );
-
-        // first, let's worry about the prediction gradient (we're actually doing prediction and l1 in the same loop)
-        // I think doing prediction gradient by control point makes more sense, because then I can fold all the SIMD values into a single update, isntead of having a vec of dloss_dcoef values where each lane needs to go in a different accumulator
-        // since I'm accumulating basis activations by control point, it makes sense to continue on and do L1 and entropy gradients by control point as well
-        // and the l1 calculation can go in the same loop
-
-        let mut basis_activations: Vec<f64> = Vec::with_capacity(last_t.len());
-        let mut left_vals: Vec<f64> = Vec::with_capacity(SIMD_CHUNK_SIZE);
-        let mut right_vals: Vec<f64> = Vec::with_capacity(SIMD_CHUNK_SIZE);
-
-        for i in 0..control_points.len() {
-            trace!("Working on control point {}", i);
-            for t in last_t {
-                let act = activations[0][i]
-                    .get(&t.to_bits())
-                    .expect("basis activation should be cached");
-                basis_activations.push(*act);
-            }
-            // SIMD step
-            let mut t_idx = 0;
-            while t_idx + SIMD_CHUNK_SIZE < last_t.len() {
-                let activation_vec = unsafe { _mm512_loadu_pd(&basis_activations[t_idx]) };
-                let dloss_doutput_vec = unsafe { _mm512_loadu_pd(&dloss_dout[t_idx]) };
-
-                let comparison_splat = unsafe { _mm_set1_epi16(0) };
-                let forward_signs_i16_vec = unsafe { _mm_loadu_epi16(&forward_pass_signs[t_idx]) };
-                let sign_mask = unsafe {
-                    _mm_cmp_epi16_mask(comparison_splat, forward_signs_i16_vec, _MM_CMPINT_LT)
-                }; // positive signs will be '1' in the mask, and negative signs will be '0'
-                let swizzled_sign_vec = unsafe {
-                    _mm512_mask_blend_pd(sign_mask, _mm512_set1_pd(-1.0), _mm512_set1_pd(1.0))
-                }; // swizzle -1.0 and 1.0 based on the sign mask
-
-                let dloss_dcoef_vec = unsafe { _mm512_mul_pd(activation_vec, dloss_doutput_vec) };
-                let dloss_dcoef_partial_sums = unsafe { _mm512_reduce_add_pd(dloss_dcoef_vec) };
-                accumulated_gradients[i].prediction_gradient += dloss_dcoef_partial_sums;
-
-                let dedge_l1_dcoef_vec =
-                    unsafe { _mm512_mul_pd(activation_vec, swizzled_sign_vec) };
-                let dedge_l1_dcoef_partial_sums =
-                    unsafe { _mm512_reduce_add_pd(dedge_l1_dcoef_vec) };
-                accumulated_gradients[i].l1_gradient += dedge_l1_dcoef_partial_sums;
-
-                t_idx += SIMD_CHUNK_SIZE;
-            }
-            // scalar step
-            while t_idx < last_t.len() {
-                accumulated_gradients[i].prediction_gradient +=
-                    basis_activations[t_idx] * dloss_dout[t_idx];
-                accumulated_gradients[i].l1_gradient +=
-                    basis_activations[t_idx] * forward_pass_signs[t_idx] as f64;
-
-                t_idx += 1;
-            }
-
-            // numerical stability step
-            // if every edge in the layer only output 0 this batch, then the entropy gradient calculation will have gone wonky.
-            // but, in that case, this edge must have also only output 0, in which case the entropy and L1 gradients should be 0
-            // so, if edge_l1 is zero, clamp the entropy and L1 gradients to zero and ignore whatever (possible NaN) values we calculated earlier
-            if edge_l1 == 0.0 {
-                accumulated_gradients[i].l1_gradient = 0.0;
-                accumulated_gradients[i].entropy_gradient = 0.0;
-            } else {
-                accumulated_gradients[i].l1_gradient /= last_t.len() as f64; // final divide. Divides are slow, so do it once. Maybe this should be moved to a SIMD operation that slides across control points. TODO try that
-
-                // now that the L1 gradient is calculated, we can calculate the entropy gradient
-                accumulated_gradients[i].entropy_gradient +=
-                    accumulated_gradients[i].l1_gradient * dlayer_entropy_dedge_l1;
-            }
-
-            // last step is to calculate this control points contribution to the input gradient
-            // we'll calculate our coefficients - which are the same for all t - and then do our SIMD sliding over t.
-            // it's a little awkward, so it may be worth exploring a separate loop to iterate over t and then do SIMD sliding over i
-            let left_coefficient = (k as f64 - 1.0) / (knots[i + k - 1] - knots[i]);
-            let right_coefficient = (k as f64 - 1.0) / (knots[i + k] - knots[i + 1]);
-            trace!(
-                "left coefficient: {}\nright coefficient: {}",
-                left_coefficient,
-                right_coefficient
-            );
-            let left_coef_vec = unsafe { _mm512_set1_pd(left_coefficient) };
-            let right_coef_vec = unsafe { _mm512_set1_pd(right_coefficient) };
-            let mut t_counter = 0;
-            // SIMD step
-            while t_counter + SIMD_CHUNK_SIZE <= last_t.len() {
-                // hey, we'll actually use the entire chunk for once!
-                // I'm going to just grab the activations from the cache, since they're already there, and save myself the function call. It's not quite as pretty to look at, but it's not the ugliest in the world and it should be faster
-                let t_chunk = &last_t[t_counter..t_counter + SIMD_CHUNK_SIZE];
-
-                for t in t_chunk {
-                    left_vals.push(
-                        activations[1][i]
-                            .get(&(t.to_bits()))
-                            .expect("basis activation should be cached at k-1")
-                            .to_owned(),
-                    );
-                    right_vals.push(
-                        activations[1][i + 1]
-                            .get(&(t.to_bits()))
-                            .expect("basis activation should be cached at k-1")
-                            .to_owned(),
-                    );
-                }
-                debug_assert_eq!(left_vals.len(), SIMD_CHUNK_SIZE);
-
-                let mut left_vals_vec = unsafe { _mm512_loadu_pd(left_vals.as_ptr()) };
-                let mut right_vals_vec = unsafe { _mm512_loadu_pd(right_vals.as_ptr()) };
-                left_vals_vec = unsafe { _mm512_mul_pd(left_vals_vec, left_coef_vec) };
-                right_vals_vec = unsafe { _mm512_mul_pd(right_vals_vec, right_coef_vec) };
-                let dbasis_dt_vec = unsafe { _mm512_sub_pd(left_vals_vec, right_vals_vec) };
-                let control_point_splat = unsafe { _mm512_set1_pd(control_points[i]) };
-                let doutput_dt_vec = unsafe { _mm512_mul_pd(dbasis_dt_vec, control_point_splat) };
-                let gradient_ve = unsafe { _mm512_loadu_pd(&dout_din[t_counter]) };
-                let new_gradient_vec = unsafe { _mm512_add_pd(gradient_ve, doutput_dt_vec) };
-                unsafe {
-                    _mm512_storeu_pd(&mut dout_din[t_counter], new_gradient_vec);
-                    // I hope this works
-                }
-                trace!("backpropped errors after a SIMD step: {:?}", dout_din);
-
-                t_counter += SIMD_CHUNK_SIZE;
-                left_vals.clear();
-                right_vals.clear();
-            }
-            trace!("finished SIMD steps");
-            // and now the rest
-            for t_idx in t_counter..last_t.len() {
-                let left_val = activations[1][i]
-                    .get(&(last_t[t_idx].to_bits()))
-                    .expect("basis activation should be cached");
-                let right_val = activations[1][i + 1]
-                    .get(&(last_t[t_idx].to_bits()))
-                    .expect("basis activation should be cached");
-                let dbasis_dt = left_coefficient * left_val - right_coefficient * right_val;
-
-                trace!(
-                    "left val: {}\nright val: {}\nleft coef: {}\nright coef: {}\ndbasis_dt: {}\ncontrol point: {}",
-                    left_val,
-                    right_val,
-                    left_coefficient,
-                    right_coefficient,
-                    dbasis_dt,
-                    control_points[i]
-                );
-                dout_din[t_idx] += control_points[i] * dbasis_dt;
-            }
-            trace!(
-                "backpropped errors after finishing scalar step: {:?}",
-                dout_din
-            );
-
-            basis_activations.clear();
-        }
-
-        // I don't know if it's faster to multiply in the output gradients to dout_din as we go, or to do it all at the end. I think it's cleaner at the end, so that's what I'm going to do
-        let mut t_idx = 0;
-        /* just renaming the variable, since the value we're now calculating is changing.
-        We were calculating the derivative of the output wrt the input,
-        and now we'll combine that with the derivative of the loss wrt the output that
-        was passed in to get the derivative of the loss wrt the input.
-        But since there's no need to create a new variable and waste time allocating additional memory,
-        I'm just renaming the variable to reflect that its purpose is changing. */
-        let mut dloss_din = dout_din;
-        // firs the SIMD step
-        while t_idx + SIMD_CHUNK_SIZE < dloss_din.len() {
-            let dout_din = unsafe { _mm512_loadu_pd(&dloss_din[t_idx]) };
-            let dloss_dout_vec = unsafe { _mm512_loadu_pd(&dloss_dout[t_idx]) };
-            let dloss_din_vec = unsafe { _mm512_mul_pd(dout_din, dloss_dout_vec) };
-            unsafe {
-                _mm512_storeu_pd(&mut dloss_din[t_idx], dloss_din_vec);
-            }
-
-            t_idx += SIMD_CHUNK_SIZE;
-        }
-        // and now the scalar step
-        for t_idx in t_idx..dloss_din.len() {
-            dloss_din[t_idx] *= dloss_dout[t_idx];
-        }
-
-        return Ok(dloss_din);
     }
 
     pub(super) fn update_control_points(
@@ -2045,373 +1431,6 @@ impl Edge {
     }
 }
 
-// #[cfg(all(
-//     target_arch = "x86_64",
-//     target_feature = "sse2",
-//     target_feature = "avx512f",
-//     not(portable),
-//     not(no_simd)
-// ))]
-// #[inline]
-// fn _x86_k0_activations(
-//     activations_size: usize,
-//     knots: &[f64],
-//     t_splat: std::arch::x86_64::__m512d,
-//     basis_activations: &mut Vec<f64>,
-//     t: &f64,
-// ) {
-//     use std::arch::x86_64::*;
-//     use std::mem;
-//     // slide the window over SIMD_CHUNK_SIZE points at a time
-//     trace!("Starting k=0 activations");
-//     for i_chunk in (0..activations_size)
-//         .collect::<Vec<usize>>()
-//         .chunks_exact(SIMD_CHUNK_SIZE)
-//     {
-//         let i = i_chunk[0];
-//         let knots_i = unsafe { _mm512_loadu_pd(&knots[i]) };
-//         let knots_i1 = unsafe { _mm512_loadu_pd(&knots[i + 1]) };
-//         let left_mask = unsafe { _mm512_cmp_pd_mask(t_splat, knots_i, _CMP_GE_OQ) };
-//         let right_mask = unsafe { _mm512_cmp_pd_mask(t_splat, knots_i1, _CMP_LT_OQ) };
-//         trace!(
-//             "knots_i: {:?}\nknots_i1: {:?}\nleft mask {:b}\nright mask: {:b}",
-//             knots_i,
-//             knots_i1,
-//             left_mask,
-//             right_mask
-//         );
-//         let mask = left_mask & right_mask;
-//         let activation_vec =
-//             unsafe { _mm512_mask_blend_pd(mask, _mm512_set1_pd(0.0), _mm512_set1_pd(1.0)) };
-
-//         trace!("i: {}, activation_vec: {:?}", i, activation_vec);
-//         basis_activations
-//             .extend_from_slice(unsafe { &mem::transmute::<__m512d, [f64; 8]>(activation_vec) });
-//         // use slice extension since this is the first pass through, so the vector knows how many values it's supposed to hold, and later indexing wont fail
-//         // unsafe {
-//         //     _mm512_store_pd(&mut activations[i], activation_vec);
-//         // }
-//     }
-//     trace!("Activations after SIMD step: {:?}", basis_activations);
-//     // finish up for any remaining points
-//     for i in (activations_size - (activations_size % SIMD_CHUNK_SIZE))..activations_size {
-//         let activation = if knots[i] <= *t && *t < knots[i + 1] {
-//             1.0
-//         } else {
-//             0.0
-//         };
-//         trace!(
-//             "Scalar step for i={}, t={}\nknots[i]: {}\nknots[i+1]: {}\nactivation: {}",
-//             i,
-//             t,
-//             knots[i],
-//             knots[i + 1],
-//             activation
-//         );
-//         basis_activations.push(activation);
-//     }
-// }
-
-// #[cfg(all(
-//     target_arch = "x86_64",
-//     target_feature = "sse2",
-//     target_feature = "avx512f",
-//     not(portable),
-//     not(no_simd)
-// ))]
-// #[inline]
-// fn _x86_k_gte_1_activations(
-//     k: usize,
-//     activations_size: usize,
-//     basis_activations: &mut Vec<f64>,
-//     knots: &[f64],
-//     t_splat: std::arch::x86_64::__m512d,
-//     t: &f64,
-// ) {
-//     use log::debug::log_enabled;
-//     use std::arch::x86_64::*;
-//     let mut num_simd_steps = 0;
-//     trace!("Starting k={} activations", k);
-//     for i_chunk in (0..activations_size - k)
-//         .collect::<Vec<usize>>()
-//         .chunks_exact(SIMD_CHUNK_SIZE)
-//     {
-//         num_simd_steps += 1;
-//         let i = i_chunk[0];
-//         // have to trust the compiler to order operations in a way that minimizes register pressure
-//         let left_vals = unsafe { _mm512_loadu_pd(&basis_activations[i]) };
-//         let right_vals = unsafe { _mm512_loadu_pd(&basis_activations[i + 1]) };
-//         let knots_i = unsafe { _mm512_loadu_pd(&knots[i]) };
-//         let knots_i1 = unsafe { _mm512_loadu_pd(&knots[i + 1]) };
-//         let knots_ik = unsafe { _mm512_loadu_pd(&knots[i + k]) };
-//         let knots_i1k = unsafe { _mm512_loadu_pd(&knots[i + 1 + k]) };
-//         let left_numerator = unsafe { _mm512_sub_pd(t_splat, knots_i) };
-//         let left_denominator = unsafe { _mm512_sub_pd(knots_ik, knots_i) };
-//         let left_coef = unsafe { _mm512_div_pd(left_numerator, left_denominator) };
-//         let right_numerator = unsafe { _mm512_sub_pd(knots_i1k, t_splat) };
-//         let right_denominator = unsafe { _mm512_sub_pd(knots_i1k, knots_i1) };
-//         let right_coef = unsafe { _mm512_div_pd(right_numerator, right_denominator) };
-//         let left_activations = unsafe { _mm512_mul_pd(left_vals, left_coef) };
-//         let right_activations = unsafe { _mm512_mul_pd(right_vals, right_coef) };
-//         let new_activations = unsafe { _mm512_add_pd(left_activations, right_activations) };
-//         // trace out all the above values on separate lines
-//         if log_enabled!(log::Level::Trace) {
-//             trace!(
-//             "i: {}\nleft_vals: {:?}\nright_vals: {:?}\nknots_i: {:?}\nknots_i1: {:?}\nknots_ik: {:?}\nknots_i1k: {:?}\nleft_numerator: {:?}\nleft_denominator: {:?}\nleft_coef: {:?}\nright_numerator: {:?}\nright_denominator: {:?}\nright_coef: {:?}\nleft_activations: {:?}\nright_activations: {:?}\nnew_activations: {:?}",
-//             i,
-//             left_vals,
-//             right_vals,
-//             knots_i,
-//             knots_i1,
-//             knots_ik,
-//             knots_i1k,
-//             left_numerator,
-//             left_denominator,
-//             left_coef,
-//             right_numerator,
-//             right_denominator,
-//             right_coef,
-//             left_activations,
-//             right_activations,
-//             new_activations
-//         );
-//         }
-//         unsafe {
-//             _mm512_storeu_pd(&mut basis_activations[i], new_activations);
-//             // now that activations has been initialized above, we can write directly
-//         }
-//         trace!("updated activations: {:?}", basis_activations);
-//     }
-//     // finish up for any remaining points
-//     for i in num_simd_steps * SIMD_CHUNK_SIZE..activations_size - k {
-//         trace!("Scalar tesp for i={}, k={}, t={}", i, k, t);
-//         let left_val = basis_activations[i];
-//         let right_val = basis_activations[i + 1];
-//         let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
-//         let right_coefficient = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
-//         let new_activation = left_val * left_coefficient + right_val * right_coefficient;
-//         basis_activations[i] = new_activation;
-//         trace!(
-//             "new activation: {}\nupdated activations: {:?}",
-//             new_activation,
-//             basis_activations
-//         );
-//     }
-// }
-
-/// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
-/// checks the provided cache for a memoized result before computing it. If the result is not found, it is computed and stored in the cache before being returned.
-///
-/// Passing the cache into the function rather than having the caller cache the result allows caching the results of recursive calls, which is useful during backproopagation
-// since this function neither takes nor returns a Spline struct, it doesn't make sense to have it as a method on the struct, so I'm moving it outside the impl block
-// TODO fix caching to not cache past first recursion and to add a no-cache option
-// fn b(
-//     cache: &mut FxHashMap<(usize, usize, u32), f64>,
-//     i: usize,
-//     k: usize,
-//     knots: &Vec<f64>,
-//     t: f64,
-// ) -> f64 {
-//     if k == 0 {
-//         if knots[i] <= t && t < knots[i + 1] {
-//             return 1.0;
-//         } else {
-//             return 0.0;
-//         }
-//     } else {
-//         if let Some(cached_result) = cache.get(&(i, k, t.to_bits())) {
-//             return *cached_result;
-//         }
-//         let left = (t - knots[i]) / (knots[i + k] - knots[i]);
-//         let right = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
-//         let result = left * b(cache, i, k - 1, knots, t) + right * b(cache, i + 1, k - 1, knots, t);
-//         cache.insert((i, k, t.to_bits()), result);
-//         return result;
-//     }
-// }
-
-/// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
-/// checks the provided cache for a memoized result before computing it. If the result is not found, it is computed and stored in the cache before being returned.
-/// Only the initial call and the first recursion are cached. Any further recursions are not cached, and basis_no_cache is called instead.
-///
-/// These functions need to be outside the impl block because they need to borrow the cache mutably, which would conflict with the borrow of self used to iterate over the coefficients
-// fn basis_cached(
-//     i: usize,
-//     k: usize,
-//     t: f64,
-//     knots: &[f64],
-//     cache: &mut [Vec<FxHashMap<u64, f64>>],
-//     degree: usize,
-// ) -> f64 {
-//     if k == 0 {
-//         if knots[i] <= t && t < knots[i + 1] {
-//             return 1.0;
-//         } else {
-//             return 0.0;
-//         }
-//     }
-//     // only cache the resuts of the initial call and the first recursion
-//     if k > degree - 2 {
-//         if let Some(cached_result) = cache[degree - k][i].get(&t.to_bits()) {
-//             return *cached_result;
-//         }
-//         let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
-//         let right_coefficient = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
-//         let left_val = basis_cached(i, k - 1, t, knots, cache, degree);
-//         let right_val = basis_cached(i + 1, k - 1, t, knots, cache, degree);
-//         let result = left_coefficient * left_val + right_coefficient * right_val;
-//         cache[degree - k][i].insert(t.to_bits(), result);
-//         return result;
-//     }
-//     let left_coefficient = (t - knots[i]) / (knots[i + k] - knots[i]);
-//     let right_coefficient = (knots[i + k + 1] - t) / (knots[i + k + 1] - knots[i + 1]);
-//     let result = left_coefficient * basis_no_cache(i, k - 1, t, knots)
-//         + right_coefficient * basis_no_cache(i + 1, k - 1, t, knots);
-//     return result;
-// }
-
-/// calculate the basis activation over all i values at once - testing compiler autovectorization
-// fn basis_autovectorize_across_i(i_vec: &[usize], k: usize, t: f64, knots: &[f64]) -> Vec<f64> {
-//     if k == 0 {
-//         let mut result = Vec::with_capacity(i_vec.len());
-//         for i_val in i_vec {
-//             if knots[*i_val] <= t && t < knots[*i_val + 1] {
-//                 result.push(1.0);
-//             } else {
-//                 result.push(0.0);
-//             }
-//         }
-//         return result;
-//     }
-//     let left_coefficients: Vec<f64> = i_vec
-//         .iter()
-//         .map(|i_val| (t - knots[*i_val]) / (knots[*i_val + k] - knots[*i_val]))
-//         .collect();
-//     let right_coefficients: Vec<f64> = i_vec
-//         .iter()
-//         .map(|i_val| (knots[*i_val + k + 1] - t) / (knots[*i_val + k + 1] - knots[*i_val + 1]))
-//         .collect();
-//     let left_vals = basis_autovectorize_across_i(i_vec, k - 1, t, knots);
-//     let right_is: Vec<usize> = i_vec.iter().map(|i_val| i_val + 1).collect();
-//     let right_vals = basis_autovectorize_across_i(&right_is, k - 1, t, knots);
-
-//     let left_results = left_coefficients
-//         .iter()
-//         .zip(left_vals.iter())
-//         .map(|(c, v)| c * v);
-//     let right_results = right_coefficients
-//         .iter()
-//         .zip(right_vals.iter())
-//         .map(|(c, v)| c * v);
-//     return left_results
-//         .zip(right_results)
-//         .map(|(l, r)| l + r)
-//         .collect();
-// }
-
-#[allow(dead_code)] // this constant is unused in no_simd mode
-const SIMD_CHUNK_SIZE: usize = 8;
-
-/// calculate the basis activation over multiple i values at once, using the rust portable SIMD crate
-#[cfg(not(no_simd))]
-#[allow(dead_code)] // this function may be compiled but never called on some xSIMD_CHUNK_SIZE6_64 platforms
-#[inline] // recommended by the crate docs to avoid large function prologues and epilogues, since SIMD values passed/returned in memory and not in registers due to ABI/safety guarantees
-fn basis_portable_simd_across_i(
-    i_base: usize,
-    k: usize,
-    t: f64,
-    knots: &[f64],
-    cache: &mut [Vec<FxHashMap<u64, f64>>],
-    full_degree: usize,
-) -> std::simd::prelude::f64x8 {
-    use std::simd::prelude::*;
-    let knots_i: f64x8 = Simd::from_slice(&knots[i_base..i_base + SIMD_CHUNK_SIZE]);
-    let knots_i_1: f64x8 = Simd::from_slice(&knots[i_base + 1..i_base + SIMD_CHUNK_SIZE + 1]);
-    let t_splat: f64x8 = f64x8::splat(t);
-    if k == 0 {
-        let left_mask = knots_i.simd_le(t_splat);
-        let right_mask = t_splat.simd_lt(knots_i_1);
-        let full_mask = left_mask & right_mask;
-        // trace!("k: {k}, t:{t}\ni_base: {i_base:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nleft_mask: {left_mask:?}\nright_mask: {right_mask:?}\nfull_mask: {full_mask:?}\n");
-        return full_mask.select(f64x8::splat(1.0), f64x8::splat(0.0));
-    }
-    let knots_i_k = Simd::from_slice(&knots[i_base + k..i_base + SIMD_CHUNK_SIZE + k]);
-    let knots_i_k_1 = Simd::from_slice(&knots[i_base + k + 1..i_base + SIMD_CHUNK_SIZE + k + 1]);
-    let left_coefficients = (t_splat - knots_i) / (knots_i_k - knots_i);
-    let right_coefficients = (knots_i_k_1 - t_splat) / (knots_i_k_1 - knots_i_1);
-    let left_vals = basis_portable_simd_across_i(i_base, k - 1, t, knots, cache, full_degree);
-    let right_vals = basis_portable_simd_across_i(i_base + 1, k - 1, t, knots, cache, full_degree);
-    let result_vec = left_coefficients * left_vals + right_coefficients * right_vals;
-    // trace!("k: {k}, t: {t}\ni_base: {i_base:?}\nknots_i: {knots_i:?}\nknots_i_plus_1: {knots_i_1:?}\nknots_i_plus_k_plus_1: {knots_i_k_1:?}\nleft_coefficients: {left_coefficients:?}\nleft_vals: {left_vals:?}\nright_coefficients: {right_coefficients:?}\nright_vals: {right_vals:?}\nresult: {result_vec:?}\n");
-    // In this version of basis, we're just computing everything (for now). We only store the results on the cache for the first recursion, because the backpropagation will need them.
-    // if k == full_degree {
-    let transmuted_results = result_vec.to_array();
-    for (i, b) in (i_base..i_base + SIMD_CHUNK_SIZE).zip(transmuted_results.iter()) {
-        cache[full_degree - k][i].insert(t.to_bits(), *b);
-    }
-
-    return result_vec;
-}
-
-// #[inline]
-// #[cfg(all(
-//     target_arch = "x86_64",
-//     target_feature = "sse2",
-//     target_feature = "avx512f",
-//     not(portable),
-//     not(no_simd)
-// ))]
-/// calculate the basis activation over multiple i values at once, using extended x86 intrinsics. Takes 1 usize i value, and returns 8 64-bit floats as the basis values for the 8 i values starting at i
-// fn x86_basis(
-//     i_base: usize,
-//     k: usize,
-//     t: f64,
-//     knots: &[f64],
-//     cache: &mut [Vec<FxHashMap<u64, f64>>],
-//     full_degree: usize,
-// ) -> std::arch::x86_64::__m512d {
-//     use std::{arch::x86_64::*, mem};
-//     // unsafe justification: this function is only available when both SSE2 and AVX2 are enabled, which promises the availability of all instructions below
-//     unsafe {
-//         let t_splat: __m512d = _mm512_set1_pd(t);
-//         let knots_i = _mm512_loadu_pd(&knots[i_base]);
-//         let knots_i_1 = _mm512_loadu_pd(&knots[i_base + 1]);
-//         if k == 0 {
-//             let left_mask = _mm512_cmp_pd_mask(knots_i, t_splat, _CMP_LE_OQ);
-//             let right_mask = _mm512_cmp_pd_mask(t_splat, knots_i_1, _CMP_LT_OQ);
-//             let full_mask = left_mask & right_mask;
-//             trace!("k: {k}, t:{t}, i_base: {i_base}\nknots_i: {knots_i:?}\nknots_i_1: {knots_i_1:?}\nleft_mask: {left_mask:b}\nright_mask: {right_mask:b}\nfull_mask: {full_mask:b}\n");
-//             return _mm512_mask_blend_pd(full_mask, _mm512_set1_pd(0.0), _mm512_set1_pd(1.0));
-//         }
-
-//         let knots_i_k = _mm512_loadu_pd(&knots[i_base + k]);
-//         let knots_i_k_1 = _mm512_loadu_pd(&knots[i_base + k + 1]);
-//         let left_numerator = _mm512_sub_pd(t_splat, knots_i);
-//         let left_denominator = _mm512_sub_pd(knots_i_k, knots_i);
-//         let left_coefficients = _mm512_div_pd(left_numerator, left_denominator);
-//         let right_numerator = _mm512_sub_pd(knots_i_k_1, t_splat);
-//         let right_denominator = _mm512_sub_pd(knots_i_k_1, knots_i_1);
-//         let right_coefficients = _mm512_div_pd(right_numerator, right_denominator);
-
-//         let left_vals = x86_basis(i_base, k - 1, t, knots, cache, full_degree);
-//         let right_vals = x86_basis(i_base + 1, k - 1, t, knots, cache, full_degree);
-
-//         let left_results = _mm512_mul_pd(left_coefficients, left_vals);
-//         let right_results = _mm512_mul_pd(right_coefficients, right_vals);
-//         let result_vec = _mm512_add_pd(left_results, right_results);
-//         trace!("k: {k}, t:{t}, i_base:{i_base}\nknots_i: {knots_i:?}\nknots_i_1: {knots_i_1:?}\nknots_i_k: {knots_i_k:?}\nknots_i_k_1: {knots_i_k_1:?}\nleft_coefficients: {left_coefficients:?}\nleft_vals: {left_vals:?}\nright_coefficients: {right_coefficients:?}\nright_vals: {right_vals:?}\nresult: {result_vec:?}\n");
-
-//         // cache the results of the first recursion for later backpropogation
-//         if k == full_degree {
-//             let transmuted_results: [f64; SIMD_CHUNK_SIZE] = mem::transmute(result_vec);
-//             for (i, b) in (i_base..i_base + SIMD_CHUNK_SIZE).zip(transmuted_results.iter()) {
-//                 cache[full_degree - k][i as usize].insert(t.to_bits(), *b);
-//             }
-//         }
-//         return result_vec;
-//     }
-// }
-
 /// recursivly compute the b-spline basis function for the given index `i`, degree `k`, and knot vector, at the given parameter `t`
 /// These functions need to be outside the impl block because they need to borrow the cache mutably, which would conflict with the borrow of self used to iterate over the coefficients
 fn basis_no_cache(i: usize, k: usize, t: f64, knots: &[f64]) -> f64 {
@@ -2554,58 +1573,6 @@ mod tests {
         let result = Edge::new(3, control_points, knots);
         assert!(result.is_err());
     }
-
-    // #[test]
-    // fn test_basis_cached() {
-    //     let knots = vec![0.0, 0.2857, 0.5714, 0.8571, 1.1429, 1.4286, 1.7143, 2.0];
-    //     let expected_results = vec![0.0513, 0.5782, 0.3648, 0.0057];
-    //     let k = 3;
-    //     let t = 0.95;
-    //     for i in 0..4 {
-    //         let result_from_caching_function = basis_cached(
-    //             i,
-    //             k,
-    //             t,
-    //             &knots,
-    //             &mut vec![vec![FxHashMap::default(); knots.len() - 1]; k],
-    //             k,
-    //         );
-    //         let result_from_non_caching_function = basis_no_cache(i, k, t, &knots);
-    //         assert_eq!(
-    //             result_from_caching_function, result_from_non_caching_function,
-    //             "idx {}, caching and non-caching functions should return the same result",
-    //             i
-    //         );
-    //         let rounded_result = (result_from_caching_function * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
-    //         assert_eq!(rounded_result, expected_results[i], "i = {}", i);
-    //     }
-    // }
-
-    // #[test]
-    // fn test_b_2() {
-    //     let knots = vec![-1.0, -0.7143, -0.4286, -0.1429, 0.1429, 0.4286, 0.7143, 1.0];
-    //     let expected_results = vec![0.0208, 0.4792, 0.4792, 0.0208];
-    //     let k = 3;
-    //     let t = 0.0;
-    //     for i in 0..4 {
-    //         let result_from_caching_function = basis_cached(
-    //             i,
-    //             k,
-    //             t,
-    //             &knots,
-    //             &mut vec![vec![FxHashMap::default(); knots.len() - 1]; k],
-    //             k,
-    //         );
-    //         let result_from_non_caching_function = basis_no_cache(i, k, t, &knots);
-    //         assert_eq!(
-    //             result_from_caching_function, result_from_non_caching_function,
-    //             "idx {}, caching and non-caching functions should return the same result",
-    //             i
-    //         );
-    //         let rounded_result = (result_from_caching_function * 10000.0).round() / 10000.0; // multiple by 10^4, round, then divide by 10^4, in order to round to 4 decimal places
-    //         assert_eq!(rounded_result, expected_results[i], "i = {}", i);
-    //     }
-    // }
 
     #[test]
     fn test_big_forward() {
@@ -3197,55 +2164,6 @@ mod tests {
         let inputs = linspace(0.5, 5.5, 30);
         spline.prune(&inputs, 1e-6);
         assert!(matches!(spline.kind, EdgeType::Spline { .. }));
-    }
-
-    mod simd {
-
-        use super::*;
-        use test_log::test;
-
-        #[test]
-        #[cfg(not(no_simd))]
-        fn test_basis_portable_i_k0() {
-            use std::simd::prelude::*;
-            let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-            let t = 1.3;
-            let expected_results = f64x8::from_array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
-            let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
-                vec![vec![FxHashMap::default(); knots.len() - 1]; 0];
-            let result = basis_portable_simd_across_i(0, 0, t, &knots, &mut cache, 0);
-            assert_eq!(result, expected_results, "knot[1] < t < knot[2]");
-
-            let t = 3.95;
-            let result = basis_portable_simd_across_i(0, 0, t, &knots, &mut cache, 0);
-            let expected_results = f64x8::from_array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
-            assert_eq!(result, expected_results, "knot[3] < t < knot[4]");
-
-            let t = 11.5;
-            let result = basis_portable_simd_across_i(0, 0, t, &knots, &mut cache, 0);
-            let expected_results = f64x8::from_array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
-            assert_eq!(result, expected_results, "t > knot[11]");
-
-            let t = -0.5;
-            let result = basis_portable_simd_across_i(0, 0, t, &knots, &mut cache, 0);
-            let expected_results = f64x8::from_array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
-            assert_eq!(result, expected_results, "t < knot[0]");
-        }
-
-        #[test]
-        #[cfg(not(no_simd))]
-        fn test_basis_portable_i_k3() {
-            let knots = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-            let k = 3;
-            let t = 0.95;
-            let expected_results: Vec<f64> = (0..knots.len() - k - 1)
-                .map(|i| basis_no_cache(i, k, t, &knots))
-                .collect();
-            let mut cache: Vec<Vec<FxHashMap<u64, f64>>> =
-                vec![vec![FxHashMap::default(); knots.len() - 1]; k];
-            let result = basis_portable_simd_across_i(0, k, t, &knots, &mut cache, k);
-            assert_eq!(result.to_array().to_vec(), expected_results);
-        }
     }
 
     mod symbolic_tests {
